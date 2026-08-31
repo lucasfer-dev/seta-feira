@@ -5,8 +5,6 @@ const SHARED_CONVERSATION_ID = 'main';
 function stripAssistantPrefix(text = '') {
   return String(text)
     .trim()
-    // Voice transcription can confuse the wake word with another weekday.
-    // For memory-command parsing only, tolerate these prefixes.
     .replace(/^(?:(?:segunda|ter[cç]a|quarta|quinta|sexta|s[aá]bado|domingo)(?:[- ]feira)?)\s*[,;:.-]?\s*/i, '')
     .replace(/^sexta(?:[- ]feira)?\s*[,;:.-]?\s*/i, '')
     .replace(/^(?:ent[aã]o|por favor|pra mim|para mim)\s*[,;:.-]?\s*/i, '')
@@ -55,10 +53,16 @@ function classifyMemory(content = '') {
 }
 
 function makeMemory(content, source = 'explicit_voice') {
-  const value = String(content || '').replace(/^\s*(?:que\s+)?/i, '').replace(/\s+/g, ' ').trim();
+  let value = String(content || '').replace(/\s+/g, ' ').trim();
+  value = value
+    .replace(/^\s*(?:que\s+)?/i, '')
+    .replace(/^(?:na|em)\s+(?:sua|minha)\s+mem[oó]ria\s*(?:que\s+)?/i, '')
+    .replace(/^na\s+aba\s+mem[oó]ria\s*(?:que\s+)?/i, '')
+    .replace(/^[,;:.-]+\s*/, '')
+    .trim();
   if (value.length < 5) return null;
-  const normalized = normalizeMemorySpeech(value);
-  if (/^(?:isso|essa informacao|esta informacao|essa coisa|isso ai|na aba memoria)$/.test(normalized)) return null;
+  const normalized = normalizeMemorySpeech(value).replace(/[.!?]+$/g, '').trim();
+  if (/^(?:isso|essa informacao|esta informacao|essa coisa|isso ai|na aba memoria|(?:na|em) (?:sua|minha) memoria)$/.test(normalized)) return null;
   const { kind, importance } = classifyMemory(value);
   return { content: value.slice(0, 2000), kind, importance, source };
 }
@@ -69,24 +73,24 @@ function extractLiveMemory(text = '') {
 
   const legacy = maybeExtractMemory(clean);
   if (legacy) {
-    const normalized = normalizeMemorySpeech(legacy.content);
-    if (!/^(?:isso|essa informacao|esta informacao|essa coisa|isso ai)$/.test(normalized)) return legacy;
+    const normalized = normalizeMemorySpeech(legacy.content).replace(/[.!?]+$/g, '').trim();
+    if (!/^(?:isso|essa informacao|esta informacao|essa coisa|isso ai|na aba memoria)$/.test(normalized)) return legacy;
   }
 
   if (!hasMemoryIntent(clean)) return null;
 
-  // Natural voice form: "salva essa informação. Aniversário ..."
   let match = clean.match(/\b(?:salva|salve|salvar|guarda|guarde|guardar|anota|anote|anotar|memoriza|memorize|memorizar|registra|registre|registrar|adiciona|adicione|adicionar|coloca|coloque)\b[\s\S]{0,120}?\b(?:essa|esta)\s+informa[cç][aã]o\b\s*[.:;-]+\s*(.{5,})$/i);
   if (match?.[1]) return makeMemory(match[1]);
 
-  // "salva ... que X" / "quero que você guarde X" / commands with filler words.
-  match = clean.match(/\b(?:salva|salve|salvar|guarda|guarde|guardar|anota|anote|anotar|memoriza|memorize|memorizar|registra|registre|registrar|adiciona|adicione|adicionar|coloca|coloque)\b(?:\s+(?:isso|ai|pra mim|para mim|na sua memoria|na minha memoria|em sua memoria|em minha memoria|na aba memoria))*\s*[,;:.-]*\s*(?:que\s+)?(.{5,})$/i);
-  if (match?.[1] && !/^(?:essa|esta)\s+informa[cç][aã]o\b/i.test(match[1])) return makeMemory(match[1]);
+  match = clean.match(/\b(?:salva|salve|salvar|guarda|guarde|guardar|anota|anote|anotar|memoriza|memorize|memorizar|registra|registre|registrar|adiciona|adicione|adicionar|coloca|coloque)\b(?:\s+(?:isso|ai|pra mim|para mim|na sua mem[oó]ria|na minha mem[oó]ria|em sua mem[oó]ria|em minha mem[oó]ria|na aba mem[oó]ria))*\s*[,;:.-]*\s*(?:que\s+)?(.{5,})$/i);
+  if (match?.[1] && !/^(?:essa|esta)\s+informa[cç][aã]o\b/i.test(match[1])) {
+    const memory = makeMemory(match[1]);
+    if (memory) return memory;
+  }
 
   match = clean.match(/\b(?:quero|preciso)\s+que\s+voc[eê]\s+(?:salve|guarde|anote|lembre|memorize|registre)(?:\s+que)?\s+(.{5,})$/i);
   if (match?.[1]) return makeMemory(match[1]);
 
-  // "X. Lembre-se disso..." — keep the statement immediately before the reminder.
   const rememberIndex = clean.search(/\blembre(?:-se)?\s+(?:disso|dessa|desta)\b/i);
   if (rememberIndex > 0) {
     const before = clean.slice(0, rememberIndex).replace(/[.!?\s]+$/g, '').trim();
@@ -114,7 +118,6 @@ export default async function handler(req, res) {
   if (!isOwner(req)) return send(res, 401, { error: 'unauthorized' });
 
   const body = await parseJson(req);
-  // Personal SEXTA uses one shared conversation across PC/Android/browser.
   const conversationId = SHARED_CONVERSATION_ID;
   const deviceId = String(body.deviceId || 'live-voice').slice(0, 120);
   const userText = String(body.userText || '').replace(/\s+/g, ' ').trim().slice(0, 8000);
