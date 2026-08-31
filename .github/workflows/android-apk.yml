@@ -1,0 +1,87 @@
+name: Build SEXTA Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/android-capacitor/**'
+      - 'public/**'
+      - '.github/workflows/android-apk.yml'
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Capacitor dependencies
+        working-directory: apps/android-capacitor
+        run: npm install --no-audit --no-fund
+
+      - name: Generate Android project
+        working-directory: apps/android-capacitor
+        env:
+          SEXTA_WEB_URL: https://seta-feira.vercel.app
+        run: |
+          npx cap add android
+          npx cap sync android
+
+      - name: Install local Portuguese wake-word model
+        working-directory: apps/android-capacitor
+        run: |
+          mkdir -p android/app/src/main/assets
+          curl --fail --location --retry 3 \
+            https://alphacephei.com/vosk/models/vosk-model-small-pt-0.3.zip \
+            --output /tmp/vosk-model.zip
+          rm -rf /tmp/vosk-model android/app/src/main/assets/model-pt
+          mkdir -p /tmp/vosk-model
+          unzip -q /tmp/vosk-model.zip -d /tmp/vosk-model
+          mv /tmp/vosk-model/vosk-model-small-pt-0.3 android/app/src/main/assets/model-pt
+          python3 - <<'PY'
+          import uuid
+          from pathlib import Path
+          p = Path('android/app/src/main/assets/model-pt/uuid')
+          p.write_text(str(uuid.uuid4()), encoding='utf-8')
+          PY
+
+      - name: Apply SEXTA native Android layer
+        working-directory: apps/android-capacitor
+        run: node scripts/prepare-android.mjs
+
+      - name: Build debug APK
+        working-directory: apps/android-capacitor/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Collect APK
+        run: |
+          mkdir -p dist
+          cp apps/android-capacitor/android/app/build/outputs/apk/debug/app-debug.apk dist/SEXTA-android-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SEXTA-Android-APK
+          path: dist/SEXTA-android-debug.apk
+          if-no-files-found: error
+          retention-days: 14
