@@ -55,6 +55,19 @@
     }
   }
 
+  async function syncNativeSession() {
+    if (!plugin) return;
+    try {
+      await plugin.setSession({
+        token: localStorage.getItem('sexta_token') || '',
+        conversationId: localStorage.getItem('sexta_conversation') || 'main',
+        deviceId: localStorage.getItem('sexta_device_id') || 'android-native'
+      });
+    } catch (error) {
+      console.warn('AssistantBridge session:', error);
+    }
+  }
+
   async function refreshAndroid() {
     ensurePanel();
     if (!plugin) return renderWebFallback();
@@ -64,6 +77,7 @@
     const actions = document.querySelector('#nativeCapActions');
     if (!badge || !summary || !grid || !actions) return;
 
+    await syncNativeSession();
     let status = {};
     try { status = await plugin.status(); } catch (error) { console.warn('AssistantBridge status:', error); }
     badge.textContent = 'Android'; badge.className = 'integration-badge ok';
@@ -83,14 +97,16 @@
       <button class="secondary-btn" id="nativeCorePermissions">Permissões essenciais</button>
       <button class="secondary-btn" id="nativeExtraPermissions">Permissões extras</button>
       <button class="secondary-btn" id="nativeNotificationAccess">Acesso às notificações</button>
+      <button class="secondary-btn" id="nativeAppSettings">Configurações do app</button>
     `;
 
     document.querySelector('#nativeBackgroundToggle').onclick = async () => {
       try {
+        await syncNativeSession();
         if (status.backgroundActive) await plugin.stopBackgroundAssistant();
         else await plugin.startBackgroundAssistant();
       } catch (error) { console.warn(error); }
-      setTimeout(refreshAndroid, 450);
+      setTimeout(refreshAndroid, 650);
     };
     document.querySelector('#nativeCorePermissions').onclick = async () => {
       try { await plugin.requestPermissions({ capabilities: ['microphone','notifications'] }); } catch (error) { console.warn(error); }
@@ -103,6 +119,9 @@
     document.querySelector('#nativeNotificationAccess').onclick = async () => {
       try { await plugin.openNotificationAccessSettings(); } catch (error) { console.warn(error); }
     };
+    document.querySelector('#nativeAppSettings').onclick = async () => {
+      try { await plugin.openAppSettings(); } catch (error) { console.warn(error); }
+    };
   }
 
   async function syncVoiceState() {
@@ -110,7 +129,7 @@
     const active = Boolean(window.__sextaGeminiLive?.active?.());
     if (active === lastVoiceState) return;
     lastVoiceState = active;
-    try { await plugin.setConversationActive({ active }); } catch (error) { console.warn('AssistantBridge voice state:', error); }
+    try { await syncNativeSession(); await plugin.setConversationActive({ active }); } catch (error) { console.warn('AssistantBridge voice state:', error); }
   }
 
   window.addEventListener('DOMContentLoaded', () => {
@@ -119,9 +138,13 @@
     document.querySelector('[data-view="settings"]')?.addEventListener('click', () => setTimeout(refreshAndroid, 80));
   });
 
+  window.addEventListener('storage', event => {
+    if (['sexta_token','sexta_conversation','sexta_device_id'].includes(event.key || '')) void syncNativeSession();
+  });
+
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) setTimeout(refreshAndroid, 250);
   });
 
-  window.__sextaNativeBridge = { refresh: refreshAndroid };
+  window.__sextaNativeBridge = { refresh: refreshAndroid, syncSession: syncNativeSession };
 })();
