@@ -1,5 +1,6 @@
 import { getMemories, getMessages, isOwner, parseJson, saveMemory, saveMessage, send } from '../lib/core.mjs';
 import { detectWorkspaceIntent, executeWorkspaceAction, formatWorkspaceResult, googleStatus } from '../lib/google.mjs';
+import { getConnectedGoogleAccount, isGoogleAccountQuestion } from '../lib/google-account.mjs';
 import { detectWhatsAppIntent, evolutionStatus, sendWhatsAppText } from '../lib/evolution.mjs';
 import { absorbAutomaticMemory } from '../lib/auto-memory.mjs';
 import { planAndExecuteTools } from '../lib/tool-bus.mjs';
@@ -113,6 +114,22 @@ async function executeGoogleVoiceIntent(intent, text, deviceId) {
   }
 }
 
+async function answerGoogleAccountQuestion(text, deviceId) {
+  const status = await googleStatus();
+  if (!status.configured) return { handled: true, ok: false, provider: 'google-workspace', action: 'google.account', reply: 'O Google Workspace ainda não está configurado no servidor.' };
+  if (!status.connected) return { handled: true, ok: false, provider: 'google-workspace', action: 'google.account', needsGoogleConnect: true, reply: 'Nenhuma conta Google está conectada agora.' };
+  try {
+    const account = await getConnectedGoogleAccount();
+    const reply = account.email
+      ? `A conta Google conectada é ${account.email}${account.name ? `, de ${account.name}` : ''}.`
+      : 'A conta Google está conectada, mas o Google não retornou o endereço de e-mail.';
+    await persistActionTurn(text, reply, deviceId, 'google-workspace');
+    return { handled: true, ok: true, provider: 'google-workspace', action: 'google.account', reply, result: account };
+  } catch (error) {
+    return { handled: true, ok: false, provider: 'google-workspace', action: 'google.account', reply: `A conta Google está conectada, mas não consegui consultar o perfil agora: ${error.message}` };
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
   if (!isOwner(req)) return send(res, 401, { error: 'unauthorized' });
@@ -123,6 +140,10 @@ export default async function handler(req, res) {
   if (!text) return send(res, 400, { error: 'text_required' });
 
   try {
+    if (isGoogleAccountQuestion(text)) {
+      return send(res, 200, await answerGoogleAccountQuestion(text, deviceId));
+    }
+
     const explicitEmailIntent = detectExplicitEmailIntent(text);
     if (explicitEmailIntent?.incomplete) {
       return send(res, 200, {
@@ -145,9 +166,6 @@ export default async function handler(req, res) {
     }
 
     try {
-      // Do not force the supplied device id into Android commands here. The Tool
-      // Bus resolves the online Android itself, avoiding accidental dispatch to
-      // a browser/desktop device id when the same voice UI is used elsewhere.
       const planned = await planAndExecuteTools(await contextualPlannerInput(text), { deviceId: '', maxRounds: 4 });
       if (planned.handled) {
         const reply = plannerReply(planned);
