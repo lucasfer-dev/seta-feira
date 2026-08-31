@@ -84,3 +84,5 @@ jobs:
           path: dist/SEXTA-android-debug.apk
           if-no-files-found: error
           retention-days: 14
+
+# Trigger rebuild for Android latency v2
