@@ -1,0 +1,17 @@
+{
+  "name": "sexta",
+  "version": "1.3.2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file=.env.local server.mjs",
+    "start": "node --env-file-if-exists=.env.local server.mjs",
+    "desktop:install": "npm --prefix apps/desktop-electron install",
+    "desktop:dev": "npm --prefix apps/desktop-electron run dev",
+    "android:install": "npm --prefix apps/android-capacitor install",
+    "android:sync": "npm --prefix apps/android-capacitor run android:sync"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
