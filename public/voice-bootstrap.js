@@ -4,11 +4,19 @@
   const synth = window.speechSynthesis;
   const nativeCancel = synth.cancel.bind(synth);
   const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+  const QUOTA_WINDOW_MS = 60_000;
+  const SAFE_REQUESTS_PER_WINDOW = 9;
+  const QUOTA_KEY = 'sexta_gemini_tts_request_times';
 
   let controller = null;
   let audioContext = null;
   let activeSources = new Set();
   let playbackGeneration = 0;
+
+  function setVoiceHint(text) {
+    const el = document.querySelector('#voiceHint');
+    if (el) el.textContent = text;
+  }
 
   function stopGeminiAudio() {
     playbackGeneration += 1;
@@ -20,6 +28,39 @@
       try { source.stop(); } catch {}
     }
     activeSources.clear();
+  }
+
+  function recentRequestTimes() {
+    const now = Date.now();
+    let times = [];
+    try { times = JSON.parse(localStorage.getItem(QUOTA_KEY) || '[]'); } catch {}
+    return times.filter(value => Number.isFinite(value) && now - value < QUOTA_WINDOW_MS).sort((a, b) => a - b);
+  }
+
+  function reserveQuotaSlot() {
+    const now = Date.now();
+    const times = recentRequestTimes();
+    if (times.length < SAFE_REQUESTS_PER_WINDOW) {
+      times.push(now);
+      localStorage.setItem(QUOTA_KEY, JSON.stringify(times));
+      return 0;
+    }
+    return Math.max(300, times[0] + QUOTA_WINDOW_MS - now + 350);
+  }
+
+  async function waitForQuota(generation) {
+    while (generation === playbackGeneration) {
+      const waitMs = reserveQuotaSlot();
+      if (!waitMs) return true;
+      setVoiceHint(`voz aguardando ${Math.max(1, Math.ceil(waitMs / 1000))}s`);
+      await new Promise(resolve => setTimeout(resolve, waitMs));
+    }
+    return false;
+  }
+
+  function parseRetryMs(message = '') {
+    const match = String(message).match(/retry in\s+([\d.]+)s/i);
+    return match ? Math.ceil(Number(match[1]) * 1000) + 500 : 8_000;
   }
 
   async function ensureAudioContext(sampleRate = 24000) {
@@ -37,6 +78,28 @@
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {})
     };
+  }
+
+  async function ttsFetch(text, stream, generation) {
+    if (!(await waitForQuota(generation))) throw Object.assign(new Error('cancelled'), { cancelled: true });
+    if (generation !== playbackGeneration) throw Object.assign(new Error('cancelled'), { cancelled: true });
+
+    controller = new AbortController();
+    const response = await fetch('/api/tts', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ text, stream }),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      const error = new Error(data.message || `Gemini TTS ${response.status}`);
+      error.status = response.status;
+      error.retryMs = response.status === 429 ? parseRetryMs(data.message) : 0;
+      throw error;
+    }
+    return response;
   }
 
   function combineBytes(a, b) {
@@ -97,6 +160,7 @@
         if (!started) {
           nextStart = now + 0.045;
           started = true;
+          setVoiceHint('falando...');
           try { utterance.onstart?.({ type: 'start', utterance }); } catch {}
         } else if (nextStart < now + 0.012) {
           nextStart = now + 0.012;
@@ -111,6 +175,7 @@
       const waitMs = Math.max(0, (scheduledEnd - ctx.currentTime) * 1000) + 20;
       await new Promise(resolve => setTimeout(resolve, waitMs));
       if (generation === playbackGeneration) {
+        setVoiceHint('Voz pronta');
         try { utterance.onend?.({ type: 'end', utterance }); } catch {}
       }
     } finally {
@@ -119,14 +184,7 @@
   }
 
   async function playBufferedGemini(text, utterance, generation) {
-    controller = new AbortController();
-    const response = await fetch('/api/tts', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ text, stream: false }),
-      signal: controller.signal
-    });
-    if (!response.ok) throw new Error(`Gemini TTS ${response.status}`);
+    const response = await ttsFetch(text, false, generation);
     if (generation !== playbackGeneration) return;
 
     const wav = await response.arrayBuffer();
@@ -135,6 +193,7 @@
     const decoded = await ctx.decodeAudioData(wav.slice(0));
     if (generation !== playbackGeneration) return;
 
+    setVoiceHint('falando...');
     await new Promise((resolve, reject) => {
       const source = ctx.createBufferSource();
       source.buffer = decoded;
@@ -154,6 +213,7 @@
     });
 
     if (generation === playbackGeneration) {
+      setVoiceHint('Voz pronta');
       try { utterance.onend?.({ type: 'end', utterance }); } catch {}
     }
   }
@@ -164,31 +224,45 @@
 
     stopGeminiAudio();
     let generation = playbackGeneration;
-    controller = new AbortController();
 
     try {
-      const response = await fetch('/api/tts', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ text, stream: true }),
-        signal: controller.signal
-      });
+      let response;
+      while (generation === playbackGeneration) {
+        try {
+          response = await ttsFetch(text, true, generation);
+          break;
+        } catch (error) {
+          if (error?.cancelled || error?.name === 'AbortError' || generation !== playbackGeneration) return;
+          if (error?.status !== 429) throw error;
+          const retryMs = Math.max(1_000, error.retryMs || 8_000);
+          setVoiceHint(`Gemini ocupado • ${Math.ceil(retryMs / 1000)}s`);
+          await new Promise(resolve => setTimeout(resolve, retryMs));
+        }
+      }
 
-      if (!response.ok) throw new Error(`Gemini TTS ${response.status}`);
+      if (!response || generation !== playbackGeneration) return;
       if (response.headers.get('X-SEXTA-TTS-Stream') !== 'pcm-s16le') {
         throw new Error('Servidor não ativou streaming PCM');
       }
       await playPcmStream(response, utterance, generation);
     } catch (error) {
-      if (error?.name === 'AbortError' || generation !== playbackGeneration) return;
-      console.warn('Gemini TTS streaming indisponível; tentando Gemini TTS completo.', error);
+      if (error?.cancelled || error?.name === 'AbortError' || generation !== playbackGeneration) return;
+      console.warn('Streaming Gemini indisponível; tentando a mesma voz Gemini em áudio completo.', error);
 
       stopGeminiAudio();
       generation = playbackGeneration;
       try {
         await playBufferedGemini(text, utterance, generation);
       } catch (fallbackError) {
-        if (fallbackError?.name === 'AbortError' || generation !== playbackGeneration) return;
+        if (fallbackError?.cancelled || fallbackError?.name === 'AbortError' || generation !== playbackGeneration) return;
+        if (fallbackError?.status === 429) {
+          const retryMs = Math.max(1_000, fallbackError.retryMs || 8_000);
+          setVoiceHint(`Gemini ocupado • ${Math.ceil(retryMs / 1000)}s`);
+          await new Promise(resolve => setTimeout(resolve, retryMs));
+          if (generation === playbackGeneration) void geminiSpeak(utterance);
+          return;
+        }
+        setVoiceHint('Gemini sem voz agora');
         console.error('Gemini TTS indisponível. A SEXTA não usará voz robótica.', fallbackError);
         try { utterance.onerror?.({ type: 'error', error: 'gemini_tts_unavailable', utterance }); } catch {}
       }
@@ -203,7 +277,7 @@
       stopGeminiAudio();
       nativeCancel();
     };
-    window.__sextaGeminiTts = 'gemini-only-streaming';
+    window.__sextaGeminiTts = 'gemini-only-quota-aware';
   } catch (error) {
     console.error('Não consegui ativar a voz Gemini da SEXTA.', error);
   }
