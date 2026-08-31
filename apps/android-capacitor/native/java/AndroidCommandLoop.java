@@ -49,6 +49,24 @@ public final class AndroidCommandLoop {
         }
     }
 
+    public static boolean executeText(Context context, String text) {
+        if (context == null) return false;
+        try {
+            JSONObject command = inferLocalAction(text);
+            if (command == null) return false;
+            JSONObject payload = command.optJSONObject("payload");
+            if (payload == null) payload = new JSONObject();
+            AndroidActionExecutor.execute(context, command.optString("action", ""), payload);
+            context.getSharedPreferences("sexta_native", Context.MODE_PRIVATE).edit()
+                    .putString("last_android_direct_text", normalize(text))
+                    .putLong("last_android_direct_at", System.currentTimeMillis())
+                    .apply();
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     private static String token(Context context) {
         return context.getSharedPreferences("sexta_native", Context.MODE_PRIVATE).getString("owner_token", "");
     }
@@ -83,7 +101,8 @@ public final class AndroidCommandLoop {
                         .put("manufacturer", Build.MANUFACTURER)
                         .put("model", Build.MODEL)
                         .put("sdk", Build.VERSION.SDK_INT)
-                        .put("notificationAccess", SextaNotificationListener.isListenerConnected()));
+                        .put("notificationAccess", SextaNotificationListener.isListenerConnected())
+                        .put("accessibilityConnected", SextaAccessibilityService.isConnected()));
         try (Response ignored = HTTP.newCall(request(context, "/api/device-heartbeat")
                 .post(RequestBody.create(body.toString(), JSON)).build()).execute()) {}
     }
@@ -153,13 +172,13 @@ public final class AndroidCommandLoop {
             String last = context.getSharedPreferences("sexta_native", Context.MODE_PRIVATE).getString("last_android_voice_action_message", "");
             if (id.equals(last)) return;
 
-            JSONObject command = inferLocalAction(newest.optString("content", ""));
+            String content = newest.optString("content", "");
+            String normalized = normalize(content);
+            String direct = context.getSharedPreferences("sexta_native", Context.MODE_PRIVATE).getString("last_android_direct_text", "");
+            long directAt = context.getSharedPreferences("sexta_native", Context.MODE_PRIVATE).getLong("last_android_direct_at", 0L);
             context.getSharedPreferences("sexta_native", Context.MODE_PRIVATE).edit().putString("last_android_voice_action_message", id).apply();
-            if (command == null) return;
-            String action = command.optString("action", "");
-            JSONObject payload = command.optJSONObject("payload");
-            if (payload == null) payload = new JSONObject();
-            AndroidActionExecutor.execute(context, action, payload);
+            if (normalized.equals(direct) && System.currentTimeMillis() - directAt < 20000L) return;
+            executeText(context, content);
         } catch (Exception ignored) {}
     }
 
@@ -168,10 +187,13 @@ public final class AndroidCommandLoop {
         String t = normalize(raw);
         if (t.isEmpty()) return null;
 
-        Matcher reply = Pattern.compile("(?i)\\b(?:responde|responder|responda)\\s+(?:no\\s+whatsapp\\s+)?(?:a|ao|o|pra|para)?\\s*([^,.:]+?)\\s+(?:no\\s+whatsapp\\s+)?(?:dizendo|falando|com|que)\\s+(.+)$").matcher(raw);
+        // Explicit PC commands must never execute on Android.
+        if (t.matches(".*\\b(no|pro|para o|do)\\s+(pc|computador|windows|notebook)\\b.*")) return null;
+
+        Matcher reply = Pattern.compile("(?i)\\b(?:responde|responder|responda)\\s+(?:no\\s+(?:whatsapp|wpp|zap)\\s+)?(?:a|ao|o|pra|para)?\\s*([^,.:]+?)\\s+(?:no\\s+(?:whatsapp|wpp|zap)\\s+)?(?:dizendo|falando|com|que)\\s+(.+)$").matcher(raw);
         if (reply.find()) return command("notification_reply", new JSONObject().put("package", "whatsapp").put("recipient", reply.group(1).trim()).put("text", reply.group(2).trim()));
 
-        Matcher lastReply = Pattern.compile("(?i)\\b(?:responde|responder|responda)\\s+(?:a\\s+)?(?:ultima|última)\\s+(?:mensagem|notificacao|notificação)(?:\\s+do\\s+whatsapp)?\\s+(?:dizendo|falando|com|que)\\s+(.+)$").matcher(raw);
+        Matcher lastReply = Pattern.compile("(?i)\\b(?:responde|responder|responda)\\s+(?:a\\s+)?(?:ultima|última)\\s+(?:mensagem|notificacao|notificação)(?:\\s+do\\s+(?:whatsapp|wpp|zap))?\\s+(?:dizendo|falando|com|que)\\s+(.+)$").matcher(raw);
         if (lastReply.find()) return command("notification_reply", new JSONObject().put("package", "whatsapp").put("text", lastReply.group(1).trim()));
 
         if (t.matches(".*\\b(proxima|pula|pular)\\b.*\\b(musica|faixa).*")) return command("media_next", new JSONObject());
@@ -186,9 +208,16 @@ public final class AndroidCommandLoop {
         if (t.matches(".*\\b(liga|acende)\\b.*\\b(lanterna|flash)\\b.*")) return command("flashlight", new JSONObject().put("enabled", true));
         if (t.matches(".*\\b(desliga|apaga)\\b.*\\b(lanterna|flash)\\b.*")) return command("flashlight", new JSONObject().put("enabled", false));
 
-        if (t.matches(".*\\b(abre|abrir|abra)\\b.*")) {
-            String[] apps = {"whatsapp business","whatsapp","spotify","youtube","instagram","telegram","discord","gmail","google maps","maps","drive","google fotos","fotos","camera","calculadora","calendario","agenda","mensagens","telefone"};
-            for (String app : apps) if (t.contains(app)) return command("open_app", new JSONObject().put("app", app));
+        Matcher open = Pattern.compile("(?i)\\b(?:abre|abrir|abra)\\s+(?:o\\s+|a\\s+|app\\s+|aplicativo\\s+)?(.+)$").matcher(t);
+        if (open.find()) {
+            String app = open.group(1)
+                    .replaceAll("\\s+(?:no|nesse|neste)\\s+(?:celular|android|telefone).*$", "")
+                    .replaceAll("\\s+(?:pra mim|para mim)$", "")
+                    .trim();
+            if (app.equals("wpp") || app.equals("zap") || app.equals("zap zap") || app.equals("whats")) app = "whatsapp";
+            if (!app.isEmpty() && !app.matches("^(?:link|site|pagina|página|arquivo)$")) {
+                return command("open_app", new JSONObject().put("app", app));
+            }
         }
         return null;
     }

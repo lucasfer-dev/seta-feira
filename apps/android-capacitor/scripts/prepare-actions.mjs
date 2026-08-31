@@ -4,12 +4,13 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, '..');
-const javaTarget = path.join(appRoot, 'android', 'app', 'src', 'main', 'java', 'com', 'sexta', 'assistant');
+const androidRoot = path.join(appRoot, 'android', 'app', 'src', 'main');
+const javaTarget = path.join(androidRoot, 'java', 'com', 'sexta', 'assistant');
 const nativeJava = path.join(appRoot, 'native', 'java');
 
 if (!fs.existsSync(javaTarget)) throw new Error('Projeto Android preparado não encontrado. Rode prepare-android primeiro.');
 
-for (const name of ['AndroidActionExecutor.java', 'AndroidCommandLoop.java']) {
+for (const name of ['AndroidActionExecutor.java', 'AndroidCommandLoop.java', 'SextaAccessibilityService.java']) {
   fs.copyFileSync(path.join(nativeJava, name), path.join(javaTarget, name));
 }
 
@@ -21,6 +22,74 @@ if (!service.includes('AndroidCommandLoop.start(this);')) {
     '        super.onCreate();\n        AndroidCommandLoop.start(this);\n        createNotificationChannel();'
   );
 }
+if (!service.includes('AndroidCommandLoop.stop();')) {
+  service = service.replace(
+    '    @Override public void onDestroy() {\n        stopEverything();',
+    '    @Override public void onDestroy() {\n        AndroidCommandLoop.stop();\n        stopEverything();'
+  );
+}
+// Execute a wake-word command locally immediately instead of waiting for cloud sync.
+if (!service.includes('AndroidCommandLoop.executeText(this, pendingWakeCommand);')) {
+  service = service.replace(
+    '        pendingWakeCommand = tailAfterWake(heard);\n        stopWakeListening();',
+    '        pendingWakeCommand = tailAfterWake(heard);\n        if (!pendingWakeCommand.isEmpty()) AndroidCommandLoop.executeText(this, pendingWakeCommand);\n        stopWakeListening();'
+  );
+}
 fs.writeFileSync(servicePath, service);
 
-console.log('SEXTA Android Actions preparado: command loop + executor nativo incluídos no APK.');
+const manifestPath = path.join(androidRoot, 'AndroidManifest.xml');
+let manifest = fs.readFileSync(manifestPath, 'utf8');
+if (!manifest.includes('SEXTA_APP_VISIBILITY_QUERIES')) {
+  const queries = `
+    <!-- SEXTA_APP_VISIBILITY_QUERIES -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+        <package android:name="com.spotify.music" />
+        <package android:name="com.google.android.youtube" />
+        <package android:name="com.android.chrome" />
+        <package android:name="com.google.android.gm" />
+        <package android:name="com.google.android.apps.maps" />
+        <package android:name="com.instagram.android" />
+        <package android:name="org.telegram.messenger" />
+        <package android:name="com.discord" />
+        <package android:name="com.zhiliaoapp.musically" />
+    </queries>`;
+  manifest = manifest.replace(/(<application\b)/, `${queries}\n\n    $1`);
+}
+
+if (!manifest.includes('android:name=".SextaAccessibilityService"')) {
+  manifest = manifest.replace('</application>', `
+        <service
+            android:name=".SextaAccessibilityService"
+            android:label="Controle da SEXTA"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/sexta_accessibility_service" />
+        </service>
+    </application>`);
+}
+fs.writeFileSync(manifestPath, manifest);
+
+const xmlDir = path.join(androidRoot, 'res', 'xml');
+fs.mkdirSync(xmlDir, { recursive: true });
+fs.writeFileSync(path.join(xmlDir, 'sexta_accessibility_service.xml'), `<?xml version="1.0" encoding="utf-8"?>
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/app_name"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:notificationTimeout="100"
+    android:canRetrieveWindowContent="false"
+    android:canPerformGestures="false"
+    android:settingsActivity="com.sexta.assistant.MainActivity" />\n`);
+
+console.log('SEXTA Android Actions preparado: executor, command loop, visibilidade de apps e bridge de acessibilidade incluídos.');

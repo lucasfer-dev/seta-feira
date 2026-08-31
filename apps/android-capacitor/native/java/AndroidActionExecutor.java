@@ -7,6 +7,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.media.AudioManager;
@@ -34,7 +35,12 @@ public final class AndroidActionExecutor {
 
     private static final Map<String, String[]> APP_PACKAGES = new LinkedHashMap<>();
     static {
-        APP_PACKAGES.put("whatsapp", new String[]{"com.whatsapp", "com.whatsapp.w4b"});
+        String[] whatsapp = new String[]{"com.whatsapp", "com.whatsapp.w4b"};
+        APP_PACKAGES.put("whatsapp", whatsapp);
+        APP_PACKAGES.put("whats", whatsapp);
+        APP_PACKAGES.put("wpp", whatsapp);
+        APP_PACKAGES.put("zap", whatsapp);
+        APP_PACKAGES.put("zap zap", whatsapp);
         APP_PACKAGES.put("whatsapp business", new String[]{"com.whatsapp.w4b", "com.whatsapp"});
         APP_PACKAGES.put("spotify", new String[]{"com.spotify.music"});
         APP_PACKAGES.put("youtube", new String[]{"com.google.android.youtube"});
@@ -46,6 +52,7 @@ public final class AndroidActionExecutor {
         APP_PACKAGES.put("instagram", new String[]{"com.instagram.android"});
         APP_PACKAGES.put("telegram", new String[]{"org.telegram.messenger"});
         APP_PACKAGES.put("discord", new String[]{"com.discord"});
+        APP_PACKAGES.put("tiktok", new String[]{"com.zhiliaoapp.musically"});
         APP_PACKAGES.put("drive", new String[]{"com.google.android.apps.docs"});
         APP_PACKAGES.put("google drive", new String[]{"com.google.android.apps.docs"});
         APP_PACKAGES.put("fotos", new String[]{"com.google.android.apps.photos"});
@@ -103,24 +110,29 @@ public final class AndroidActionExecutor {
         return Normalizer.normalize(String.valueOf(value == null ? "" : value), Normalizer.Form.NFD)
                 .replaceAll("\\p{M}+", "")
                 .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9. ]+", " ")
                 .replaceAll("\\s+", " ")
                 .trim();
     }
 
     private static void launch(Context context, Intent intent) {
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        context.startActivity(intent);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        if (SextaAccessibilityService.launch(intent)) return;
+        try {
+            context.startActivity(intent);
+        } catch (Exception error) {
+            throw new IllegalStateException("ANDROID_APP_LAUNCH_BLOCKED: habilite 'Controle da SEXTA' em Acessibilidade", error);
+        }
     }
 
     private static JSONObject openApp(Context context, JSONObject payload) throws Exception {
         String requested = normalize(payload.optString("app", payload.optString("package", "")));
         if (requested.isEmpty()) throw new IllegalArgumentException("ANDROID_APP_REQUIRED");
         if (requested.equals("camera")) {
-            Intent camera = new Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA);
-            launch(context, camera);
+            launch(context, new Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA));
             return new JSONObject().put("opened", "camera");
         }
-        if (requested.equals("configuracoes") || requested.equals("settings")) {
+        if (requested.equals("configuracoes") || requested.equals("settings") || requested.equals("ajustes")) {
             return openSettings(context, payload);
         }
 
@@ -131,11 +143,39 @@ public final class AndroidActionExecutor {
 
         PackageManager pm = context.getPackageManager();
         for (String packageName : candidates) {
-            Intent launch = pm.getLaunchIntentForPackage(packageName);
-            if (launch != null) {
-                launch(context, launch);
-                return new JSONObject().put("app", requested).put("package", packageName).put("opened", true);
+            Intent appIntent = pm.getLaunchIntentForPackage(packageName);
+            if (appIntent != null) {
+                launch(context, appIntent);
+                return new JSONObject().put("app", requested).put("package", packageName).put("opened", true).put("matchedBy", "package");
             }
+        }
+
+        Intent launcherQuery = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
+        List<ResolveInfo> installed = pm.queryIntentActivities(launcherQuery, PackageManager.MATCH_ALL);
+        ResolveInfo best = null;
+        int bestScore = -1;
+        for (ResolveInfo info : installed) {
+            if (info == null || info.activityInfo == null) continue;
+            String label = normalize(String.valueOf(info.loadLabel(pm)));
+            String pkg = normalize(info.activityInfo.packageName);
+            int score = -1;
+            if (label.equals(requested)) score = 100;
+            else if (label.startsWith(requested) || requested.startsWith(label)) score = 80;
+            else if (label.contains(requested) || requested.contains(label)) score = 60;
+            else if (pkg.contains(requested.replace(" ", ""))) score = 40;
+            if (score > bestScore) { bestScore = score; best = info; }
+        }
+        if (best != null && bestScore >= 40) {
+            Intent appIntent = new Intent(Intent.ACTION_MAIN)
+                    .addCategory(Intent.CATEGORY_LAUNCHER)
+                    .setComponent(new ComponentName(best.activityInfo.packageName, best.activityInfo.name));
+            launch(context, appIntent);
+            return new JSONObject()
+                    .put("app", requested)
+                    .put("package", best.activityInfo.packageName)
+                    .put("label", String.valueOf(best.loadLabel(pm)))
+                    .put("opened", true)
+                    .put("matchedBy", "launcher_label");
         }
         throw new IllegalArgumentException("ANDROID_APP_NOT_FOUND: " + requested);
     }
@@ -168,7 +208,6 @@ public final class AndroidActionExecutor {
         String wanted = normalize(requested);
         if (wanted.isEmpty()) return true;
         if (actual.equals(requested)) return true;
-        if (wanted.equals("whatsapp")) return actual.equals("com.whatsapp") || actual.equals("com.whatsapp.w4b");
         String[] aliases = APP_PACKAGES.get(wanted);
         if (aliases != null) for (String value : aliases) if (actual.equals(value)) return true;
         return false;
@@ -191,7 +230,6 @@ public final class AndroidActionExecutor {
                 return new JSONObject().put("media", command).put("package", controller.getPackageName()).put("via", "media_session");
             }
         } catch (SecurityException ignored) {}
-
         AudioManager audio = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
         audio.dispatchMediaKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, keyCode));
         audio.dispatchMediaKeyEvent(new KeyEvent(KeyEvent.ACTION_UP, keyCode));
@@ -240,8 +278,7 @@ public final class AndroidActionExecutor {
         Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text);
         String packageName = payload.optString("package", "").trim();
         if (!packageName.isEmpty()) send.setPackage(packageName);
-        Intent chooser = packageName.isEmpty() ? Intent.createChooser(send, "Compartilhar com") : send;
-        launch(context, chooser);
+        launch(context, packageName.isEmpty() ? Intent.createChooser(send, "Compartilhar com") : send);
         return new JSONObject().put("shared", true).put("length", text.length());
     }
 
@@ -266,10 +303,9 @@ public final class AndroidActionExecutor {
         Intent intent;
         if (section.contains("wifi")) intent = new Intent(Settings.ACTION_WIFI_SETTINGS);
         else if (section.contains("bluetooth")) intent = new Intent(Settings.ACTION_BLUETOOTH_SETTINGS);
-        else if (section.contains("notific")) {
-            intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                    .putExtra(Settings.EXTRA_APP_PACKAGE, context.getPackageName());
-        } else intent = new Intent(Settings.ACTION_SETTINGS);
+        else if (section.contains("acessibilidade") || section.contains("accessibility")) intent = new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS);
+        else if (section.contains("notific")) intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.getPackageName());
+        else intent = new Intent(Settings.ACTION_SETTINGS);
         launch(context, intent);
         return new JSONObject().put("settings", section.isEmpty() ? "general" : section);
     }
@@ -288,6 +324,7 @@ public final class AndroidActionExecutor {
                 .put("batteryPercent", batteryPercent)
                 .put("musicVolume", audio == null ? -1 : audio.getStreamVolume(AudioManager.STREAM_MUSIC))
                 .put("bluetoothEnabled", bt != null && bt.isEnabled())
+                .put("accessibilityConnected", SextaAccessibilityService.isConnected())
                 .put("doNotDisturbAccess", nm != null && nm.isNotificationPolicyAccessGranted());
     }
 }
