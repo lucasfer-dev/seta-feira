@@ -10,12 +10,13 @@ const nativeJava = path.join(appRoot, 'native', 'java');
 
 if (!fs.existsSync(javaTarget)) throw new Error('Projeto Android preparado não encontrado. Rode prepare-android primeiro.');
 
-for (const name of ['AndroidActionExecutor.java', 'AndroidCommandLoop.java', 'SextaAccessibilityService.java']) {
+for (const name of ['AndroidActionExecutor.java', 'AndroidCommandLoop.java', 'CloudVoiceActionBridge.java', 'SextaAccessibilityService.java']) {
   fs.copyFileSync(path.join(nativeJava, name), path.join(javaTarget, name));
 }
 
 const servicePath = path.join(javaTarget, 'SextaForegroundService.java');
 let service = fs.readFileSync(servicePath, 'utf8');
+
 if (!service.includes('AndroidCommandLoop.start(this);')) {
   service = service.replace(
     '        super.onCreate();\n        createNotificationChannel();',
@@ -29,68 +30,250 @@ if (!service.includes('AndroidCommandLoop.stop();')) {
   );
 }
 
-// If the command is spoken together with the wake phrase, execute it locally and
-// do not open Gemini Live. Example: "Sexta-feira, abre o WhatsApp".
-if (!service.includes('boolean localHandled = AndroidCommandLoop.executeText(this, pendingWakeCommand);')) {
+// Capture the first utterance after the wake phrase locally. This guarantees
+// that Android, Evolution API and Google Workspace actions are attempted before
+// the request is ever sent to Gemini Live.
+if (!service.includes('commandCaptureActive')) {
   service = service.replace(
-    '        pendingWakeCommand = tailAfterWake(heard);\n        stopWakeListening();',
-    `        pendingWakeCommand = tailAfterWake(heard);
-        if (!pendingWakeCommand.isEmpty()) {
-            boolean localHandled = AndroidCommandLoop.executeText(this, pendingWakeCommand);
-            if (localHandled) {
-                String executedCommand = pendingWakeCommand;
-                pendingWakeCommand = "";
-                stopWakeListening();
-                updateNotification("Comando executado • " + executedCommand);
-                io.execute(() -> {
-                    try { Thread.sleep(650); } catch (InterruptedException ignored) {}
-                    if (!webConversationActive && !nativeConversationActive) startWakeListening();
-                });
-                return;
-            }
-        }
-        stopWakeListening();`
+    '    private volatile boolean wakeSeen = false;',
+    `    private volatile boolean wakeSeen = false;
+    private volatile boolean commandCaptureActive = false;
+    private volatile boolean commandCapturePending = false;
+    private volatile String commandCaptureText = "";
+    private volatile long commandCaptureSession = 0L;`
   );
 }
 
-// If the user says the action after the wake beep, Gemini Live may already be
-// connected. Intercept the input transcription before model audio is handled.
-if (!service.includes('finishNativeAfterLocalAction(localCommand);')) {
-  service = service.replace(
-`            if (inTrans != null) {
-                inputTranscript = mergeTranscript(inputTranscript, inTrans.optString("text", ""));
-                if (isVoiceOffCommand(inputTranscript)) {`,
-`            if (inTrans != null) {
-                inputTranscript = mergeTranscript(inputTranscript, inTrans.optString("text", ""));
-                if (!inputTranscript.isEmpty() && AndroidCommandLoop.executeText(this, inputTranscript)) {
-                    String localCommand = inputTranscript;
-                    persistTurn(localCommand, "Ação executada no Android.");
-                    finishNativeAfterLocalAction(localCommand);
-                    return;
-                }
-                if (isVoiceOffCommand(inputTranscript)) {`
-  );
-
-  service = service.replace(
-    '    private synchronized void finishNativeConversation(boolean byVoice) {',
-`    private synchronized void finishNativeAfterLocalAction(String command) {
-        nativeConversationActive = false;
-        stopLiveAudio();
-        if (liveSocket != null) {
-            try { liveSocket.close(1000, "local android action"); } catch (Exception ignored) {}
-            liveSocket = null;
+service = service.replace(
+`    @Override public void onPartialResult(String hypothesis) {
+        if (!wakeArmed) return;
+        String text = jsonText(hypothesis);
+        if (containsWake(text)) wakeSeen = true;
+    }`,
+`    @Override public void onPartialResult(String hypothesis) {
+        String text = jsonText(hypothesis);
+        if (commandCaptureActive) {
+            if (!text.isEmpty()) commandCaptureText = text;
+            return;
         }
+        if (!wakeArmed) return;
+        if (containsWake(text)) wakeSeen = true;
+    }`
+);
+
+service = service.replace(
+`    @Override public void onResult(String hypothesis) {
+        if (!wakeArmed) return;
+        String text = jsonText(hypothesis);
+        if (wakeSeen || containsWake(text)) activateFromWake(text);
+    }`,
+`    @Override public void onResult(String hypothesis) {
+        String text = jsonText(hypothesis);
+        if (commandCaptureActive) {
+            finishCommandCapture(text);
+            return;
+        }
+        if (!wakeArmed) return;
+        if (wakeSeen || containsWake(text)) activateFromWake(text);
+    }`
+);
+
+service = service.replace(
+`    @Override public void onFinalResult(String hypothesis) {
+        if (!wakeArmed) return;
+        String text = jsonText(hypothesis);
+        if (wakeSeen || containsWake(text)) activateFromWake(text);
+        else if (!webConversationActive && !nativeConversationActive) io.execute(() -> { try { Thread.sleep(120); } catch (InterruptedException ignored) {} startWakeListening(); });
+    }`,
+`    @Override public void onFinalResult(String hypothesis) {
+        String text = jsonText(hypothesis);
+        if (commandCaptureActive) {
+            finishCommandCapture(text);
+            return;
+        }
+        if (!wakeArmed) return;
+        if (wakeSeen || containsWake(text)) activateFromWake(text);
+        else if (!webConversationActive && !nativeConversationActive && !commandCapturePending) io.execute(() -> { try { Thread.sleep(120); } catch (InterruptedException ignored) {} startWakeListening(); });
+    }`
+);
+
+service = service.replace(
+`    @Override public void onError(Exception exception) {
+        stopWakeListening();
+        if (!webConversationActive && !nativeConversationActive) io.execute(() -> { try { Thread.sleep(700); } catch (InterruptedException ignored) {} startWakeListening(); });
+    }`,
+`    @Override public void onError(Exception exception) {
+        if (commandCaptureActive) {
+            finishCommandCapture(commandCaptureText);
+            return;
+        }
+        stopWakeListening();
+        if (!webConversationActive && !nativeConversationActive && !commandCapturePending) io.execute(() -> { try { Thread.sleep(700); } catch (InterruptedException ignored) {} startWakeListening(); });
+    }`
+);
+
+service = service.replace(
+`    @Override public void onTimeout() {
+        stopWakeListening();
+        if (!webConversationActive && !nativeConversationActive) startWakeListening();
+    }`,
+`    @Override public void onTimeout() {
+        if (commandCaptureActive) {
+            finishCommandCapture(commandCaptureText);
+            return;
+        }
+        stopWakeListening();
+        if (!webConversationActive && !nativeConversationActive && !commandCapturePending) startWakeListening();
+    }`
+);
+
+service = service.replace(
+`    private synchronized void activateFromWake(String heard) {
+        if (nativeConversationActive) return;
+        pendingWakeCommand = tailAfterWake(heard);
+        stopWakeListening();
+        nativeConversationActive = true;
         inputTranscript = "";
         outputTranscript = "";
-        pendingWakeCommand = "";
-        updateNotification("Comando executado • aguardando “Sexta-feira”");
-        if (!webConversationActive) io.execute(() -> {
-            try { Thread.sleep(500); } catch (InterruptedException ignored) {}
-            startWakeListening();
+        updateNotification("SEXTA ativa • conectando Gemini Live...");
+        io.execute(this::connectNativeLive);
+    }`,
+`    private synchronized void activateFromWake(String heard) {
+        if (nativeConversationActive || commandCaptureActive || commandCapturePending) return;
+        pendingWakeCommand = tailAfterWake(heard);
+        stopWakeListening();
+
+        if (!pendingWakeCommand.isEmpty()) {
+            routeCapturedCommand(pendingWakeCommand);
+            return;
+        }
+
+        commandCapturePending = true;
+        updateNotification("SEXTA ativa • preparando comando...");
+        io.execute(() -> {
+            try { Thread.sleep(260L); } catch (InterruptedException ignored) {}
+            synchronized (SextaForegroundService.this) {
+                commandCapturePending = false;
+                if (!webConversationActive && !nativeConversationActive) startCommandCapture();
+            }
         });
     }
 
-    private synchronized void finishNativeConversation(boolean byVoice) {`
+    private synchronized void startCommandCapture() {
+        if (wakeModel == null || commandCaptureActive || nativeConversationActive || webConversationActive) {
+            if (!nativeConversationActive && !webConversationActive) startNativeConversationWithText("");
+            return;
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            updateNotification("Abra a SEXTA e permita o microfone");
+            scheduleWakeRestart(1200L);
+            return;
+        }
+        try {
+            Recognizer recognizer = new Recognizer(wakeModel, INPUT_RATE);
+            wakeSpeech = new SpeechService(recognizer, INPUT_RATE);
+            commandCaptureText = "";
+            commandCaptureActive = true;
+            wakeArmed = true;
+            final long session = ++commandCaptureSession;
+            wakeSpeech.startListening(this);
+            updateNotification("SEXTA ativa • diga o comando...");
+            ToneGenerator tone = new ToneGenerator(AudioManager.STREAM_MUSIC, 45);
+            tone.startTone(ToneGenerator.TONE_PROP_ACK, 100);
+            io.execute(() -> {
+                try { Thread.sleep(160L); } catch (InterruptedException ignored) {}
+                try { tone.release(); } catch (Exception ignored) {}
+            });
+            io.execute(() -> {
+                try { Thread.sleep(4300L); } catch (InterruptedException ignored) {}
+                synchronized (SextaForegroundService.this) {
+                    if (commandCaptureActive && session == commandCaptureSession) finishCommandCapture(commandCaptureText);
+                }
+            });
+        } catch (Exception error) {
+            commandCaptureActive = false;
+            updateNotification("Falha ao ouvir comando local");
+            startNativeConversationWithText("");
+        }
+    }
+
+    private synchronized void finishCommandCapture(String heard) {
+        if (!commandCaptureActive) return;
+        commandCaptureActive = false;
+        commandCaptureSession++;
+        String captured = String.valueOf(heard == null ? "" : heard).trim();
+        if (captured.isEmpty()) captured = commandCaptureText == null ? "" : commandCaptureText.trim();
+        commandCaptureText = "";
+        stopWakeListening();
+        if (captured.isEmpty()) {
+            startNativeConversationWithText("");
+            return;
+        }
+        routeCapturedCommand(captured);
+    }
+
+    private void routeCapturedCommand(String captured) {
+        final String command = String.valueOf(captured == null ? "" : captured).trim();
+        if (command.isEmpty()) {
+            startNativeConversationWithText("");
+            return;
+        }
+
+        JSONObject localStatus = AndroidCommandLoop.executeTextResult(this, command);
+        if (localStatus.optBoolean("handled", false)) {
+            completeRoutedAction(command, "android", localStatus);
+            return;
+        }
+
+        updateNotification("SEXTA ativa • verificando integrações...");
+        io.execute(() -> {
+            JSONObject cloudStatus = CloudVoiceActionBridge.execute(SextaForegroundService.this, command);
+            synchronized (SextaForegroundService.this) {
+                if (cloudStatus.optBoolean("handled", false)) {
+                    completeRoutedAction(command, cloudStatus.optString("provider", "cloud"), cloudStatus);
+                } else {
+                    startNativeConversationWithText(command);
+                }
+            }
+        });
+    }
+
+    private synchronized void completeRoutedAction(String command, String provider, JSONObject status) {
+        boolean ok = status.optBoolean("ok", false);
+        String reply = status.optString("reply", status.optString("message", ok ? "Ação executada." : "Não consegui executar a ação."));
+        if (reply.length() > 180) reply = reply.substring(0, 180);
+        updateNotification((ok ? "✓ " : "⚠ ") + reply);
+        if ("android".equals(provider)) persistTurn(command, ok ? "Ação executada no Android." : "Falha Android: " + reply);
+        scheduleWakeRestart(ok ? 900L : 2600L);
+    }
+
+    private void scheduleWakeRestart(long delayMs) {
+        io.execute(() -> {
+            try { Thread.sleep(delayMs); } catch (InterruptedException ignored) {}
+            if (!webConversationActive && !nativeConversationActive && !commandCaptureActive && !commandCapturePending) startWakeListening();
+        });
+    }
+
+    private synchronized void startNativeConversationWithText(String text) {
+        pendingWakeCommand = String.valueOf(text == null ? "" : text).trim();
+        nativeConversationActive = true;
+        inputTranscript = "";
+        outputTranscript = "";
+        updateNotification("SEXTA ativa • conectando Gemini Live...");
+        io.execute(this::connectNativeLive);
+    }`
+);
+
+// Keep transcription explicit on the Android setup; the ephemeral token also
+// locks these fields server-side.
+if (!service.includes('.put("inputAudioTranscription", new JSONObject())')) {
+  service = service.replace(
+`                                .put("model", "models/" + liveModel)
+                                .put("generationConfig", new JSONObject().put("responseModalities", new JSONArray().put("AUDIO"))));`,
+`                                .put("model", "models/" + liveModel)
+                                .put("generationConfig", new JSONObject().put("responseModalities", new JSONArray().put("AUDIO")))
+                                .put("inputAudioTranscription", new JSONObject())
+                                .put("outputAudioTranscription", new JSONObject()));`
   );
 }
 
@@ -151,4 +334,4 @@ fs.writeFileSync(path.join(xmlDir, 'sexta_accessibility_service.xml'), `<?xml ve
     android:canPerformGestures="false"
     android:settingsActivity="com.sexta.assistant.MainActivity" />\n`);
 
-console.log('SEXTA Android Actions preparado: ações locais interceptadas antes do Gemini Live, visibilidade de apps e bridge de acessibilidade incluídas.');
+console.log('SEXTA Android Actions preparado: Android -> Evolution/Google -> Gemini, nesta ordem.');

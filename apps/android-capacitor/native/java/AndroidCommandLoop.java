@@ -49,22 +49,53 @@ public final class AndroidCommandLoop {
         }
     }
 
-    public static boolean executeText(Context context, String text) {
-        if (context == null) return false;
+    public static JSONObject executeTextResult(Context context, String text) {
+        JSONObject status = new JSONObject();
+        JSONObject command = null;
         try {
-            JSONObject command = inferLocalAction(text);
-            if (command == null) return false;
+            status.put("text", String.valueOf(text == null ? "" : text));
+            if (context == null) {
+                return status.put("handled", false).put("ok", false).put("message", "ANDROID_CONTEXT_MISSING");
+            }
+            command = inferLocalAction(text);
+            if (command == null) {
+                return status.put("handled", false).put("ok", false).put("message", "ANDROID_ACTION_NOT_RECOGNIZED");
+            }
+
+            String action = command.optString("action", "");
             JSONObject payload = command.optJSONObject("payload");
             if (payload == null) payload = new JSONObject();
-            AndroidActionExecutor.execute(context, command.optString("action", ""), payload);
+            status.put("handled", true).put("action", action).put("payload", payload);
+
+            JSONObject result = AndroidActionExecutor.execute(context, action, payload);
+            status.put("ok", true).put("result", result).put("message", "Executado pelo Android.");
             context.getSharedPreferences("sexta_native", Context.MODE_PRIVATE).edit()
                     .putString("last_android_direct_text", normalize(text))
                     .putLong("last_android_direct_at", System.currentTimeMillis())
+                    .putString("last_android_action_status", status.toString())
+                    .putLong("last_android_action_at", System.currentTimeMillis())
                     .apply();
-            return true;
-        } catch (Exception ignored) {
-            return false;
+            return status;
+        } catch (Exception error) {
+            try {
+                boolean handled = command != null;
+                String message = error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage();
+                status.put("handled", handled).put("ok", false).put("message", message);
+                if (command != null) status.put("action", command.optString("action", ""));
+                if (context != null) {
+                    context.getSharedPreferences("sexta_native", Context.MODE_PRIVATE).edit()
+                            .putString("last_android_action_status", status.toString())
+                            .putLong("last_android_action_at", System.currentTimeMillis())
+                            .apply();
+                }
+            } catch (Exception ignored) {}
+            return status;
         }
+    }
+
+    public static boolean executeText(Context context, String text) {
+        JSONObject status = executeTextResult(context, text);
+        return status.optBoolean("handled", false) && status.optBoolean("ok", false);
     }
 
     private static String token(Context context) {
@@ -178,7 +209,7 @@ public final class AndroidCommandLoop {
             long directAt = context.getSharedPreferences("sexta_native", Context.MODE_PRIVATE).getLong("last_android_direct_at", 0L);
             context.getSharedPreferences("sexta_native", Context.MODE_PRIVATE).edit().putString("last_android_voice_action_message", id).apply();
             if (normalized.equals(direct) && System.currentTimeMillis() - directAt < 20000L) return;
-            executeText(context, content);
+            executeTextResult(context, content);
         } catch (Exception ignored) {}
     }
 
@@ -208,13 +239,13 @@ public final class AndroidCommandLoop {
         if (t.matches(".*\\b(liga|acende)\\b.*\\b(lanterna|flash)\\b.*")) return command("flashlight", new JSONObject().put("enabled", true));
         if (t.matches(".*\\b(desliga|apaga)\\b.*\\b(lanterna|flash)\\b.*")) return command("flashlight", new JSONObject().put("enabled", false));
 
-        Matcher open = Pattern.compile("(?i)\\b(?:abre|abrir|abra)\\s+(?:o\\s+|a\\s+|app\\s+|aplicativo\\s+)?(.+)$").matcher(t);
+        Matcher open = Pattern.compile("(?i)\\b(?:abre|abrir|abra|inicia|iniciar|abre ai|abre aí)\\s+(?:o\\s+|a\\s+|app\\s+|aplicativo\\s+)?(.+)$").matcher(t);
         if (open.find()) {
             String app = open.group(1)
                     .replaceAll("\\s+(?:no|nesse|neste)\\s+(?:celular|android|telefone).*$", "")
-                    .replaceAll("\\s+(?:pra mim|para mim)$", "")
+                    .replaceAll("\\s+(?:pra mim|para mim|por favor|pfv|prfv)$", "")
                     .trim();
-            if (app.equals("wpp") || app.equals("zap") || app.equals("zap zap") || app.equals("whats")) app = "whatsapp";
+            if (app.equals("wpp") || app.equals("zap") || app.equals("zap zap") || app.equals("whats") || app.equals("whats app")) app = "whatsapp";
             if (!app.isEmpty() && !app.matches("^(?:link|site|pagina|página|arquivo)$")) {
                 return command("open_app", new JSONObject().put("app", app));
             }
