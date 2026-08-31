@@ -1,10 +1,28 @@
-import { isOwner, maybeExtractMemory, parseJson, saveMemory, saveMessage, send } from '../lib/core.mjs';
+import { getMessages, isOwner, maybeExtractMemory, parseJson, saveMemory, saveMessage, send } from '../lib/core.mjs';
 
 function stripAssistantPrefix(text = '') {
   return String(text)
     .trim()
     .replace(/^sexta(?:[- ]feira)?\s*[,;:.-]?\s*/i, '')
     .trim();
+}
+
+function normalizeMemorySpeech(text = '') {
+  return stripAssistantPrefix(text)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[.,!?;:]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isReferenceMemoryRequest(text = '') {
+  const value = normalizeMemorySpeech(text);
+  if (!value) return false;
+  const hasSaveVerb = /^(?:guarda|guarde|guardar|salva|salve|salvar|anota|anote|anotar|memoriza|memorize|memorizar|registre|registrar|atualiza|atualize|atualizar|coloca|coloque|adiciona|adicione|adicionar)\b/.test(value);
+  if (!hasSaveVerb) return false;
+  return /\b(?:isso|essa informacao|esta informacao|essa coisa|isso ai|o que eu (?:acabei de )?falei|a informacao anterior|o que eu disse antes|de novo na (?:sua|minha) memoria essa informacao)\b/.test(value);
 }
 
 function classifyMemory(content = '') {
@@ -23,12 +41,15 @@ function classifyMemory(content = '') {
 
 function extractLiveMemory(text = '') {
   const clean = stripAssistantPrefix(text);
-  if (!clean) return null;
+  if (!clean || isReferenceMemoryRequest(clean)) return null;
 
   // Preserve the older deterministic rules too, but run them after removing
   // "Sexta-feira" because voice transcription commonly includes the full wake name.
   const legacy = maybeExtractMemory(clean);
-  if (legacy) return legacy;
+  if (legacy) {
+    const legacyContent = normalizeMemorySpeech(legacy.content);
+    if (!/^(?:isso|essa informacao|esta informacao|essa coisa|isso ai)$/.test(legacyContent)) return legacy;
+  }
 
   const patterns = [
     /^(?:salva|salve|salvar|guarda|guarde|guardar|anota|anote|anotar|memoriza|memorize|memorizar|registre|registrar)(?:\s+(?:isso|a[ií]))?(?:\s+(?:na|em)\s+(?:sua|minha)\s+mem[oó]ria)?(?:\s+agora)?\s*[,;:.-]*\s*(?:que\s+)?(.{5,})$/i,
@@ -42,10 +63,23 @@ function extractLiveMemory(text = '') {
     const match = clean.match(pattern);
     const content = String(match?.[1] || '').trim();
     if (!content) continue;
+    const normalized = normalizeMemorySpeech(content);
+    if (/^(?:isso|essa informacao|esta informacao|essa coisa|isso ai)$/.test(normalized)) continue;
     const { kind, importance } = classifyMemory(content);
     return { content, kind, importance, source: 'explicit_voice' };
   }
 
+  return null;
+}
+
+function resolveReferencedMemory(messages = []) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== 'user') continue;
+    const memory = extractLiveMemory(message.content);
+    if (!memory) continue;
+    return { ...memory, source: 'explicit_voice_reference' };
+  }
   return null;
 }
 
@@ -64,10 +98,18 @@ export default async function handler(req, res) {
   try {
     let memorySaved = false;
     let memory = null;
+    let recentMessages = [];
+
+    if (userText && isReferenceMemoryRequest(userText)) {
+      // Resolve "guarde isso / essa informação" only from a prior explicit
+      // user memory command. Never promote a model answer into permanent memory.
+      recentMessages = await getMessages(conversationId, 40);
+      memory = resolveReferencedMemory(recentMessages);
+    }
 
     if (userText) {
       await saveMessage({ conversation_id: conversationId, role: 'user', content: userText, device_id: deviceId });
-      memory = extractLiveMemory(userText);
+      if (!memory) memory = extractLiveMemory(userText);
       if (memory) {
         await saveMemory(memory);
         memorySaved = true;
@@ -85,6 +127,7 @@ export default async function handler(req, res) {
       ok: true,
       memorySaved,
       memoryKind: memory?.kind || null,
+      memoryResolvedFromContext: Boolean(memory && recentMessages.length),
       voiceEngine: 'gemini-live'
     });
   } catch (error) {
