@@ -256,11 +256,21 @@
   }
 
   async function handleServerMessage(event) {
+    let raw = event.data;
+    if (raw instanceof Blob) raw = await raw.text();
+    if (raw instanceof ArrayBuffer) raw = new TextDecoder().decode(raw);
+
     let message;
-    try { message = JSON.parse(event.data); } catch { return; }
+    try { message = JSON.parse(raw); }
+    catch (error) {
+      console.warn('Mensagem Live não-JSON:', raw, error);
+      return;
+    }
 
     if (message.setupComplete) {
       setupComplete = true;
+      if (turnTimeout) clearTimeout(turnTimeout);
+      turnTimeout = null;
       setHint('Gemini Live conectado • abrindo microfone...');
       try {
         await startMicrophone();
@@ -305,34 +315,42 @@
     outputTranscript = '';
     nextOutputTime = 0;
     voiceBtn.classList.add('active');
-    setHint('Conectando Gemini Live...');
+    setHint('Preparando Gemini Live...');
 
     try {
-      const session = await api('/api/live-token', { method: 'POST', body: '{}' });
-      if (!session?.token) throw new Error('token Live vazio');
       const systemInstruction = await buildSystemInstruction();
       if (!sessionActive) return;
 
+      const session = await api('/api/live-token', {
+        method: 'POST',
+        body: JSON.stringify({ systemInstruction })
+      });
+      if (!session?.token) throw new Error('token Live vazio');
+      if (!sessionActive) return;
+
+      setHint('Conectando Gemini Live...');
       const wsUrl = `${WS_BASE}?access_token=${encodeURIComponent(session.token)}`;
       websocket = new WebSocket(wsUrl);
 
       websocket.onopen = () => {
         if (!sessionActive) return;
-        setHint('Gemini Live conectado • configurando...');
+        setHint('Gemini Live conectado • validando sessão...');
+        // The effective setup is locked into the ephemeral token and already
+        // validated by Google. A first setup message is still required to start
+        // the Live RPC, but its contents are ignored when the token has a full
+        // bidiGenerateContentSetup with an empty field mask.
         websocket.send(JSON.stringify({
           setup: {
             model: `models/${session.model}`,
-            generationConfig: { responseModalities: ['AUDIO'] },
-            systemInstruction: { parts: [{ text: systemInstruction }] },
-            inputAudioTranscription: {},
-            outputAudioTranscription: {}
+            generationConfig: { responseModalities: ['AUDIO'] }
           }
         }));
       };
 
       websocket.onmessage = event => { void handleServerMessage(event); };
-      websocket.onerror = () => {
+      websocket.onerror = event => {
         if (!sessionActive) return;
+        console.warn('Gemini Live WebSocket error:', event);
         setHint('Gemini Live • erro de conexão');
       };
       websocket.onclose = event => {
@@ -349,11 +367,11 @@
           setHint('Gemini Live • timeout no handshake');
           cleanupSession(true);
         }
-      }, 15_000);
+      }, 12_000);
     } catch (error) {
       console.error('Gemini Live:', error);
       cleanupSession(true);
-      setHint(`Gemini Live indisponível • ${String(error?.message || error).slice(0, 80)}`);
+      setHint(`Gemini Live indisponível • ${String(error?.message || error).slice(0, 100)}`);
     }
   }
 
