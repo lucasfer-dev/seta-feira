@@ -185,7 +185,8 @@ export default async function handler(req, res) {
     try {
       pcm = await generatePcm(text);
     } catch (firstError) {
-      if (![429, 500, 502, 503].includes(Number(firstError?.status))) throw firstError;
+      // Never retry a 429 immediately: that only burns another request in the same quota window.
+      if (![500, 502, 503].includes(Number(firstError?.status))) throw firstError;
       pcm = await generatePcm(text);
     }
 
