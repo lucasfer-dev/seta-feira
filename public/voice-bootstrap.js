@@ -2,7 +2,6 @@
   if (!('speechSynthesis' in window)) return;
 
   const synth = window.speechSynthesis;
-  const nativeSpeak = synth.speak.bind(synth);
   const nativeCancel = synth.cancel.bind(synth);
   const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
 
@@ -30,6 +29,14 @@
     }
     if (audioContext.state === 'suspended') await audioContext.resume();
     return audioContext;
+  }
+
+  function authHeaders() {
+    const token = localStorage.getItem('sexta_token') || '';
+    return {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    };
   }
 
   function combineBytes(a, b) {
@@ -111,22 +118,58 @@
     }
   }
 
+  async function playBufferedGemini(text, utterance, generation) {
+    controller = new AbortController();
+    const response = await fetch('/api/tts', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ text, stream: false }),
+      signal: controller.signal
+    });
+    if (!response.ok) throw new Error(`Gemini TTS ${response.status}`);
+    if (generation !== playbackGeneration) return;
+
+    const wav = await response.arrayBuffer();
+    if (generation !== playbackGeneration) return;
+    const ctx = await ensureAudioContext(24000);
+    const decoded = await ctx.decodeAudioData(wav.slice(0));
+    if (generation !== playbackGeneration) return;
+
+    await new Promise((resolve, reject) => {
+      const source = ctx.createBufferSource();
+      source.buffer = decoded;
+      source.connect(ctx.destination);
+      activeSources.add(source);
+      source.onended = () => {
+        activeSources.delete(source);
+        resolve();
+      };
+      try {
+        utterance.onstart?.({ type: 'start', utterance });
+        source.start();
+      } catch (error) {
+        activeSources.delete(source);
+        reject(error);
+      }
+    });
+
+    if (generation === playbackGeneration) {
+      try { utterance.onend?.({ type: 'end', utterance }); } catch {}
+    }
+  }
+
   async function geminiSpeak(utterance) {
     const text = String(utterance?.text || '').trim();
     if (!text) return;
 
     stopGeminiAudio();
-    const generation = playbackGeneration;
+    let generation = playbackGeneration;
     controller = new AbortController();
 
     try {
-      const token = localStorage.getItem('sexta_token') || '';
       const response = await fetch('/api/tts', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {})
-        },
+        headers: authHeaders(),
         body: JSON.stringify({ text, stream: true }),
         signal: controller.signal
       });
@@ -138,9 +181,17 @@
       await playPcmStream(response, utterance, generation);
     } catch (error) {
       if (error?.name === 'AbortError' || generation !== playbackGeneration) return;
-      console.warn('Gemini TTS streaming indisponível; usando voz local.', error);
+      console.warn('Gemini TTS streaming indisponível; tentando Gemini TTS completo.', error);
+
       stopGeminiAudio();
-      nativeSpeak(utterance);
+      generation = playbackGeneration;
+      try {
+        await playBufferedGemini(text, utterance, generation);
+      } catch (fallbackError) {
+        if (fallbackError?.name === 'AbortError' || generation !== playbackGeneration) return;
+        console.error('Gemini TTS indisponível. A SEXTA não usará voz robótica.', fallbackError);
+        try { utterance.onerror?.({ type: 'error', error: 'gemini_tts_unavailable', utterance }); } catch {}
+      }
     } finally {
       if (generation === playbackGeneration) controller = null;
     }
@@ -152,8 +203,8 @@
       stopGeminiAudio();
       nativeCancel();
     };
-    window.__sextaGeminiTts = 'streaming';
+    window.__sextaGeminiTts = 'gemini-only-streaming';
   } catch (error) {
-    console.warn('Não consegui ativar o Gemini TTS; mantendo voz local.', error);
+    console.error('Não consegui ativar a voz Gemini da SEXTA.', error);
   }
 })();
