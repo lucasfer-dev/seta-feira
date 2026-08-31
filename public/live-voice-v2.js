@@ -8,8 +8,8 @@
   const INPUT_RATE = 16000;
   const OUTPUT_RATE = 24000;
   const IS_ANDROID = /Android/i.test(navigator.userAgent);
-  const OUTPUT_PREBUFFER_SEC = IS_ANDROID ? 0.14 : 0.05;
-  const OUTPUT_DRAIN_QUIET_MS = IS_ANDROID ? 260 : 140;
+  const OUTPUT_PREBUFFER_SEC = IS_ANDROID ? 0.24 : 0.08;
+  const OUTPUT_DRAIN_QUIET_MS = IS_ANDROID ? 360 : 180;
   const WS_BASE = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained';
 
   let websocket = null;
@@ -33,6 +33,10 @@
   let inputTranscript = '';
   let outputTranscript = '';
   let stoppingByVoice = false;
+  let voiceActionTimer = null;
+  let voiceActionSequence = 0;
+  let lastVoiceActionText = '';
+  let lastVoiceActionAt = 0;
 
   function setHint(text) {
     if (voiceHint) voiceHint.textContent = text;
@@ -66,6 +70,52 @@
     return /^(?:desativar|desative|desliga|desligue|desligar|encerrar|encerre|fechar|fecha|pare|parar)\s+(?:o\s+)?modo\s+de\s+voz$/.test(value)
       || /^(?:sair|saia)\s+do\s+modo\s+de\s+voz$/.test(value)
       || /^(?:desativar|desative|desliga|desligue|desligar)\s+(?:a\s+)?voz$/.test(value);
+  }
+
+  function looksLikeVoiceAction(text) {
+    const value = normalizeSpeech(text);
+    if (!value) return false;
+    return /\b(?:abre|abrir|abra|inicia|iniciar|liga|ligue|desliga|desligue|acende|apaga|aumenta|sobe|abaixa|diminui|reduz|volume|lanterna|flash|pausa|pause|toca|toque|play|continua|proxima|pula|anterior|responde|responder|responda|envia|enviar|mande|manda|agenda|calendario|calendar|gmail|email|e-mail|drive|documento|planilha|tarefa|whatsapp|wpp|zap)\b/.test(value);
+  }
+
+  async function routeVoiceAction(text, sequence) {
+    const clean = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!clean || !sessionActive || sequence !== voiceActionSequence || isVoiceOffCommand(clean) || !looksLikeVoiceAction(clean)) return;
+
+    const normalized = normalizeSpeech(clean);
+    const now = Date.now();
+    if (normalized === lastVoiceActionText && now - lastVoiceActionAt < 8000) return;
+    lastVoiceActionText = normalized;
+    lastVoiceActionAt = now;
+
+    try {
+      const plugin = window.Capacitor?.Plugins?.AssistantBridge || null;
+      const result = plugin?.executeVoiceCommand
+        ? await plugin.executeVoiceCommand({ text: clean })
+        : await api('/api/voice-action', {
+            method: 'POST',
+            body: JSON.stringify({
+              text: clean,
+              deviceId: localStorage.getItem('sexta_device_id') || 'live-browser'
+            })
+          });
+
+      if (!sessionActive || sequence !== voiceActionSequence || !result?.handled) return;
+      const reply = String(result.reply || result.message || (result.ok ? 'Ação executada.' : 'Não consegui executar a ação.')).trim();
+      setHint(`${result.ok ? '✓' : '⚠'} ${reply.slice(0, 110)}`);
+    } catch (error) {
+      console.warn('Roteamento de ação por voz:', error);
+    }
+  }
+
+  function scheduleVoiceAction(text) {
+    if (!looksLikeVoiceAction(text)) return;
+    if (voiceActionTimer) clearTimeout(voiceActionTimer);
+    const sequence = ++voiceActionSequence;
+    voiceActionTimer = setTimeout(() => {
+      voiceActionTimer = null;
+      void routeVoiceAction(text, sequence);
+    }, 320);
   }
 
   function mergeTranscript(current, incoming) {
@@ -158,7 +208,7 @@
     lastOutputChunkAt = performance.now();
     source.onended = () => outputSources.delete(source);
     const now = ctx.currentTime;
-    if (nextOutputTime < now + 0.015) nextOutputTime = now + OUTPUT_PREBUFFER_SEC;
+    if (nextOutputTime < now + 0.02) nextOutputTime = now + OUTPUT_PREBUFFER_SEC;
     source.start(nextOutputTime);
     nextOutputTime += floats.length / sampleRate;
   }
@@ -217,7 +267,9 @@
     inputContext = new AudioContextCtor({ latencyHint: 'interactive' });
     if (inputContext.state === 'suspended') await inputContext.resume();
     inputSource = inputContext.createMediaStreamSource(mediaStream);
-    processor = inputContext.createScriptProcessor(2048, 1, 1);
+    // ~85-95 ms on common Android 44.1/48 kHz input devices. This is much
+    // closer to the Live API guidance than the previous ~40 ms chunks.
+    processor = inputContext.createScriptProcessor(4096, 1, 1);
     silentGain = inputContext.createGain();
     silentGain.gain.value = 0;
 
@@ -324,6 +376,9 @@
     setActiveUI(false);
     if (handshakeTimeout) clearTimeout(handshakeTimeout);
     handshakeTimeout = null;
+    if (voiceActionTimer) clearTimeout(voiceActionTimer);
+    voiceActionTimer = null;
+    voiceActionSequence += 1;
     stopMicrophone();
     stopOutput();
     if (closeSocket && websocket) {
@@ -378,6 +433,7 @@
         deactivateVoiceMode({ spoken: true });
         return;
       }
+      scheduleVoiceAction(inputTranscript);
     }
     if (content?.outputTranscription?.text) {
       outputTranscript = mergeTranscript(outputTranscript, content.outputTranscription.text);
@@ -387,15 +443,21 @@
     const parts = content?.modelTurn?.parts || [];
     for (const part of parts) {
       if (!part?.inlineData?.data || !sessionActive) continue;
-      assistantSpeaking = true;
-      captureEnabled = false;
+      if (!assistantSpeaking) {
+        assistantSpeaking = true;
+        captureEnabled = false;
+        // We intentionally pause the upstream mic while SEXTA speaks. Flushing
+        // the audio stream keeps server-side VAD from carrying stale mic audio
+        // into the next user turn.
+        sendRealtime({ audioStreamEnd: true });
+      }
       setHint('Gemini Live • falando...');
       await scheduleOutput(part.inlineData.data, part.inlineData.mimeType || 'audio/pcm;rate=24000');
     }
 
     if (interrupted) {
-      // Android/echo can cause a false interruption right at the speaker transition.
-      // Never throw away audio already buffered; drain it before reopening the mic.
+      // With NO_INTERRUPTION this should be rare. Never discard audio already
+      // queued locally; finish the contiguous playback before reopening the mic.
       if (assistantSpeaking || outputSources.size > 0) {
         captureEnabled = false;
         setHint('Gemini Live • finalizando fala...');
@@ -428,6 +490,8 @@
     nextOutputTime = 0;
     outputChunkVersion = 0;
     lastOutputChunkAt = 0;
+    lastVoiceActionText = '';
+    lastVoiceActionAt = 0;
     setActiveUI(true);
     setHint('Preparando Gemini Live...');
 
@@ -452,7 +516,18 @@
         websocket.send(JSON.stringify({
           setup: {
             model: `models/${session.model}`,
-            generationConfig: { responseModalities: ['AUDIO'] }
+            generationConfig: { responseModalities: ['AUDIO'] },
+            realtimeInputConfig: {
+              automaticActivityDetection: {
+                disabled: false,
+                startOfSpeechSensitivity: 'START_SENSITIVITY_LOW',
+                endOfSpeechSensitivity: 'END_SENSITIVITY_LOW',
+                prefixPaddingMs: 120,
+                silenceDurationMs: 600
+              },
+              activityHandling: 'NO_INTERRUPTION',
+              turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY'
+            }
           }
         }));
       };
