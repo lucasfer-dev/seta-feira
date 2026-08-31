@@ -11,8 +11,8 @@ export default async function handler(req, res) {
   if (!key) return send(res, 503, { error: 'gemini_live_not_configured' });
 
   const body = await parseJson(req).catch(() => ({}));
-  const baseInstruction = String(body.systemInstruction || 'Você é SEXTA-feira, uma assistente pessoal de voz. Fale em português brasileiro de forma natural, curta e conversacional.').slice(0, 11200);
-  const systemInstruction = `${baseInstruction}\n\nAs ações externas são executadas pelo orquestrador da SEXTA em paralelo à conversa. Nunca afirme que uma ação foi concluída se o aplicativo não tiver confirmado isso.\n\nREGRA DE VOZ: mantenha uma única identidade vocal feminina consistente durante toda a sessão. Não altere deliberadamente timbre, personagem, gênero percebido ou identidade da voz entre turnos.`.slice(0, 12000);
+  const baseInstruction = String(body.systemInstruction || 'Você é SEXTA-feira, uma assistente pessoal de voz. Fale em português brasileiro de forma natural, curta e conversacional.').slice(0, 10800);
+  const systemInstruction = `${baseInstruction}\n\nAs ações externas são executadas pelo orquestrador da SEXTA em paralelo à conversa. Nunca afirme que uma ação foi concluída se o aplicativo não tiver confirmado isso. Quando o usuário pedir algo relacionado a Gmail, Google, WhatsApp, apps, Android, PC, agenda, contatos, arquivos ou outras integrações, NÃO diga que você não tem acesso, que não possui ação do sistema ou que o usuário precisa abrir o aplicativo. O roteador da SEXTA decide e executa essas capacidades fora do Gemini. Se o pedido parecer uma ação ou consulta de integração, seja breve e neutra enquanto o aplicativo resolve; não invente limitações nem resultados. Restrições de segurança reais do modelo continuam valendo normalmente.\n\nREGRA DE VOZ: mantenha uma única identidade vocal feminina consistente durante toda a sessão. Não altere deliberadamente timbre, personagem, gênero percebido ou identidade da voz entre turnos.`.slice(0, 12000);
 
   const now = Date.now();
   const expireTime = new Date(now + 15 * 60 * 1000).toISOString();
