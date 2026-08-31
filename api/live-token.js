@@ -11,12 +11,24 @@ export default async function handler(req, res) {
   if (!key) return send(res, 503, { error: 'gemini_live_not_configured' });
 
   const body = await parseJson(req).catch(() => ({}));
-  const baseInstruction = String(body.systemInstruction || 'Você é SEXTA-feira, uma assistente pessoal de voz. Fale em português brasileiro de forma natural, curta e conversacional.').slice(0, 11500);
-  const systemInstruction = `${baseInstruction}\n\nREGRA DE VOZ: mantenha uma única identidade vocal feminina consistente durante toda a sessão. Não altere deliberadamente timbre, personagem, gênero percebido ou identidade da voz entre turnos.`.slice(0, 12000);
+  const baseInstruction = String(body.systemInstruction || 'Você é SEXTA-feira, uma assistente pessoal de voz. Fale em português brasileiro de forma natural, curta e conversacional.').slice(0, 11200);
+  const systemInstruction = `${baseInstruction}\n\nAs ações externas são executadas pelo orquestrador da SEXTA em paralelo à conversa. Nunca afirme que uma ação foi concluída se o aplicativo não tiver confirmado isso.\n\nREGRA DE VOZ: mantenha uma única identidade vocal feminina consistente durante toda a sessão. Não altere deliberadamente timbre, personagem, gênero percebido ou identidade da voz entre turnos.`.slice(0, 12000);
 
   const now = Date.now();
   const expireTime = new Date(now + 15 * 60 * 1000).toISOString();
   const newSessionExpireTime = new Date(now + 60 * 1000).toISOString();
+
+  const realtimeInputConfig = {
+    automaticActivityDetection: {
+      disabled: false,
+      startOfSpeechSensitivity: 'START_SENSITIVITY_LOW',
+      endOfSpeechSensitivity: 'END_SENSITIVITY_LOW',
+      prefixPaddingMs: 120,
+      silenceDurationMs: 600
+    },
+    activityHandling: 'NO_INTERRUPTION',
+    turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY'
+  };
 
   const setup = {
     model: `models/${LIVE_MODEL}`,
@@ -33,15 +45,13 @@ export default async function handler(req, res) {
     systemInstruction: {
       parts: [{ text: systemInstruction }]
     },
-    inputAudioTranscription: {},
-    outputAudioTranscription: {}
+    realtimeInputConfig,
+    inputAudioTranscription: { languageCodes: ['pt-BR'], mode: 'SMART' },
+    outputAudioTranscription: { languageCodes: ['pt-BR'], mode: 'SMART' },
+    contextWindowCompression: { slidingWindow: {} }
   };
 
   try {
-    // Lock model, audio modality and voice into the ephemeral token so every
-    // turn in this Live session requests the same prebuilt voice. Gemini 3.1
-    // Live is still preview, so the backend may occasionally drift despite the
-    // requested voice; the app keeps one long-lived session to minimize that.
     const response = await fetch('https://generativelanguage.googleapis.com/v1beta/auth_tokens', {
       method: 'POST',
       headers: {
@@ -69,7 +79,9 @@ export default async function handler(req, res) {
       voice: LIVE_VOICE,
       expireTime,
       newSessionExpireTime,
-      setupLocked: true
+      setupLocked: true,
+      actionRouter: 'sexta-tool-bus',
+      activityHandling: realtimeInputConfig.activityHandling
     });
   } catch (error) {
     console.error('Live token network failure:', error);

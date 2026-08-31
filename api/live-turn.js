@@ -1,4 +1,5 @@
 import { getMessages, isOwner, maybeExtractMemory, parseJson, saveMemory, saveMessage, send } from '../lib/core.mjs';
+import { absorbAutomaticMemory } from '../lib/auto-memory.mjs';
 
 const SHARED_CONVERSATION_ID = 'main';
 
@@ -40,15 +41,9 @@ function isReferenceMemoryRequest(text = '') {
 
 function classifyMemory(content = '') {
   const text = String(content).toLowerCase();
-  if (/\b(anivers[aá]rio|nascimento|data especial|evento|reuni[aã]o|consulta|compromisso|dia \d{1,2}|\d{1,2} de [a-zç]+)\b/i.test(text)) {
-    return { kind: 'event', importance: 0.92 };
-  }
-  if (/\b(prefiro|prefer[eê]ncia|gosto|n[aã]o gosto|favorit[oa])\b/i.test(text)) {
-    return { kind: 'preference', importance: 0.86 };
-  }
-  if (/\b(decidi|decis[aã]o|vamos usar|n[aã]o vamos usar|escolhi|escolhemos)\b/i.test(text)) {
-    return { kind: 'decision', importance: 0.88 };
-  }
+  if (/\b(anivers[aá]rio|nascimento|data especial|evento|reuni[aã]o|consulta|compromisso|dia \d{1,2}|\d{1,2} de [a-zç]+)\b/i.test(text)) return { kind: 'event', importance: 0.92 };
+  if (/\b(prefiro|prefer[eê]ncia|gosto|n[aã]o gosto|favorit[oa])\b/i.test(text)) return { kind: 'preference', importance: 0.86 };
+  if (/\b(decidi|decis[aã]o|vamos usar|n[aã]o vamos usar|escolhi|escolhemos)\b/i.test(text)) return { kind: 'decision', importance: 0.88 };
   return { kind: 'fact', importance: 0.88 };
 }
 
@@ -144,15 +139,19 @@ export default async function handler(req, res) {
       }
     }
 
-    if (assistantText) {
-      await saveMessage({ conversation_id: conversationId, role: 'assistant', content: assistantText, device_id: deviceId });
-    }
+    if (assistantText) await saveMessage({ conversation_id: conversationId, role: 'assistant', content: assistantText, device_id: deviceId });
+
+    let automatic = { saved: [], deleted: [] };
+    if (userText) automatic = await absorbAutomaticMemory({ userText, assistantText, source: 'auto-voice' });
 
     return send(res, 200, {
       ok: true,
       conversationId,
-      memorySaved,
-      memoryKind: memory?.kind || null,
+      memorySaved: memorySaved || automatic.saved.length > 0,
+      explicitMemorySaved: memorySaved,
+      automaticMemoriesSaved: automatic.saved.length,
+      automaticMemoriesReplaced: automatic.deleted?.length || 0,
+      memoryKind: memory?.kind || automatic.saved?.[0]?.kind || null,
       memoryResolvedFromContext: Boolean(memory && recentMessages.length),
       voiceEngine: 'gemini-live'
     });
