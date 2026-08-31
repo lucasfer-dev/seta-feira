@@ -26,12 +26,39 @@ function normalizeSpokenEmail(value = '') {
     .trim();
 }
 
+function detectDirectAddressEmailIntent(text = '') {
+  const raw = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!/\b(?:manda|mande|mandar|envia|envie|enviar)\b/i.test(raw)) return null;
+  if (!/\b(?:e-?mail|gmail)\b/i.test(raw)) return null;
+
+  const addressMatch = raw.match(/([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i);
+  if (!addressMatch?.[1]) return null;
+
+  const recipient = addressMatch[1].replace(/[),.;:!?]+$/g, '').trim();
+  let body = 'Teste da SEXTA';
+  let subject = 'Teste da SEXTA';
+
+  const beforeAddress = raw.slice(0, addressMatch.index).trim();
+  const testBody = beforeAddress.match(/\b(?:e-?mail|gmail)\s+de\s+(.+?)\s+(?:para|pra|pro|ao|à)\s*$/i);
+  if (testBody?.[1]) {
+    body = testBody[1].trim();
+    subject = /\bteste\b/i.test(body) ? 'Teste da SEXTA' : 'Mensagem da Sexta-feira';
+  }
+
+  const afterAddress = raw.slice((addressMatch.index || 0) + addressMatch[0].length).trim();
+  const trailingBody = afterAddress.match(/^(?:dizendo|falando|com\s+(?:a\s+)?(?:mensagem|texto)|mensagem)\s+(.+)$/i);
+  if (trailingBody?.[1]) {
+    body = trailingBody[1].trim();
+    subject = 'Mensagem da Sexta-feira';
+  }
+
+  return { action: 'gmail.send-smart', args: { recipient, subject, body } };
+}
+
 function detectExplicitEmailIntent(text = '') {
   const raw = String(text || '').replace(/\s+/g, ' ').trim();
   if (!raw || !/\b(?:e-?mail|gmail)\b/i.test(raw) || !/\b(?:manda|mande|mandar|envia|envie|enviar)\b/i.test(raw)) return null;
 
-  // Natural direct-address form: "envia um email de teste para nome@gmail.com".
-  // If the user supplied an address explicitly, never turn it into a Contacts lookup.
   let match = raw.match(/\b(?:manda|mande|mandar|envia|envie|enviar)\b\s+(?:um\s+)?(?:e-?mail|gmail)\s+de\s+(.+?)\s+(?:para|pra|pro|ao|à)\s+([^\s,;]+@[^\s,;]+)\s*$/i);
   if (match?.[1] && match?.[2]) {
     const body = String(match[1]).trim();
@@ -157,6 +184,11 @@ export default async function handler(req, res) {
   try {
     if (isGoogleAccountQuestion(text)) {
       return send(res, 200, await answerGoogleAccountQuestion(text, deviceId));
+    }
+
+    const directAddressIntent = detectDirectAddressEmailIntent(text);
+    if (directAddressIntent) {
+      return send(res, 200, await executeGoogleVoiceIntent(directAddressIntent, text, deviceId));
     }
 
     const explicitEmailIntent = detectExplicitEmailIntent(text);
