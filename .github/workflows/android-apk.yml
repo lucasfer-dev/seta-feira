@@ -3,7 +3,7 @@ name: Build SEXTA Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, fix/android-local-actions-before-gemini]
+    branches: [main]
     paths:
       - 'apps/android-capacitor/**'
       - 'public/**'
