@@ -15,6 +15,63 @@ function plannerReply(planned) {
   return '';
 }
 
+function normalizeSpokenEmail(value = '') {
+  const raw = String(value || '').trim();
+  if (!/\barroba\b/i.test(raw)) return raw;
+  return raw
+    .replace(/\s+arroba\s+/gi, '@')
+    .replace(/\s+ponto\s+/gi, '.')
+    .replace(/\s+/g, '')
+    .trim();
+}
+
+function detectExplicitEmailIntent(text = '') {
+  const raw = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!raw || !/\b(?:e-?mail|gmail)\b/i.test(raw) || !/\b(?:manda|mande|mandar|envia|envie|enviar)\b/i.test(raw)) return null;
+
+  let match = raw.match(/\b(?:manda|mande|mandar|envia|envie|enviar)\b\s+(?:um\s+)?(?:e-?mail|gmail)\s+(?:para|pra|pro|ao|à)\s+(.+?)\s+(?:com\s+(?:o\s+)?assunto\s+(.+?)\s+e\s+(?:a\s+)?(?:mensagem|texto)|dizendo|falando|com\s+(?:a\s+)?(?:mensagem|texto)|mensagem)\s+(.+)$/i);
+  if (match) {
+    const recipient = normalizeSpokenEmail(match[1]);
+    const subject = String(match[2] || 'Mensagem da Sexta-feira').trim();
+    const body = String(match[3] || '').trim();
+    if (recipient && body) return { action: 'gmail.send-smart', args: { recipient, subject, body } };
+  }
+
+  match = raw.match(/\b(?:manda|mande|mandar|envia|envie|enviar)\b\s+(?:um\s+)?(?:e-?mail|gmail)\s+(?:para|pra|pro|ao|à)\s+(.+?)\s+(?:dizendo|falando|com\s+(?:a\s+)?(?:mensagem|texto)|mensagem)\s+(.+)$/i);
+  if (match?.[1] && match?.[2]) {
+    return {
+      action: 'gmail.send-smart',
+      args: {
+        recipient: normalizeSpokenEmail(match[1]),
+        subject: 'Mensagem da Sexta-feira',
+        body: match[2].trim()
+      }
+    };
+  }
+
+  match = raw.match(/\b(?:manda|mande|mandar|envia|envie|enviar)\b\s+(?:para|pra|pro|ao|à)\s+(.+?)\s+(?:um\s+)?(?:e-?mail|gmail)\s+(?:dizendo|falando|com\s+(?:a\s+)?(?:mensagem|texto)|mensagem)\s+(.+)$/i);
+  if (match?.[1] && match?.[2]) {
+    return {
+      action: 'gmail.send-smart',
+      args: {
+        recipient: normalizeSpokenEmail(match[1]),
+        subject: 'Mensagem da Sexta-feira',
+        body: match[2].trim()
+      }
+    };
+  }
+
+  const recipientOnly = raw.match(/\b(?:manda|mande|mandar|envia|envie|enviar)\b\s+(?:um\s+)?(?:e-?mail|gmail)\s+(?:para|pra|pro|ao|à)\s+(.+?)\s*$/i);
+  if (recipientOnly?.[1]) {
+    return {
+      incomplete: true,
+      recipient: normalizeSpokenEmail(recipientOnly[1])
+    };
+  }
+
+  return null;
+}
+
 async function contextualPlannerInput(text) {
   const [messages, memories] = await Promise.all([
     getMessages(SHARED_CONVERSATION_ID, 10).catch(() => []),
@@ -36,6 +93,26 @@ async function persistActionTurn(text, reply, deviceId, source = 'tool-bus') {
   await absorbAutomaticMemory({ userText: text, assistantText: reply, source: 'auto-voice-action' });
 }
 
+async function executeGoogleVoiceIntent(intent, text, deviceId) {
+  const status = await googleStatus();
+  if (!status.configured) return { handled: true, ok: false, provider: 'google-workspace', action: intent.action, needsGoogleConfig: true, reply: 'O Google Workspace ainda não está configurado no servidor.' };
+  if (!status.connected) return { handled: true, ok: false, provider: 'google-workspace', action: intent.action, needsGoogleConnect: true, reply: 'Sua conta Google ainda precisa ser autorizada nas Integrações.' };
+
+  try {
+    const result = await executeWorkspaceAction(intent.action, intent.args);
+    if (intent.action === 'calendar.create') {
+      const title = String(intent.args.title || '').trim();
+      const date = String(intent.args.date || '').trim();
+      if (title && date) await saveMemory({ content: `${title}: ${date.split('-').reverse().join('/')}`, kind: 'event', importance: /anivers[aá]rio/i.test(title) ? 0.95 : 0.78, source: 'google-calendar' });
+    }
+    const reply = formatWorkspaceResult(intent, result);
+    await persistActionTurn(text, reply, deviceId, 'google-workspace');
+    return { handled: true, ok: true, provider: 'google-workspace', action: intent.action, reply, result };
+  } catch (error) {
+    return { handled: true, ok: false, provider: 'google-workspace', action: intent.action, reply: `Não consegui executar no Google Workspace: ${error.message}` };
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
   if (!isOwner(req)) return send(res, 401, { error: 'unauthorized' });
@@ -46,6 +123,27 @@ export default async function handler(req, res) {
   if (!text) return send(res, 400, { error: 'text_required' });
 
   try {
+    const explicitEmailIntent = detectExplicitEmailIntent(text);
+    if (explicitEmailIntent?.incomplete) {
+      return send(res, 200, {
+        handled: true,
+        ok: false,
+        provider: 'google-workspace',
+        action: 'gmail.send-smart',
+        needsEmailBody: true,
+        recipient: explicitEmailIntent.recipient,
+        reply: `Qual mensagem você quer enviar por e-mail para ${explicitEmailIntent.recipient}?`
+      });
+    }
+    if (explicitEmailIntent) {
+      return send(res, 200, await executeGoogleVoiceIntent(explicitEmailIntent, text, deviceId));
+    }
+
+    const workspaceIntent = detectWorkspaceIntent(text);
+    if (workspaceIntent) {
+      return send(res, 200, await executeGoogleVoiceIntent(workspaceIntent, text, deviceId));
+    }
+
     try {
       // Do not force the supplied device id into Android commands here. The Tool
       // Bus resolves the online Android itself, avoiding accidental dispatch to
@@ -88,27 +186,6 @@ export default async function handler(req, res) {
           return send(res, 200, { handled: true, ok: false, provider: 'evolution', action: whatsappIntent.action, needsRecipientChoice: true, candidates, reply: `Encontrei mais de um telefone para esse contato: ${names}.` });
         }
         return send(res, 200, { handled: true, ok: false, provider: 'evolution', action: whatsappIntent.action, reply: `Não consegui executar no WhatsApp: ${error.message}` });
-      }
-    }
-
-    const workspaceIntent = detectWorkspaceIntent(text);
-    if (workspaceIntent) {
-      const status = await googleStatus();
-      if (!status.configured) return send(res, 200, { handled: true, ok: false, provider: 'google-workspace', action: workspaceIntent.action, needsGoogleConfig: true, reply: 'O Google Workspace ainda não está configurado no servidor.' });
-      if (!status.connected) return send(res, 200, { handled: true, ok: false, provider: 'google-workspace', action: workspaceIntent.action, needsGoogleConnect: true, reply: 'Sua conta Google ainda precisa ser autorizada nas Integrações.' });
-
-      try {
-        const result = await executeWorkspaceAction(workspaceIntent.action, workspaceIntent.args);
-        if (workspaceIntent.action === 'calendar.create') {
-          const title = String(workspaceIntent.args.title || '').trim();
-          const date = String(workspaceIntent.args.date || '').trim();
-          if (title && date) await saveMemory({ content: `${title}: ${date.split('-').reverse().join('/')}`, kind: 'event', importance: /anivers[aá]rio/i.test(title) ? 0.95 : 0.78, source: 'google-calendar' });
-        }
-        const reply = formatWorkspaceResult(workspaceIntent, result);
-        await persistActionTurn(text, reply, deviceId, 'google-workspace');
-        return send(res, 200, { handled: true, ok: true, provider: 'google-workspace', action: workspaceIntent.action, reply, result });
-      } catch (error) {
-        return send(res, 200, { handled: true, ok: false, provider: 'google-workspace', action: workspaceIntent.action, reply: `Não consegui executar no Google Workspace: ${error.message}` });
       }
     }
 
