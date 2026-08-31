@@ -16,16 +16,27 @@
   let processor = null;
   let silentGain = null;
   let outputContext = null;
-  let outputSources = new Set();
   let nextOutputTime = 0;
+  const outputSources = new Set();
+
   let sessionActive = false;
   let setupComplete = false;
+  let captureEnabled = false;
+  let assistantSpeaking = false;
+  let handshakeTimeout = null;
   let inputTranscript = '';
   let outputTranscript = '';
-  let turnTimeout = null;
+  let stoppingByVoice = false;
 
   function setHint(text) {
     if (voiceHint) voiceHint.textContent = text;
+  }
+
+  function setActiveUI(active) {
+    voiceBtn.classList.toggle('active', active);
+    wakeBtn?.classList.toggle('active', active);
+    voiceBtn.setAttribute('aria-pressed', String(active));
+    if (wakeBtn) wakeBtn.setAttribute('aria-pressed', String(active));
   }
 
   function authHeaders(extra = {}) {
@@ -38,6 +49,17 @@
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.message || data.error || `Erro ${response.status}`);
     return data;
+  }
+
+  function normalizeSpeech(text) {
+    return String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[.,!?;:]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
+  function isVoiceOffCommand(text) {
+    const value = normalizeSpeech(text).replace(/^sexta(?: feira)?\s+/, '');
+    return /^(?:desativar|desative|desliga|desligue|desligar|encerrar|encerre|fechar|fecha|pare|parar)\s+(?:o\s+)?modo\s+de\s+voz$/.test(value)
+      || /^(?:sair|saia)\s+do\s+modo\s+de\s+voz$/.test(value)
+      || /^(?:desativar|desative|desliga|desligue|desligar)\s+(?:a\s+)?voz$/.test(value);
   }
 
   function mergeTranscript(current, incoming) {
@@ -75,9 +97,8 @@
 
   function bytesToBase64(bytes) {
     let binary = '';
-    const step = 8192;
-    for (let i = 0; i < bytes.length; i += step) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + step));
+    for (let i = 0; i < bytes.length; i += 8192) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
     }
     return btoa(binary);
   }
@@ -111,7 +132,7 @@
 
   async function scheduleOutput(base64, mimeType = '') {
     const bytes = base64ToBytes(base64);
-    if (!bytes.length) return;
+    if (!bytes.length || !sessionActive) return;
     const match = String(mimeType).match(/rate=(\d+)/i);
     const sampleRate = Number(match?.[1] || OUTPUT_RATE);
     const ctx = await ensureOutputContext();
@@ -135,15 +156,27 @@
     }
     outputSources.clear();
     nextOutputTime = 0;
+    assistantSpeaking = false;
+  }
+
+  function outputTailMs() {
+    if (!outputContext) return 30;
+    return Math.max(0, (nextOutputTime - outputContext.currentTime) * 1000) + 45;
   }
 
   function sendRealtime(payload) {
-    if (websocket?.readyState === WebSocket.OPEN && setupComplete) {
+    if (websocket?.readyState === WebSocket.OPEN && setupComplete && sessionActive) {
       websocket.send(JSON.stringify({ realtimeInput: payload }));
     }
   }
 
   async function startMicrophone() {
+    if (mediaStream) {
+      captureEnabled = true;
+      setHint('Gemini Live • ouvindo...');
+      return;
+    }
+
     mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         channelCount: 1,
@@ -161,7 +194,7 @@
     silentGain.gain.value = 0;
 
     processor.onaudioprocess = event => {
-      if (!sessionActive || websocket?.readyState !== WebSocket.OPEN || !setupComplete) return;
+      if (!sessionActive || !captureEnabled || assistantSpeaking || websocket?.readyState !== WebSocket.OPEN || !setupComplete) return;
       const raw = event.inputBuffer.getChannelData(0);
       const resampled = resampleLinear(raw, inputContext.sampleRate, INPUT_RATE);
       const pcm = floatToPcm16(resampled);
@@ -171,10 +204,12 @@
     inputSource.connect(processor);
     processor.connect(silentGain);
     silentGain.connect(inputContext.destination);
+    captureEnabled = true;
     setHint('Gemini Live • ouvindo...');
   }
 
   function stopMicrophone() {
+    captureEnabled = false;
     try { processor?.disconnect(); } catch {}
     try { inputSource?.disconnect(); } catch {}
     try { silentGain?.disconnect(); } catch {}
@@ -199,6 +234,8 @@
     return [
       'Você é SEXTA-feira, uma assistente pessoal de voz. Fale sempre em português brasileiro natural e conversacional.',
       'Fale de forma próxima, humana e confiante. Responda de forma curta por padrão.',
+      'O modo de voz é contínuo: depois de responder, aguarde naturalmente o próximo pedido sem encerrar a conversa.',
+      'Se o usuário disser para desativar, desligar, encerrar ou sair do modo de voz, não continue a resposta; o aplicativo encerrará a sessão localmente.',
       `Ajustes: humor ${settings.humor ?? 68}/100, sarcasmo ${settings.sarcasm ?? 42}/100, proatividade ${settings.proactivity ?? 55}/100, verbosidade ${settings.verbosity ?? 32}/100.`,
       'Nunca afirme que uma ação externa foi executada sem confirmação real de uma ferramenta.',
       memories ? `Memórias relevantes:\n${memories}` : '',
@@ -206,18 +243,18 @@
     ].filter(Boolean).join('\n\n');
   }
 
-  async function persistTurn() {
-    const userText = inputTranscript.replace(/\s+/g, ' ').trim();
-    const assistantText = outputTranscript.replace(/\s+/g, ' ').trim();
-    if (!userText && !assistantText) return;
+  async function persistTurn(userText, assistantText) {
+    const cleanUser = String(userText || '').replace(/\s+/g, ' ').trim();
+    const cleanAssistant = String(assistantText || '').replace(/\s+/g, ' ').trim();
+    if (!cleanUser && !cleanAssistant) return;
     try {
       await api('/api/live-turn', {
         method: 'POST',
         body: JSON.stringify({
           conversationId: localStorage.getItem('sexta_conversation') || 'main',
           deviceId: localStorage.getItem('sexta_device_id') || 'live-browser',
-          userText,
-          assistantText
+          userText: cleanUser,
+          assistantText: cleanAssistant
         })
       });
       document.querySelector('#syncBtn')?.click();
@@ -226,33 +263,52 @@
     }
   }
 
-  async function finishTurn() {
-    stopMicrophone();
-    const waitMs = outputContext ? Math.max(0, (nextOutputTime - outputContext.currentTime) * 1000) + 80 : 80;
-    await new Promise(resolve => setTimeout(resolve, waitMs));
-    await persistTurn();
-    cleanupSession(true);
-    setHint('Gemini Live pronto');
+  function resetTurnTranscripts() {
+    inputTranscript = '';
+    outputTranscript = '';
+  }
+
+  async function finishCurrentTurn() {
+    if (!sessionActive || stoppingByVoice) return;
+    captureEnabled = false;
+
+    const userText = inputTranscript;
+    const assistantText = outputTranscript;
+    resetTurnTranscripts();
+    void persistTurn(userText, assistantText);
+
+    await new Promise(resolve => setTimeout(resolve, outputTailMs()));
+    if (!sessionActive || stoppingByVoice) return;
+    assistantSpeaking = false;
+    captureEnabled = true;
+    setHint('Gemini Live • ouvindo...');
   }
 
   function cleanupSession(closeSocket = true) {
     sessionActive = false;
     setupComplete = false;
-    voiceBtn.classList.remove('active');
-    wakeBtn?.classList.remove('active');
-    if (turnTimeout) clearTimeout(turnTimeout);
-    turnTimeout = null;
+    captureEnabled = false;
+    assistantSpeaking = false;
+    setActiveUI(false);
+    if (handshakeTimeout) clearTimeout(handshakeTimeout);
+    handshakeTimeout = null;
     stopMicrophone();
+    stopOutput();
     if (closeSocket && websocket) {
-      try { websocket.close(1000, 'turn complete'); } catch {}
+      try { websocket.close(1000, 'voice mode off'); } catch {}
     }
     websocket = null;
+    resetTurnTranscripts();
   }
 
-  function cancelLiveTurn() {
-    stopOutput();
+  function deactivateVoiceMode({ spoken = false } = {}) {
+    if (!sessionActive) return;
+    stoppingByVoice = spoken;
+    const userText = inputTranscript;
+    if (spoken && userText) void persistTurn(userText, '');
     cleanupSession(true);
-    setHint('Gemini Live pronto');
+    setHint(spoken ? 'Modo de voz desativado' : 'Gemini Live pronto');
+    stoppingByVoice = false;
   }
 
   async function handleServerMessage(event) {
@@ -269,8 +325,8 @@
 
     if (message.setupComplete) {
       setupComplete = true;
-      if (turnTimeout) clearTimeout(turnTimeout);
-      turnTimeout = null;
+      if (handshakeTimeout) clearTimeout(handshakeTimeout);
+      handshakeTimeout = null;
       setHint('Gemini Live conectado • abrindo microfone...');
       try {
         await startMicrophone();
@@ -283,27 +339,39 @@
     }
 
     const content = message.serverContent;
-    if (content?.inputTranscription?.text) inputTranscript = mergeTranscript(inputTranscript, content.inputTranscription.text);
-    if (content?.outputTranscription?.text) outputTranscript = mergeTranscript(outputTranscript, content.outputTranscription.text);
+    if (content?.inputTranscription?.text) {
+      const incoming = content.inputTranscription.text;
+      inputTranscript = mergeTranscript(inputTranscript, incoming);
+      if (isVoiceOffCommand(incoming) || isVoiceOffCommand(inputTranscript)) {
+        deactivateVoiceMode({ spoken: true });
+        return;
+      }
+    }
+    if (content?.outputTranscription?.text) {
+      outputTranscript = mergeTranscript(outputTranscript, content.outputTranscription.text);
+    }
 
-    if (content?.interrupted) stopOutput();
+    if (content?.interrupted) {
+      stopOutput();
+      assistantSpeaking = false;
+      captureEnabled = true;
+      setHint('Gemini Live • ouvindo...');
+    }
 
     const parts = content?.modelTurn?.parts || [];
     for (const part of parts) {
-      if (!part?.inlineData?.data) continue;
-      if (mediaStream) stopMicrophone();
+      if (!part?.inlineData?.data || !sessionActive) continue;
+      assistantSpeaking = true;
+      captureEnabled = false;
       setHint('Gemini Live • falando...');
       await scheduleOutput(part.inlineData.data, part.inlineData.mimeType || 'audio/pcm;rate=24000');
     }
 
-    if (content?.turnComplete) await finishTurn();
+    if (content?.turnComplete) void finishCurrentTurn();
   }
 
-  async function startLiveTurn() {
-    if (sessionActive) {
-      cancelLiveTurn();
-      return;
-    }
+  async function activateVoiceMode() {
+    if (sessionActive) return;
     if (!AudioContextCtor) {
       setHint('Web Audio indisponível');
       return;
@@ -311,10 +379,12 @@
 
     sessionActive = true;
     setupComplete = false;
-    inputTranscript = '';
-    outputTranscript = '';
+    captureEnabled = false;
+    assistantSpeaking = false;
+    stoppingByVoice = false;
+    resetTurnTranscripts();
     nextOutputTime = 0;
-    voiceBtn.classList.add('active');
+    setActiveUI(true);
     setHint('Preparando Gemini Live...');
 
     try {
@@ -335,10 +405,6 @@
       websocket.onopen = () => {
         if (!sessionActive) return;
         setHint('Gemini Live conectado • validando sessão...');
-        // The effective setup is locked into the ephemeral token and already
-        // validated by Google. A first setup message is still required to start
-        // the Live RPC, but its contents are ignored when the token has a full
-        // bidiGenerateContentSetup with an empty field mask.
         websocket.send(JSON.stringify({
           setup: {
             model: `models/${session.model}`,
@@ -362,7 +428,7 @@
         setHint(reason ? `Live fechado ${code} • ${reason.slice(0, 70)}` : `Live fechado • código ${code}`);
       };
 
-      turnTimeout = setTimeout(() => {
+      handshakeTimeout = setTimeout(() => {
         if (sessionActive && !setupComplete) {
           setHint('Gemini Live • timeout no handshake');
           cleanupSession(true);
@@ -375,12 +441,22 @@
     }
   }
 
-  voiceBtn.onclick = () => { void startLiveTurn(); };
-  voiceBtn.title = 'Conversar com Gemini Live';
+  function toggleVoiceMode() {
+    if (sessionActive) deactivateVoiceMode();
+    else void activateVoiceMode();
+  }
+
+  voiceBtn.onclick = toggleVoiceMode;
+  voiceBtn.title = 'Ativar/desativar modo de voz contínuo';
   if (wakeBtn) {
-    wakeBtn.onclick = () => { void startLiveTurn(); };
-    wakeBtn.title = 'Teste Gemini Live — wake word nativo entra no APK';
+    wakeBtn.onclick = toggleVoiceMode;
+    wakeBtn.title = 'Ativar/desativar modo de voz contínuo';
   }
   setHint('Gemini Live pronto');
-  window.__sextaGeminiLive = { start: startLiveTurn, stop: cancelLiveTurn, active: () => sessionActive };
+  window.__sextaGeminiLive = {
+    start: activateVoiceMode,
+    stop: () => deactivateVoiceMode(),
+    toggle: toggleVoiceMode,
+    active: () => sessionActive
+  };
 })();
