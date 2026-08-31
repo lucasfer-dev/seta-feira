@@ -7,6 +7,8 @@ import health from './api/health.js';
 import login from './api/login.js';
 import chat from './api/chat.js';
 import tts from './api/tts.js';
+import liveToken from './api/live-token.js';
+import liveTurn from './api/live-turn.js';
 import sync from './api/sync.js';
 import memory from './api/memory.js';
 import settings from './api/settings.js';
@@ -33,7 +35,8 @@ import { runMonitor } from './lib/monitor.mjs';
 
 const root = fileURLToPath(new URL('./public/', import.meta.url));
 const routes = new Map([
-  ['/api/health', health], ['/api/login', login], ['/api/chat', chat], ['/api/tts', tts], ['/api/sync', sync],
+  ['/api/health', health], ['/api/login', login], ['/api/chat', chat], ['/api/tts', tts],
+  ['/api/live-token', liveToken], ['/api/live-turn', liveTurn], ['/api/sync', sync],
   ['/api/memory', memory], ['/api/settings', settings], ['/api/device-heartbeat', heartbeat],
   ['/api/commands', commands], ['/api/agent-poll', agentPoll], ['/api/agent-result', agentResult],
   ['/api/google/status', googleStatusRoute], ['/api/google/auth-url', googleAuthUrl],
