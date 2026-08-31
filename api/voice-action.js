@@ -1,4 +1,4 @@
-import { isOwner, parseJson, saveMemory, saveMessage, send } from '../lib/core.mjs';
+import { getMemories, getMessages, isOwner, parseJson, saveMemory, saveMessage, send } from '../lib/core.mjs';
 import { detectWorkspaceIntent, executeWorkspaceAction, formatWorkspaceResult, googleStatus } from '../lib/google.mjs';
 import { detectWhatsAppIntent, evolutionStatus, sendWhatsAppText } from '../lib/evolution.mjs';
 import { absorbAutomaticMemory } from '../lib/auto-memory.mjs';
@@ -13,6 +13,21 @@ function plannerReply(planned) {
   if (last?.ok === false) return `Não consegui concluir: ${last.error || 'ferramenta indisponível'}.`;
   if (planned?.calls?.length) return planned.calls.length === 1 ? 'Pronto, executei a ação.' : `Pronto, executei ${planned.calls.length} ações.`;
   return '';
+}
+
+async function contextualPlannerInput(text) {
+  const [messages, memories] = await Promise.all([
+    getMessages(SHARED_CONVERSATION_ID, 10).catch(() => []),
+    getMemories(10).catch(() => [])
+  ]);
+  const recent = messages.slice(-9).map(m => `${m.role === 'assistant' ? 'SEXTA' : 'USUÁRIO'}: ${m.content}`).join('\n');
+  const memoryText = memories.map(m => `- ${m.content}`).join('\n');
+  return [
+    'Você é o roteador de ferramentas da SEXTA. Use o contexto somente para entender referências do pedido atual. Não repita uma ação antiga só porque ela aparece no histórico.',
+    memoryText ? `MEMÓRIAS RELEVANTES:\n${memoryText}` : '',
+    recent ? `CONVERSA RECENTE:\n${recent}` : '',
+    `PEDIDO ATUAL:\n${text}`
+  ].filter(Boolean).join('\n\n');
 }
 
 async function persistActionTurn(text, reply, deviceId, source = 'tool-bus') {
@@ -31,10 +46,11 @@ export default async function handler(req, res) {
   if (!text) return send(res, 400, { error: 'text_required' });
 
   try {
-    // Primary router: Gemini function calling. This understands natural language
-    // and can choose/combine Android, Google, WhatsApp, PC and memory tools.
     try {
-      const planned = await planAndExecuteTools(text, { deviceId, maxRounds: 4 });
+      // Do not force the supplied device id into Android commands here. The Tool
+      // Bus resolves the online Android itself, avoiding accidental dispatch to
+      // a browser/desktop device id when the same voice UI is used elsewhere.
+      const planned = await planAndExecuteTools(await contextualPlannerInput(text), { deviceId: '', maxRounds: 4 });
       if (planned.handled) {
         const reply = plannerReply(planned);
         await persistActionTurn(text, reply, deviceId);
@@ -53,7 +69,6 @@ export default async function handler(req, res) {
       console.warn('[SEXTA Voice ToolBus] usando fallback:', error.message);
     }
 
-    // Legacy intent routers remain as offline/degraded fallbacks.
     const whatsappIntent = detectWhatsAppIntent(text);
     if (whatsappIntent) {
       const status = evolutionStatus();
