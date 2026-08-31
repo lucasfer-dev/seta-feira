@@ -30,7 +30,22 @@ function detectExplicitEmailIntent(text = '') {
   const raw = String(text || '').replace(/\s+/g, ' ').trim();
   if (!raw || !/\b(?:e-?mail|gmail)\b/i.test(raw) || !/\b(?:manda|mande|mandar|envia|envie|enviar)\b/i.test(raw)) return null;
 
-  let match = raw.match(/\b(?:manda|mande|mandar|envia|envie|enviar)\b\s+(?:um\s+)?(?:e-?mail|gmail)\s+(?:para|pra|pro|ao|à)\s+(.+?)\s+(?:com\s+(?:o\s+)?assunto\s+(.+?)\s+e\s+(?:a\s+)?(?:mensagem|texto)|dizendo|falando|com\s+(?:a\s+)?(?:mensagem|texto)|mensagem)\s+(.+)$/i);
+  // Natural direct-address form: "envia um email de teste para nome@gmail.com".
+  // If the user supplied an address explicitly, never turn it into a Contacts lookup.
+  let match = raw.match(/\b(?:manda|mande|mandar|envia|envie|enviar)\b\s+(?:um\s+)?(?:e-?mail|gmail)\s+de\s+(.+?)\s+(?:para|pra|pro|ao|à)\s+([^\s,;]+@[^\s,;]+)\s*$/i);
+  if (match?.[1] && match?.[2]) {
+    const body = String(match[1]).trim();
+    return {
+      action: 'gmail.send-smart',
+      args: {
+        recipient: normalizeSpokenEmail(match[2]),
+        subject: /\bteste\b/i.test(body) ? 'Teste da SEXTA' : 'Mensagem da Sexta-feira',
+        body
+      }
+    };
+  }
+
+  match = raw.match(/\b(?:manda|mande|mandar|envia|envie|enviar)\b\s+(?:um\s+)?(?:e-?mail|gmail)\s+(?:para|pra|pro|ao|à)\s+(.+?)\s+(?:com\s+(?:o\s+)?assunto\s+(.+?)\s+e\s+(?:a\s+)?(?:mensagem|texto)|dizendo|falando|com\s+(?:a\s+)?(?:mensagem|texto)|mensagem)\s+(.+)$/i);
   if (match) {
     const recipient = normalizeSpokenEmail(match[1]);
     const subject = String(match[2] || 'Mensagem da Sexta-feira').trim();
