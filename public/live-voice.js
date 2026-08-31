@@ -154,8 +154,9 @@
     });
 
     inputContext = new AudioContextCtor({ latencyHint: 'interactive' });
+    if (inputContext.state === 'suspended') await inputContext.resume();
     inputSource = inputContext.createMediaStreamSource(mediaStream);
-    processor = inputContext.createScriptProcessor(4096, 1, 1);
+    processor = inputContext.createScriptProcessor(2048, 1, 1);
     silentGain = inputContext.createGain();
     silentGain.gain.value = 0;
 
@@ -173,14 +174,11 @@
     setHint('Gemini Live • ouvindo...');
   }
 
-  function stopMicrophone({ signalEnd = true } = {}) {
-    if (signalEnd && setupComplete && websocket?.readyState === WebSocket.OPEN) {
-      try { sendRealtime({ audioStreamEnd: true }); } catch {}
-    }
+  function stopMicrophone() {
     try { processor?.disconnect(); } catch {}
     try { inputSource?.disconnect(); } catch {}
     try { silentGain?.disconnect(); } catch {}
-    try { processor && (processor.onaudioprocess = null); } catch {}
+    try { if (processor) processor.onaudioprocess = null; } catch {}
     for (const track of mediaStream?.getTracks?.() || []) track.stop();
     try { inputContext?.close(); } catch {}
     mediaStream = null;
@@ -195,14 +193,14 @@
     let sync = {};
     try { sync = await api(`/api/sync?conversationId=${encodeURIComponent(conversationId)}`); } catch {}
     const settings = sync.settings || {};
-    const memories = (sync.memories || []).slice(0, 12).map(item => `- ${item.content}`).join('\n');
-    const recent = (sync.messages || []).slice(-8).map(item => `${item.role === 'assistant' ? 'SEXTA' : 'USUÁRIO'}: ${item.content}`).join('\n');
+    const memories = (sync.memories || []).slice(0, 10).map(item => `- ${item.content}`).join('\n');
+    const recent = (sync.messages || []).slice(-6).map(item => `${item.role === 'assistant' ? 'SEXTA' : 'USUÁRIO'}: ${item.content}`).join('\n');
 
     return [
       'Você é SEXTA-feira, uma assistente pessoal de voz. Fale sempre em português brasileiro natural e conversacional.',
-      'Sua voz deve soar próxima, humana, confiante e elegante; nunca como locutora. Responda de forma curta por padrão e aprofunde apenas quando necessário.',
-      `Ajustes de personalidade: humor ${settings.humor ?? 68}/100, sarcasmo ${settings.sarcasm ?? 42}/100, proatividade ${settings.proactivity ?? 55}/100, verbosidade ${settings.verbosity ?? 32}/100.`,
-      'Não afirme que executou ações externas nesta sessão Live se nenhuma ferramenta confirmou a ação. Para pedidos de ação, explique brevemente que a execução será conectada ao agente/integração.',
+      'Fale de forma próxima, humana e confiante. Responda de forma curta por padrão.',
+      `Ajustes: humor ${settings.humor ?? 68}/100, sarcasmo ${settings.sarcasm ?? 42}/100, proatividade ${settings.proactivity ?? 55}/100, verbosidade ${settings.verbosity ?? 32}/100.`,
+      'Nunca afirme que uma ação externa foi executada sem confirmação real de uma ferramenta.',
       memories ? `Memórias relevantes:\n${memories}` : '',
       recent ? `Contexto recente:\n${recent}` : ''
     ].filter(Boolean).join('\n\n');
@@ -229,11 +227,11 @@
   }
 
   async function finishTurn() {
-    stopMicrophone({ signalEnd: false });
-    const waitMs = outputContext ? Math.max(0, (nextOutputTime - outputContext.currentTime) * 1000) + 60 : 60;
+    stopMicrophone();
+    const waitMs = outputContext ? Math.max(0, (nextOutputTime - outputContext.currentTime) * 1000) + 80 : 80;
     await new Promise(resolve => setTimeout(resolve, waitMs));
     await persistTurn();
-    cleanupSession(false);
+    cleanupSession(true);
     setHint('Gemini Live pronto');
   }
 
@@ -244,9 +242,9 @@
     wakeBtn?.classList.remove('active');
     if (turnTimeout) clearTimeout(turnTimeout);
     turnTimeout = null;
-    stopMicrophone({ signalEnd: false });
+    stopMicrophone();
     if (closeSocket && websocket) {
-      try { websocket.close(); } catch {}
+      try { websocket.close(1000, 'turn complete'); } catch {}
     }
     websocket = null;
   }
@@ -263,11 +261,12 @@
 
     if (message.setupComplete) {
       setupComplete = true;
+      setHint('Gemini Live conectado • abrindo microfone...');
       try {
         await startMicrophone();
       } catch (error) {
         console.error('Microfone Live:', error);
-        setHint('Microfone indisponível');
+        setHint(`Microfone indisponível • ${error?.name || 'erro'}`);
         cleanupSession(true);
       }
       return;
@@ -282,7 +281,7 @@
     const parts = content?.modelTurn?.parts || [];
     for (const part of parts) {
       if (!part?.inlineData?.data) continue;
-      if (mediaStream) stopMicrophone({ signalEnd: true });
+      if (mediaStream) stopMicrophone();
       setHint('Gemini Live • falando...');
       await scheduleOutput(part.inlineData.data, part.inlineData.mimeType || 'audio/pcm;rate=24000');
     }
@@ -309,39 +308,22 @@
     setHint('Conectando Gemini Live...');
 
     try {
-      const [session, systemInstruction] = await Promise.all([
-        api('/api/live-token', { method: 'POST', body: '{}' }),
-        buildSystemInstruction()
-      ]);
-
+      const session = await api('/api/live-token', { method: 'POST', body: '{}' });
+      if (!session?.token) throw new Error('token Live vazio');
+      const systemInstruction = await buildSystemInstruction();
       if (!sessionActive) return;
+
       const wsUrl = `${WS_BASE}?access_token=${encodeURIComponent(session.token)}`;
       websocket = new WebSocket(wsUrl);
 
       websocket.onopen = () => {
         if (!sessionActive) return;
+        setHint('Gemini Live conectado • configurando...');
         websocket.send(JSON.stringify({
           setup: {
             model: `models/${session.model}`,
-            generationConfig: {
-              responseModalities: ['AUDIO'],
-              speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: { voiceName: session.voice || 'Sulafat' }
-                }
-              }
-            },
+            generationConfig: { responseModalities: ['AUDIO'] },
             systemInstruction: { parts: [{ text: systemInstruction }] },
-            realtimeInputConfig: {
-              automaticActivityDetection: {
-                disabled: false,
-                prefixPaddingMs: 120,
-                silenceDurationMs: 520,
-                startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
-                endOfSpeechSensitivity: 'END_SENSITIVITY_HIGH'
-              },
-              turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY'
-            },
             inputAudioTranscription: {},
             outputAudioTranscription: {}
           }
@@ -351,25 +333,27 @@
       websocket.onmessage = event => { void handleServerMessage(event); };
       websocket.onerror = () => {
         if (!sessionActive) return;
-        setHint('Gemini Live desconectou');
+        setHint('Gemini Live • erro de conexão');
       };
-      websocket.onclose = () => {
-        if (sessionActive) {
-          cleanupSession(false);
-          setHint('Gemini Live pronto');
-        }
+      websocket.onclose = event => {
+        if (!sessionActive) return;
+        const code = event?.code || 0;
+        const reason = String(event?.reason || '').trim();
+        console.warn('Gemini Live fechado:', code, reason);
+        cleanupSession(false);
+        setHint(reason ? `Live fechado ${code} • ${reason.slice(0, 70)}` : `Live fechado • código ${code}`);
       };
 
       turnTimeout = setTimeout(() => {
-        if (sessionActive) {
-          console.warn('Gemini Live timeout');
-          cancelLiveTurn();
+        if (sessionActive && !setupComplete) {
+          setHint('Gemini Live • timeout no handshake');
+          cleanupSession(true);
         }
-      }, 45_000);
+      }, 15_000);
     } catch (error) {
       console.error('Gemini Live:', error);
       cleanupSession(true);
-      setHint('Gemini Live indisponível');
+      setHint(`Gemini Live indisponível • ${String(error?.message || error).slice(0, 80)}`);
     }
   }
 
