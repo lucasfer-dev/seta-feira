@@ -35,14 +35,17 @@ const buildEnd = `        } catch (Exception ignored) {}\n        return instruc
 const buildEndReplacement = `        } catch (Exception ignored) {}\n        return instruction.toString();\n    }\n\n    private void refreshSystemInstructionAsync(boolean force) {\n        if (!force && cachedSystemInstruction != null && !cachedSystemInstruction.isEmpty()\n                && System.currentTimeMillis() - cachedSystemInstructionAt < CONTEXT_CACHE_TTL_MS) return;\n        if (!contextRefreshRunning.compareAndSet(false, true)) return;\n        io.execute(() -> {\n            try {\n                String fresh = fetchSystemInstruction();\n                if (fresh != null && !fresh.isEmpty()) {\n                    cachedSystemInstruction = fresh;\n                    cachedSystemInstructionAt = System.currentTimeMillis();\n                }\n            } finally {\n                contextRefreshRunning.set(false);\n            }\n        });\n    }\n\n    private void connectNativeLive()`;
 if (service.includes(buildEnd)) service = service.replace(buildEnd, buildEndReplacement);
 
-// 40 ms de PCM a 16 kHz/16-bit mono em vez de ~100 ms. Menos atraso de entrada.
-service = service.replace('            byte[] buffer = new byte[3200];', '            byte[] buffer = new byte[1280];');
+// Mantém ~100 ms de PCM a 16 kHz/16-bit mono. O Live API recomenda chunks
+// próximos de 100 ms; 40 ms aumentava overhead e podia deixar o fluxo mais
+// suscetível a jitter no Android.
+service = service.replace('            byte[] buffer = new byte[1280];', '            byte[] buffer = new byte[3200];');
 
-// Segunda rodada: reduz a pausa entre a wake word e a captura do comando.
-service = service.replace('            try { Thread.sleep(260L); } catch (InterruptedException ignored) {}', '            try { Thread.sleep(80L); } catch (InterruptedException ignored) {}');
+// Dá tempo suficiente para o Vosk encerrar o wake word e abrir a captura do
+// comando sem cortar a primeira sílaba, mas ainda é mais rápido que o original.
+service = service.replace('            try { Thread.sleep(260L); } catch (InterruptedException ignored) {}', '            try { Thread.sleep(200L); } catch (InterruptedException ignored) {}');
 
-// Evita ficar mais de 4 s esperando o comando local antes do fallback.
-service = service.replace('                try { Thread.sleep(4300L); } catch (InterruptedException ignored) {}', '                try { Thread.sleep(2500L); } catch (InterruptedException ignored) {}');
+// 2,5 s estava curto para comandos naturais como “abre o WhatsApp pra mim”.
+service = service.replace('                try { Thread.sleep(4300L); } catch (InterruptedException ignored) {}', '                try { Thread.sleep(3500L); } catch (InterruptedException ignored) {}');
 
 // Atualiza o contexto depois de cada turno sem bloquear a conversa atual.
 service = service.replace(
@@ -51,4 +54,4 @@ service = service.replace(
 );
 
 fs.writeFileSync(servicePath, service);
-console.log('SEXTA Android Live otimizado: contexto em cache + refresh assíncrono + PCM 40 ms + wake 80 ms + captura local 2,5 s.');
+console.log('SEXTA Android Live otimizado: contexto em cache + PCM 100 ms + wake 200 ms + captura local 3,5 s.');
