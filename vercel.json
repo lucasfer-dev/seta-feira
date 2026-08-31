@@ -2,8 +2,6 @@
   "cleanUrls": true,
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api/:path*" },
-    { "source": "/app.js", "destination": "/public/app-wrapper.js" },
-    { "source": "/app-original.js", "destination": "/public/app.js" },
     { "source": "/(.*)", "destination": "/public/$1" }
   ]
 }
