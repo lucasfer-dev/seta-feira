@@ -1,0 +1,11 @@
+{
+  "deviceName": "PC Casa",
+  "apps": {
+    "vscode": { "command": "code", "args": [] },
+    "spotify": { "command": "cmd", "args": ["/c", "start", "", "spotify:"] },
+    "browser": { "command": "cmd", "args": ["/c", "start", "", "https://www.google.com"] }
+  },
+  "projects": {
+    "meu-projeto": "C:\\Users\\SEU_USUARIO\\Projetos\\meu-projeto"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "sexta-desktop",
+  "version": "1.3.0",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "dev": "electron .",
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "44.0.0"
+  }
+}

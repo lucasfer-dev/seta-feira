@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#080b12" />
+  <meta name="description" content="SEXTA 1.3 — assistente pessoal cloud-first com memória Obsidian" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/styles.css" />
+  <title>SEXTA 1.3</title>
+</head>
+<body>
+  <div class="noise"></div>
+  <div id="app" class="app-shell">
+    <aside class="sidebar" aria-label="Navegação principal">
+      <div class="brand">
+        <div class="brand-mark"><span></span></div>
+        <div><strong>SEXTA</strong><small>personal intelligence</small></div>
+      </div>
+
+      <nav class="nav-list">
+        <button class="nav-item active" data-view="chat"><span>◉</span><span>Conversa</span></button>
+        <button class="nav-item" data-view="memory"><span>⌁</span><span>Memória</span><b id="memoryCount">0</b></button>
+        <button class="nav-item" data-view="devices"><span>⌘</span><span>Dispositivos</span><b id="deviceCount">0</b></button>
+        <button class="nav-item" data-view="activity"><span>↗</span><span>Atividade</span></button>
+        <button class="nav-item" data-view="notifications"><span>!</span><span>Notificações</span><b id="notificationCount">0</b></button>
+        <button class="nav-item" data-view="integrations"><span>∞</span><span>Integrações</span></button>
+        <button class="nav-item" data-view="settings"><span>⚙</span><span>Personalidade</span></button>
+      </nav>
+
+      <div class="sidebar-spacer"></div>
+      <div class="status-card">
+        <div class="status-line"><span class="dot" id="cloudDot"></span><span id="cloudLabel">Verificando cloud...</span></div>
+        <div class="status-line"><span class="dot" id="brainDot"></span><span id="brainLabel">Verificando cérebro...</span></div>
+      </div>
+      <div class="device-mini">
+        <div class="mini-avatar">◈</div>
+        <div><strong id="thisDeviceName">Este dispositivo</strong><small id="thisDeviceKind">browser</small></div>
+      </div>
+    </aside>
+
+    <main class="main-panel">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" id="viewEyebrow">CONVERSA ATIVA</p>
+          <h1 id="viewTitle">Boa noite.</h1>
+        </div>
+        <div class="top-actions">
+          <button class="icon-btn" id="syncBtn" title="Sincronizar">↻</button>
+          <button class="presence-pill" id="presencePill"><span class="pulse"></span><span id="presenceText">Sexta online</span></button>
+        </div>
+      </header>
+
+      <section id="view-chat" class="view active chat-view">
+        <div class="chat-stage">
+          <div class="ambient-orb" aria-hidden="true">
+            <div class="orb-ring ring-a"></div>
+            <div class="orb-ring ring-b"></div>
+            <div class="orb-core"></div>
+          </div>
+
+          <div class="handoff-banner hidden" id="handoffBanner">
+            <div><span class="handoff-icon">⇄</span><div><strong>Contexto vindo de outro dispositivo</strong><small id="handoffText">A conversa foi atualizada.</small></div></div>
+            <button id="handoffDismiss">Entendi</button>
+          </div>
+
+          <div class="messages" id="messages" aria-live="polite"></div>
+
+          <div class="thinking hidden" id="thinking"><span></span><span></span><span></span><em>Sexta está pensando</em></div>
+
+          <div class="composer-wrap">
+            <div class="quick-actions">
+              <button data-prompt="Sexta, o que você lembra sobre o que estamos fazendo?">Contexto</button>
+              <button data-command="system-info">Status do PC</button>
+              <button data-prompt="Sexta, me ajuda a organizar o que devo fazer agora.">Organizar</button>
+            </div>
+            <form class="composer" id="composer">
+              <button type="button" class="composer-icon" id="voiceBtn" title="Falar">⌁</button>
+              <textarea id="messageInput" rows="1" maxlength="8000" placeholder="Fala comigo..." aria-label="Mensagem"></textarea>
+              <button type="button" class="composer-icon wake-btn" id="wakeBtn" title="Modo 'Sexta'">◌</button>
+              <button type="submit" class="send-btn" id="sendBtn" aria-label="Enviar">↑</button>
+            </form>
+            <p class="composer-hint"><span id="voiceHint">Voz pronta</span><span>•</span><span id="syncHint">sincronização automática</span></p>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-memory" class="view content-view">
+        <div class="section-heading"><div><p class="eyebrow">MEMÓRIA DE LONGO PRAZO</p><h2>O que a Sexta sabe</h2><p>Memórias permanentes viram notas Markdown e podem ser abertas normalmente no Obsidian, no PC e no Android.</p></div><button class="primary-btn" id="addMemoryBtn">+ Nova memória</button></div>
+
+        <article class="vault-panel card-panel">
+          <div class="vault-head">
+            <div class="vault-mark">◫</div>
+            <div><p class="eyebrow">SEXTA KNOWLEDGE VAULT</p><h3>Memória compatível com Obsidian</h3><p id="vaultStatusText">Carregando o Vault cloud...</p></div>
+            <span id="vaultStatusBadge" class="integration-badge">cloud</span>
+          </div>
+          <div class="vault-stats">
+            <div><strong id="vaultNoteCount">0</strong><span>notas Markdown</span></div>
+            <div><strong id="vaultMemoryCount">0</strong><span>memórias espelhadas</span></div>
+            <div><strong id="vaultLastSync">—</strong><span>último sync</span></div>
+          </div>
+          <div class="vault-actions">
+            <button class="primary-btn" id="vaultChooseBtn">Escolher pasta do Vault</button>
+            <button class="secondary-btn" id="vaultSyncBtn">Sincronizar agora</button>
+            <button class="secondary-btn" id="vaultOpenBtn">Abrir no Obsidian</button>
+          </div>
+          <p class="vault-help" id="vaultHelp">No programa Windows e no app Android, escolha uma pasta que o Obsidian também use. A Sexta sincroniza essa pasta com o Vault cloud.</p>
+          <div class="vault-note-list" id="vaultNoteList"></div>
+        </article>
+
+        <div class="memory-grid" id="memoryGrid"></div>
+      </section>
+
+      <section id="view-devices" class="view content-view">
+        <div class="section-heading"><div><p class="eyebrow">CORPOS CONECTADOS</p><h2>Dispositivos</h2><p>O cérebro fica na nuvem; cada dispositivo só oferece capacidades diferentes.</p></div></div>
+        <div class="devices-grid" id="devicesGrid"></div>
+        <div class="agent-guide card-panel"><div><p class="eyebrow">AGENTE WINDOWS</p><h3>Dê “mãos” para a Sexta no PC</h3><p>O agente usa uma allowlist local. A nuvem nunca recebe um terminal irrestrito.</p></div><code>node agent/agent.mjs</code></div>
+      </section>
+
+      <section id="view-activity" class="view content-view">
+        <div class="section-heading"><div><p class="eyebrow">EVENTOS E AÇÕES</p><h2>Atividade</h2><p>Execuções do agente, falhas e eventos relevantes aparecem aqui.</p></div></div>
+        <div class="timeline" id="activityTimeline"></div>
+      </section>
+
+      <section id="view-notifications" class="view content-view">
+        <div class="section-heading"><div><p class="eyebrow">CAIXA INTELIGENTE</p><h2>Notificações</h2><p>Gmail e WhatsApp passam por uma triagem antes de interromper você.</p></div><button class="secondary-btn" id="enableNotificationsBtn">Ativar notificações do dispositivo</button></div>
+        <div class="notification-summary card-panel"><div><strong id="notificationImportantCount">0</strong><span>importantes</span></div><div><strong id="notificationWhatsappCount">0</strong><span>WhatsApp</span></div><div><strong id="notificationGmailCount">0</strong><span>Gmail</span></div><button class="secondary-btn" id="runMonitorBtn">Verificar agora</button></div>
+        <div class="notification-list" id="notificationList"></div>
+      </section>
+
+      <section id="view-integrations" class="view content-view">
+        <div class="section-heading"><div><p class="eyebrow">BRAÇOS EXTERNOS</p><h2>Integrações</h2><p>Conecte serviços reais. A Sexta só afirma que fez algo depois da API confirmar.</p></div></div>
+        <div class="integration-grid">
+          <article class="integration-card card-panel">
+            <div class="integration-head"><div class="integration-logo google-logo">G</div><div><h3>Google Workspace</h3><p id="googleStatusText">Verificando conexão...</p></div><span id="googleStatusBadge" class="integration-badge">...</span></div>
+            <div class="integration-capabilities"><span>Gmail</span><span>Agenda</span><span>Drive</span><span>Contatos</span><span>Docs</span><span>Sheets</span><span>Tasks</span></div>
+            <p class="integration-copy">Controle por voz com OAuth oficial. O token fica criptografado localmente neste teste e não vai para o navegador.</p>
+            <div class="integration-actions"><button class="primary-btn" id="googleConnectBtn">Conectar Google</button><button class="secondary-btn" id="googleTestBtn">Testar agenda</button></div>
+            <div class="integration-detail"><strong>Exemplos</strong><code>“Sexta-feira, o que eu tenho amanhã?”</code><code>“Procura no meu Drive apostila Windows”</code><code>“Tem e-mail não lido?”</code></div>
+          </article>
+          <article class="integration-card card-panel">
+            <div class="integration-head"><div class="integration-logo">C</div><div><h3>ChatGPT handoff</h3><p>Transferência de pergunta e resposta via clipboard.</p></div><span class="integration-badge ok">pronto</span></div>
+            <p class="integration-copy">A Sexta abre o ChatGPT com seu pedido copiado. Depois, copie a resposta e importe de volta; ela fala a resposta e guarda no contexto da conversa.</p>
+            <div class="integration-actions"><button class="secondary-btn" id="chatgptOpenBtn">Abrir ChatGPT</button><button class="primary-btn" id="chatgptImportBtn">Importar resposta copiada</button></div>
+            <div class="integration-detail"><strong>Por voz</strong><code>“Sexta-feira, pergunta pro ChatGPT: ...”</code><code>“Sexta-feira, pega a resposta do ChatGPT”</code></div>
+          </article>
+          <article class="integration-card card-panel">
+            <div class="integration-head"><div class="integration-logo">W</div><div><h3>WhatsApp • Evolution</h3><p id="evolutionStatusText">Verificando conexão...</p></div><span id="evolutionStatusBadge" class="integration-badge">...</span></div>
+            <div class="integration-capabilities"><span>Enviar</span><span>Receber</span><span>Webhook</span><span>Prioridade</span><span>Contatos Google</span></div>
+            <p class="integration-copy">Mensagens recebidas entram na Caixa Inteligente. Mensagens por voz só são marcadas como enviadas depois da Evolution confirmar.</p>
+            <div class="integration-actions"><button class="primary-btn" id="evolutionWebhookBtn">Configurar webhook</button><button class="secondary-btn" id="evolutionTestBtn">Testar status</button></div>
+            <div class="integration-detail"><strong>Por voz</strong><code>“Sexta-feira, manda no WhatsApp pro João dizendo que chego às nove.”</code><code>Webhook: /api/evolution/webhook</code></div>
+          </article>
+          <article class="integration-card card-panel">
+            <div class="integration-head"><div class="integration-logo">!</div><div><h3>Alertas inteligentes</h3><p id="notificationPermissionText">Permissão do dispositivo não verificada.</p></div><span id="notificationPermissionBadge" class="integration-badge">...</span></div>
+            <div class="integration-capabilities"><span>Gmail</span><span>WhatsApp</span><span>Browser/PWA</span><span>Android/FCM pronto</span></div>
+            <p class="integration-copy">A Sexta evita te interromper por lixo. WhatsApp pessoal entra na caixa; e-mails e mensagens importantes podem gerar alerta e voz.</p>
+            <div class="integration-actions"><button class="primary-btn" id="notificationPermissionBtn">Permitir notificações</button><button class="secondary-btn" id="notificationMonitorBtn">Rodar triagem</button></div>
+            <div class="integration-detail"><strong>Regra padrão</strong><code>WhatsApp direto → caixa inteligente</code><code>Gmail importante/prazo/pedido → alerta</code></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="view-settings" class="view content-view">
+        <div class="section-heading"><div><p class="eyebrow">DNA DA SEXTA</p><h2>Personalidade</h2><p>A personalidade pertence ao sistema, não ao provedor de IA.</p></div><button class="primary-btn" id="saveSettingsBtn">Salvar alterações</button></div>
+        <div class="settings-layout">
+          <div class="settings-card">
+            <label>Nome <input id="settingName" value="Sexta" maxlength="30" /></label>
+            <div class="slider-row"><div><strong>Humor</strong><small>Comentários situacionais e espontâneos.</small></div><input id="settingHumor" type="range" min="0" max="100" value="68"><output>68</output></div>
+            <div class="slider-row"><div><strong>Sarcasmo</strong><small>Ironia leve sem transformar tudo em piada.</small></div><input id="settingSarcasm" type="range" min="0" max="100" value="42"><output>42</output></div>
+            <div class="slider-row"><div><strong>Proatividade</strong><small>Quanto ela toma iniciativa diante de eventos.</small></div><input id="settingProactivity" type="range" min="0" max="100" value="55"><output>55</output></div>
+            <div class="slider-row"><div><strong>Verborragia</strong><small>Quão detalhadas são as respostas comuns.</small></div><input id="settingVerbosity" type="range" min="0" max="100" value="32"><output>32</output></div>
+            <div class="toggle-row"><div><strong>Resposta por voz</strong><small>Permite que a Sexta fale usando o sintetizador do dispositivo.</small></div><label class="switch"><input id="settingVoice" type="checkbox" checked><span></span></label></div>
+            <div class="toggle-row"><div><strong>Falar automaticamente</strong><small>Lê em voz alta toda resposta recebida.</small></div><label class="switch"><input id="settingAutoSpeak" type="checkbox"><span></span></label></div>
+            <div class="toggle-row"><div><strong>Falar alertas importantes</strong><small>Quando a Sexta estiver ativa, lê alertas prioritários por voz.</small></div><label class="switch"><input id="settingSpeakNotifications" type="checkbox" checked><span></span></label></div>
+            <div class="slider-row"><div><strong>Limite de prioridade</strong><small>Quanto algo precisa ser importante para te interromper.</small></div><input id="settingNotificationThreshold" type="range" min="20" max="90" value="62"><output>62</output></div>
+            <div class="toggle-row"><div><strong>WhatsApp direto sempre na caixa</strong><small>Mensagens individuais entram mesmo quando não parecem urgentes.</small></div><label class="switch"><input id="settingWhatsappNotifyAll" type="checkbox" checked><span></span></label></div>
+          </div>
+          <div class="personality-preview card-panel">
+            <p class="eyebrow">PRÉVIA</p>
+            <div class="preview-orb"><span></span></div>
+            <blockquote id="personalityPreview">“Estou aqui. O que você aprontou?”</blockquote>
+            <small>A resposta real varia conforme contexto, memória e modelo.</small>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="context-panel">
+      <div class="context-head"><div><p class="eyebrow">AGORA</p><h3>Contexto</h3></div><span class="live-tag">LIVE</span></div>
+      <div class="context-block">
+        <div class="context-label">Dispositivo ativo</div>
+        <div class="context-device"><div class="device-symbol" id="contextDeviceIcon">◈</div><div><strong id="contextDeviceName">Este dispositivo</strong><small id="contextDeviceMeta">browser • online</small></div><span class="online-dot"></span></div>
+      </div>
+      <div class="context-block">
+        <div class="context-label">Assunto atual</div>
+        <div class="topic-card"><strong id="currentTopic">Conversa geral</strong><small id="currentTopicMeta">Contexto acompanha você</small></div>
+      </div>
+      <div class="context-block">
+        <div class="context-label">Memórias em foco</div>
+        <div id="focusMemories" class="focus-list"><p class="muted">Nenhuma memória ainda.</p></div>
+      </div>
+      <div class="context-block actions-block">
+        <div class="context-label">Ações rápidas</div>
+        <button class="context-action" data-action="open_app" data-payload='{"app":"vscode"}'><span>⌘</span><div><strong>Abrir VS Code</strong><small>No PC conectado</small></div><b>→</b></button>
+        <button class="context-action" data-action="git_status" data-payload='{}'><span>⌁</span><div><strong>Git status</strong><small>Projeto padrão</small></div><b>→</b></button>
+        <button class="context-action" data-action="get_system_info" data-payload='{}'><span>◫</span><div><strong>Status do PC</strong><small>Memória e sistema</small></div><b>→</b></button>
+      </div>
+      <div class="privacy-note"><span>◇</span><p><strong>Segredos ficam fora do prompt.</strong><br>Não envie senhas, tokens ou arquivos <code>.env</code> para o cérebro.</p></div>
+    </aside>
+  </div>
+
+  <div class="mobile-nav">
+    <button class="active" data-view="chat">◉<small>Chat</small></button>
+    <button data-view="memory">⌁<small>Memória</small></button>
+    <button data-view="devices">⌘<small>Dispositivos</small></button>
+    <button data-view="notifications">!<small>Alertas</small></button>
+    <button data-view="integrations">∞<small>Integrações</small></button>
+    <button data-view="settings">⚙<small>Ajustes</small></button>
+  </div>
+
+  <dialog id="loginDialog" class="modal">
+    <form method="dialog" id="loginForm">
+      <div class="modal-mark"><span></span></div>
+      <p class="eyebrow">SEXTA 1.3</p><h2>Acesso pessoal</h2><p>Digite o PIN definido no servidor para conectar este dispositivo à sua Sexta.</p>
+      <input id="pinInput" type="password" inputmode="numeric" autocomplete="current-password" placeholder="PIN de acesso" />
+      <p class="form-error hidden" id="loginError">PIN incorreto.</p>
+      <button class="primary-btn full" value="default">Entrar</button>
+    </form>
+  </dialog>
+
+  <dialog id="memoryDialog" class="modal">
+    <form method="dialog" id="memoryForm">
+      <p class="eyebrow">NOVA MEMÓRIA</p><h2>O que devo guardar?</h2>
+      <textarea id="memoryInput" rows="4" maxlength="1000" placeholder="Ex.: Para projetos web, prefiro interfaces escuras e objetivas."></textarea>
+      <div class="modal-actions"><button class="ghost-btn" value="cancel">Cancelar</button><button class="primary-btn" value="default">Guardar</button></div>
+    </form>
+  </dialog>
+
+  <div id="toastRegion" class="toast-region" aria-live="polite"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

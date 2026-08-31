@@ -1,0 +1,10 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root{
+  --bg:#080b12;--panel:#0d111a;--panel2:#111722;--panel3:#151d29;--line:#202a38;--line2:#2a3748;
+  --text:#f2f6f8;--muted:#8997a8;--muted2:#627084;--accent:#75e6d5;--accent2:#46b9b4;--accentSoft:rgba(117,230,213,.12);
+  --ok:#73d6a4;--warn:#f2c879;--danger:#f08484;--shadow:0 24px 80px rgba(0,0,0,.34);--radius:18px;
+}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif}body{overflow:hidden}button,input,textarea{font:inherit}.hidden{display:none!important}
+.noise{position:fixed;inset:0;pointer-events:none;opacity:.025;z-index:99;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.95' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.8'/%3E%3C/svg%3E")}
+.app-shell{height:100vh;display:grid;grid-template-columns:228px minmax(540px,1fr) 310px;background:radial-gradient(circle at 55% 0%,rgba(70,185,180,.055),transparent 34%),var(--bg)}
