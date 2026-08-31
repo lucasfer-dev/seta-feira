@@ -115,7 +115,7 @@ public final class AndroidActionExecutor {
     private static JSONObject openApp(Context context, JSONObject payload) throws Exception {
         String requested = normalize(payload.optString("app", payload.optString("package", "")));
         if (requested.isEmpty()) throw new IllegalArgumentException("ANDROID_APP_REQUIRED");
-        if (requested.equals("camera") || requested.equals("camera")) {
+        if (requested.equals("camera")) {
             Intent camera = new Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA);
             launch(context, camera);
             return new JSONObject().put("opened", "camera");
@@ -266,8 +266,10 @@ public final class AndroidActionExecutor {
         Intent intent;
         if (section.contains("wifi")) intent = new Intent(Settings.ACTION_WIFI_SETTINGS);
         else if (section.contains("bluetooth")) intent = new Intent(Settings.ACTION_BLUETOOTH_SETTINGS);
-        else if (section.contains("notific")) intent = new Intent(Settings.ACTION_NOTIFICATION_SETTINGS);
-        else intent = new Intent(Settings.ACTION_SETTINGS);
+        else if (section.contains("notific")) {
+            intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, context.getPackageName());
+        } else intent = new Intent(Settings.ACTION_SETTINGS);
         launch(context, intent);
         return new JSONObject().put("settings", section.isEmpty() ? "general" : section);
     }
