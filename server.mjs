@@ -16,6 +16,10 @@ import heartbeat from './api/device-heartbeat.js';
 import commands from './api/commands.js';
 import agentPoll from './api/agent-poll.js';
 import agentResult from './api/agent-result.js';
+import androidPoll from './api/android-poll.js';
+import androidResult from './api/android-result.js';
+import voiceAction from './api/voice-action.js';
+import toolExecute from './api/tool-execute.js';
 import googleStatusRoute from './api/google/status.js';
 import googleAuthUrl from './api/google/auth-url.js';
 import googleCallback from './api/google/callback.js';
@@ -39,6 +43,7 @@ const routes = new Map([
   ['/api/live-token', liveToken], ['/api/live-turn', liveTurn], ['/api/sync', sync],
   ['/api/memory', memory], ['/api/settings', settings], ['/api/device-heartbeat', heartbeat],
   ['/api/commands', commands], ['/api/agent-poll', agentPoll], ['/api/agent-result', agentResult],
+  ['/api/android-poll', androidPoll], ['/api/android-result', androidResult], ['/api/voice-action', voiceAction], ['/api/tool-execute', toolExecute],
   ['/api/google/status', googleStatusRoute], ['/api/google/auth-url', googleAuthUrl],
   ['/api/google/callback', googleCallback], ['/api/google/action', googleAction], ['/api/import-response', importResponse], ['/api/command-status', commandStatus],
   ['/api/evolution/status', evolutionStatusRoute], ['/api/evolution/configure-webhook', evolutionConfigureWebhook], ['/api/evolution/send', evolutionSend], ['/api/evolution/webhook', evolutionWebhook],
