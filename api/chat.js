@@ -1,5 +1,6 @@
 import { answer, getMemories, getMessages, inferAndQueueSafeAction, isOwner, maybeExtractMemory, parseJson, saveMemory, saveMessage, send } from '../lib/core.mjs';
 import { detectWorkspaceIntent, executeWorkspaceAction, formatWorkspaceResult, googleStatus } from '../lib/google.mjs';
+import { getConnectedGoogleAccount, isGoogleAccountQuestion } from '../lib/google-account.mjs';
 import { detectWhatsAppIntent, evolutionStatus, sendWhatsAppText } from '../lib/evolution.mjs';
 import { absorbAutomaticMemory } from '../lib/auto-memory.mjs';
 import { planAndExecuteTools } from '../lib/tool-bus.mjs';
@@ -8,6 +9,38 @@ const SHARED_CONVERSATION_ID = 'main';
 
 function likelyAction(text = '') {
   return /\b(manda|mande|envia|envie|avisa|avise|fala|diz|abre|abra|abrir|fecha|liga|desliga|aumenta|abaixa|volume|lanterna|spotify|whatsapp|wpp|gmail|e-?mail|agenda|calend[aá]rio|reuni[aã]o|evento|drive|documento|planilha|tarefa|contato|pc|computador|celular|android|notifica[cç][aã]o|responde|responda|procura|busca|consulta|cria|crie|marca|marque|coloca|coloque|mostra|ver|veja|ler|leia)\b/i.test(String(text));
+}
+
+function detectDirectAddressEmailIntent(text = '') {
+  const raw = String(text || '').replace(/\\@/g, '@').replace(/\s+/g, ' ').trim();
+  if (!/\b(?:manda|mande|mandar|envia|envie|enviar)\b/i.test(raw)) return null;
+  if (!/\b(?:e-?mail|gmail)\b/i.test(raw)) return null;
+
+  const addressMatch = raw.match(/([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i);
+  if (!addressMatch?.[1]) return null;
+
+  const recipient = addressMatch[1].replace(/[),.;:!?]+$/g, '').trim();
+  let body = 'Teste da SEXTA';
+  let subject = 'Teste da SEXTA';
+
+  const beforeAddress = raw.slice(0, addressMatch.index).trim();
+  const describedBody = beforeAddress.match(/\b(?:e-?mail|gmail)\s+(?:de\s+)?(.+?)\s+(?:para|pra|pro|ao|à)\s*$/i);
+  if (describedBody?.[1]) {
+    const candidate = describedBody[1].replace(/^(?:um|uma)\s+/i, '').trim();
+    if (candidate && !/^(?:para|pra|pro)$/i.test(candidate)) {
+      body = candidate;
+      subject = /\bteste\b/i.test(candidate) ? 'Teste da SEXTA' : 'Mensagem da Sexta-feira';
+    }
+  }
+
+  const afterAddress = raw.slice((addressMatch.index || 0) + addressMatch[0].length).trim();
+  const trailingBody = afterAddress.match(/^(?:dizendo|falando|com\s+(?:a\s+)?(?:mensagem|texto)|mensagem)\s+(.+)$/i);
+  if (trailingBody?.[1]) {
+    body = trailingBody[1].trim();
+    subject = 'Mensagem da Sexta-feira';
+  }
+
+  return { action: 'gmail.send-smart', args: { recipient, subject, body } };
 }
 
 function toolFallback(planned) {
@@ -27,6 +60,7 @@ async function plannerInput(message, conversationId) {
   const memoryText = memories.map(m => `- ${m.content}`).join('\n');
   return [
     'Você é o roteador de ferramentas da SEXTA. Use o contexto abaixo apenas para resolver referências como "o mesmo", "aquele arquivo", "ela", "ele" ou nomes já citados. Execute somente o pedido atual.',
+    'Nunca substitua um endereço de e-mail explícito por busca de contato. Se houver um endereço com @, use esse endereço diretamente.',
     memoryText ? `MEMÓRIAS RELEVANTES:\n${memoryText}` : '',
     recent ? `CONVERSA RECENTE:\n${recent}` : '',
     `PEDIDO ATUAL:\n${message}`
@@ -48,30 +82,57 @@ export default async function handler(req, res) {
     return automatic;
   };
 
+  const executeGoogleIntent = async (intent, memory) => {
+    const workspaceStatus = await googleStatus();
+    if (!workspaceStatus.connected) {
+      const reply = workspaceStatus.configured
+        ? 'Eu entendi que isso é uma ação do Google Workspace, mas sua conta Google ainda não está conectada. Abra Integrações e autorize o acesso.'
+        : 'Eu entendi a ação do Google, mas o OAuth ainda não foi configurado.';
+      await persistReply(reply);
+      return send(res, 200, { reply, needsGoogleConnect: true, memorySaved: Boolean(memory) });
+    }
+
+    const workspaceResult = await executeWorkspaceAction(intent.action, intent.args);
+    if (intent.action === 'calendar.create') {
+      const title = String(intent.args.title || '').trim();
+      const date = String(intent.args.date || '').trim();
+      if (title && date) await saveMemory({
+        content: `${title}: ${date.split('-').reverse().join('/')}`,
+        kind: 'event',
+        importance: /anivers[aá]rio/i.test(title) ? 0.95 : 0.78,
+        source: 'google-calendar'
+      });
+    }
+    const reply = formatWorkspaceResult(intent, workspaceResult);
+    const automatic = await persistReply(reply, 'google-workspace');
+    return send(res, 200, { reply, workspaceAction: intent, workspaceResult, memorySaved: Boolean(memory) || automatic.saved.length > 0 });
+  };
+
   try {
     await saveMessage({ conversation_id: conversationId, role: 'user', content: message, device_id: deviceId });
     const memory = maybeExtractMemory(message);
     if (memory) await saveMemory(memory);
 
-    if (likelyAction(message)) {
-      try {
-        const planned = await planAndExecuteTools(await plannerInput(message, conversationId), { deviceId: '', maxRounds: 4 });
-        if (planned.handled) {
-          const reply = planned.modelText || toolFallback(planned);
-          const automatic = await persistReply(reply, 'tool-bus');
-          return send(res, 200, {
-            reply,
-            conversationId,
-            toolCalls: planned.calls,
-            toolResults: planned.results,
-            memorySaved: Boolean(memory) || automatic.saved.length > 0,
-            automaticMemoriesSaved: automatic.saved.length
-          });
-        }
-      } catch (error) {
-        console.warn('[SEXTA Tool Planner] fallback para roteadores antigos:', error.message);
+    if (isGoogleAccountQuestion(message)) {
+      const status = await googleStatus();
+      if (!status.connected) {
+        const reply = status.configured ? 'Nenhuma conta Google está conectada agora.' : 'O Google Workspace ainda não está configurado no servidor.';
+        await persistReply(reply, 'google-workspace');
+        return send(res, 200, { reply, needsGoogleConnect: true, memorySaved: Boolean(memory) });
       }
+      const account = await getConnectedGoogleAccount();
+      const reply = account.email
+        ? `A conta Google conectada é ${account.email}${account.name ? `, de ${account.name}` : ''}.`
+        : 'A conta Google está conectada, mas o Google não retornou o endereço de e-mail.';
+      const automatic = await persistReply(reply, 'google-workspace');
+      return send(res, 200, { reply, googleAccount: account, memorySaved: Boolean(memory) || automatic.saved.length > 0 });
     }
+
+    const directEmailIntent = detectDirectAddressEmailIntent(message);
+    if (directEmailIntent) return executeGoogleIntent(directEmailIntent, memory);
+
+    const workspaceIntent = detectWorkspaceIntent(message);
+    if (workspaceIntent) return executeGoogleIntent(workspaceIntent, memory);
 
     const whatsappIntent = detectWhatsAppIntent(message);
     if (whatsappIntent) {
@@ -96,31 +157,24 @@ export default async function handler(req, res) {
       }
     }
 
-    const workspaceIntent = detectWorkspaceIntent(message);
-    if (workspaceIntent) {
-      const workspaceStatus = await googleStatus();
-      if (workspaceStatus.connected) {
-        const workspaceResult = await executeWorkspaceAction(workspaceIntent.action, workspaceIntent.args);
-        if (workspaceIntent.action === 'calendar.create') {
-          const title = String(workspaceIntent.args.title || '').trim();
-          const date = String(workspaceIntent.args.date || '').trim();
-          if (title && date) await saveMemory({
-            content: `${title}: ${date.split('-').reverse().join('/')}`,
-            kind: 'event',
-            importance: /anivers[aá]rio/i.test(title) ? 0.95 : 0.78,
-            source: 'google-calendar'
+    if (likelyAction(message)) {
+      try {
+        const planned = await planAndExecuteTools(await plannerInput(message, conversationId), { deviceId: '', maxRounds: 4 });
+        if (planned.handled) {
+          const reply = planned.modelText || toolFallback(planned);
+          const automatic = await persistReply(reply, 'tool-bus');
+          return send(res, 200, {
+            reply,
+            conversationId,
+            toolCalls: planned.calls,
+            toolResults: planned.results,
+            memorySaved: Boolean(memory) || automatic.saved.length > 0,
+            automaticMemoriesSaved: automatic.saved.length
           });
         }
-        const reply = formatWorkspaceResult(workspaceIntent, workspaceResult);
-        const automatic = await persistReply(reply, 'google-workspace');
-        return send(res, 200, { reply, workspaceAction: workspaceIntent, workspaceResult, memorySaved: Boolean(memory) || automatic.saved.length > 0 });
+      } catch (error) {
+        console.warn('[SEXTA Tool Planner] fallback para roteadores antigos:', error.message);
       }
-
-      const reply = workspaceStatus.configured
-        ? 'Eu entendi que isso é uma ação do Google Workspace, mas sua conta Google ainda não está conectada. Abra Integrações e autorize o acesso.'
-        : 'Eu entendi a ação do Google, mas o OAuth ainda não foi configurado.';
-      await persistReply(reply);
-      return send(res, 200, { reply, needsGoogleConnect: true, memorySaved: Boolean(memory) });
     }
 
     const actionContext = await inferAndQueueSafeAction(message);
