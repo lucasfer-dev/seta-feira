@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+agent/config.json
+.vercel
+node_modules
+*.log
+.DS_Store
+
+.sexta-google-token.enc
+.env.local
