@@ -23,9 +23,12 @@ export default async function handler(req, res) {
       }
     }
     if (assistantText) {
-      await saveMessage({ conversation_id: conversationId, role: 'assistant', content: assistantText, device_id: 'gemini-live' });
+      // A resposta do Gemini Live pertence ao mesmo dispositivo que iniciou
+      // o turno. Isso evita que a UI interprete a própria SEXTA como um
+      // "outro dispositivo" e mostre um handoff falso.
+      await saveMessage({ conversation_id: conversationId, role: 'assistant', content: assistantText, device_id: deviceId });
     }
-    return send(res, 200, { ok: true, memorySaved });
+    return send(res, 200, { ok: true, memorySaved, voiceEngine: 'gemini-live' });
   } catch (error) {
     console.error('Live turn persistence failed:', error);
     return send(res, 500, { error: 'live_turn_save_failed', message: error?.message || 'Não consegui guardar o turno de voz.' });
