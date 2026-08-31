@@ -1,4 +1,4 @@
-import { answer, inferAndQueueSafeAction, isOwner, maybeExtractMemory, parseJson, saveMemory, saveMessage, send } from '../lib/core.mjs';
+import { answer, getMemories, getMessages, inferAndQueueSafeAction, isOwner, maybeExtractMemory, parseJson, saveMemory, saveMessage, send } from '../lib/core.mjs';
 import { detectWorkspaceIntent, executeWorkspaceAction, formatWorkspaceResult, googleStatus } from '../lib/google.mjs';
 import { detectWhatsAppIntent, evolutionStatus, sendWhatsAppText } from '../lib/evolution.mjs';
 import { absorbAutomaticMemory } from '../lib/auto-memory.mjs';
@@ -7,7 +7,7 @@ import { planAndExecuteTools } from '../lib/tool-bus.mjs';
 const SHARED_CONVERSATION_ID = 'main';
 
 function likelyAction(text = '') {
-  return /\b(manda|mande|envia|envie|abre|abra|abrir|fecha|liga|desliga|aumenta|abaixa|volume|lanterna|spotify|whatsapp|wpp|gmail|e-?mail|agenda|calend[aá]rio|drive|documento|planilha|tarefa|contato|pc|computador|celular|android|notifica[cç][aã]o|responde|responda|procura|busca|cria|crie|mostra|ler|leia)\b/i.test(String(text));
+  return /\b(manda|mande|envia|envie|avisa|avise|fala|diz|abre|abra|abrir|fecha|liga|desliga|aumenta|abaixa|volume|lanterna|spotify|whatsapp|wpp|gmail|e-?mail|agenda|calend[aá]rio|reuni[aã]o|evento|drive|documento|planilha|tarefa|contato|pc|computador|celular|android|notifica[cç][aã]o|responde|responda|procura|busca|consulta|cria|crie|marca|marque|coloca|coloque|mostra|ver|veja|ler|leia)\b/i.test(String(text));
 }
 
 function toolFallback(planned) {
@@ -16,6 +16,21 @@ function toolFallback(planned) {
   if (last?.ok === false) return `Eu entendi a ação, mas não consegui concluir: ${last.error || 'ferramenta indisponível'}.`;
   if (planned?.calls?.length) return `Pronto. Executei ${planned.calls.length === 1 ? 'a ação' : `${planned.calls.length} ações`} pedida${planned.calls.length === 1 ? '' : 's'}.`;
   return '';
+}
+
+async function plannerInput(message, conversationId) {
+  const [messages, memories] = await Promise.all([
+    getMessages(conversationId, 10).catch(() => []),
+    getMemories(10).catch(() => [])
+  ]);
+  const recent = messages.slice(-9).map(m => `${m.role === 'assistant' ? 'SEXTA' : 'USUÁRIO'}: ${m.content}`).join('\n');
+  const memoryText = memories.map(m => `- ${m.content}`).join('\n');
+  return [
+    'Você é o roteador de ferramentas da SEXTA. Use o contexto abaixo apenas para resolver referências como "o mesmo", "aquele arquivo", "ela", "ele" ou nomes já citados. Execute somente o pedido atual.',
+    memoryText ? `MEMÓRIAS RELEVANTES:\n${memoryText}` : '',
+    recent ? `CONVERSA RECENTE:\n${recent}` : '',
+    `PEDIDO ATUAL:\n${message}`
+  ].filter(Boolean).join('\n\n');
 }
 
 export default async function handler(req, res) {
@@ -38,11 +53,9 @@ export default async function handler(req, res) {
     const memory = maybeExtractMemory(message);
     if (memory) await saveMemory(memory);
 
-    // Gemini decides which tool to use. Regexes below remain only as a fallback
-    // when the tool planner is unavailable or the model chooses no function.
     if (likelyAction(message)) {
       try {
-        const planned = await planAndExecuteTools(message, { deviceId, maxRounds: 4 });
+        const planned = await planAndExecuteTools(await plannerInput(message, conversationId), { deviceId: '', maxRounds: 4 });
         if (planned.handled) {
           const reply = planned.modelText || toolFallback(planned);
           const automatic = await persistReply(reply, 'tool-bus');
