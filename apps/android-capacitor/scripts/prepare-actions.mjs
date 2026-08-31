@@ -28,13 +28,72 @@ if (!service.includes('AndroidCommandLoop.stop();')) {
     '    @Override public void onDestroy() {\n        AndroidCommandLoop.stop();\n        stopEverything();'
   );
 }
-// Execute a wake-word command locally immediately instead of waiting for cloud sync.
-if (!service.includes('AndroidCommandLoop.executeText(this, pendingWakeCommand);')) {
+
+// If the command is spoken together with the wake phrase, execute it locally and
+// do not open Gemini Live. Example: "Sexta-feira, abre o WhatsApp".
+if (!service.includes('boolean localHandled = AndroidCommandLoop.executeText(this, pendingWakeCommand);')) {
   service = service.replace(
     '        pendingWakeCommand = tailAfterWake(heard);\n        stopWakeListening();',
-    '        pendingWakeCommand = tailAfterWake(heard);\n        if (!pendingWakeCommand.isEmpty()) AndroidCommandLoop.executeText(this, pendingWakeCommand);\n        stopWakeListening();'
+    `        pendingWakeCommand = tailAfterWake(heard);
+        if (!pendingWakeCommand.isEmpty()) {
+            boolean localHandled = AndroidCommandLoop.executeText(this, pendingWakeCommand);
+            if (localHandled) {
+                String executedCommand = pendingWakeCommand;
+                pendingWakeCommand = "";
+                stopWakeListening();
+                updateNotification("Comando executado • " + executedCommand);
+                io.execute(() -> {
+                    try { Thread.sleep(650); } catch (InterruptedException ignored) {}
+                    if (!webConversationActive && !nativeConversationActive) startWakeListening();
+                });
+                return;
+            }
+        }
+        stopWakeListening();`
   );
 }
+
+// If the user says the action after the wake beep, Gemini Live may already be
+// connected. Intercept the input transcription before model audio is handled.
+if (!service.includes('finishNativeAfterLocalAction(localCommand);')) {
+  service = service.replace(
+`            if (inTrans != null) {
+                inputTranscript = mergeTranscript(inputTranscript, inTrans.optString("text", ""));
+                if (isVoiceOffCommand(inputTranscript)) {`,
+`            if (inTrans != null) {
+                inputTranscript = mergeTranscript(inputTranscript, inTrans.optString("text", ""));
+                if (!inputTranscript.isEmpty() && AndroidCommandLoop.executeText(this, inputTranscript)) {
+                    String localCommand = inputTranscript;
+                    persistTurn(localCommand, "Ação executada no Android.");
+                    finishNativeAfterLocalAction(localCommand);
+                    return;
+                }
+                if (isVoiceOffCommand(inputTranscript)) {`
+  );
+
+  service = service.replace(
+    '    private synchronized void finishNativeConversation(boolean byVoice) {',
+`    private synchronized void finishNativeAfterLocalAction(String command) {
+        nativeConversationActive = false;
+        stopLiveAudio();
+        if (liveSocket != null) {
+            try { liveSocket.close(1000, "local android action"); } catch (Exception ignored) {}
+            liveSocket = null;
+        }
+        inputTranscript = "";
+        outputTranscript = "";
+        pendingWakeCommand = "";
+        updateNotification("Comando executado • aguardando “Sexta-feira”");
+        if (!webConversationActive) io.execute(() -> {
+            try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+            startWakeListening();
+        });
+    }
+
+    private synchronized void finishNativeConversation(boolean byVoice) {`
+  );
+}
+
 fs.writeFileSync(servicePath, service);
 
 const manifestPath = path.join(androidRoot, 'AndroidManifest.xml');
@@ -92,4 +151,4 @@ fs.writeFileSync(path.join(xmlDir, 'sexta_accessibility_service.xml'), `<?xml ve
     android:canPerformGestures="false"
     android:settingsActivity="com.sexta.assistant.MainActivity" />\n`);
 
-console.log('SEXTA Android Actions preparado: executor, command loop, visibilidade de apps e bridge de acessibilidade incluídos.');
+console.log('SEXTA Android Actions preparado: ações locais interceptadas antes do Gemini Live, visibilidade de apps e bridge de acessibilidade incluídas.');

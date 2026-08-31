@@ -25,11 +25,11 @@ service = service.replace(
   'ContextCompat.registerReceiver(this, conversationReceiver, new IntentFilter(ACTION_CONVERSATION_STATE), ContextCompat.RECEIVER_NOT_EXPORTED);'
 );
 
-// Native Live stability: do not reopen the microphone just because Gemini emitted
-// turnComplete. AudioTrack may still have buffered PCM playing on the speaker.
+// Native Live stability: receive Gemini websocket chunks without blocking the
+// websocket callback on AudioTrack writes. Playback happens on a dedicated queue.
 service = service.replace(
   'private final AtomicBoolean assistantSpeaking = new AtomicBoolean(false);',
-  `private final AtomicBoolean assistantSpeaking = new AtomicBoolean(false);\n    private final AtomicBoolean nativeTurnFinishing = new AtomicBoolean(false);\n    private volatile long outputFramesWritten = 0L;\n    private volatile long lastOutputWriteAtMs = 0L;`
+  `private final AtomicBoolean assistantSpeaking = new AtomicBoolean(false);\n    private final AtomicBoolean nativeTurnFinishing = new AtomicBoolean(false);\n    private final AtomicBoolean nativePlaybackRunning = new AtomicBoolean(false);\n    private final java.util.concurrent.LinkedBlockingQueue<byte[]> nativePlaybackQueue = new java.util.concurrent.LinkedBlockingQueue<>(256);\n    private volatile Thread nativePlaybackThread;\n    private volatile long outputFramesWritten = 0L;\n    private volatile long lastOutputWriteAtMs = 0L;`
 );
 
 service = service.replace(
@@ -70,7 +70,6 @@ service = service.replace(
 
     private void finishNativeTurnAfterPlayback(String user, String assistant) {
         if (!nativeTurnFinishing.compareAndSet(false, true)) return;
-        // Keep capture gated while the speaker still has buffered audio.
         assistantSpeaking.set(true);
         io.execute(() -> {
             waitForNativePlaybackDrain();
@@ -91,11 +90,11 @@ service = service.replace(
                 long played = Integer.toUnsignedLong(track.getPlaybackHeadPosition());
                 long target = outputFramesWritten;
                 long quietFor = lastOutputWriteAtMs == 0L ? 250L : System.currentTimeMillis() - lastOutputWriteAtMs;
-                if (played + 240L >= target && quietFor >= 220L) break;
+                if (nativePlaybackQueue.isEmpty() && played + 240L >= target && quietFor >= 180L) break;
             } catch (Exception ignored) {}
             try { Thread.sleep(20L); } catch (InterruptedException ignored) { break; }
         }
-        try { Thread.sleep(80L); } catch (InterruptedException ignored) {}
+        try { Thread.sleep(70L); } catch (InterruptedException ignored) {}
     }
 
     private String mergeTranscript`
@@ -112,23 +111,74 @@ service = service.replace(
 `        outputFramesWritten = 0L;
         lastOutputWriteAtMs = 0L;
         nativeTurnFinishing.set(false);
+        nativePlaybackQueue.clear();
         audioTrack.play();
+        startNativePlaybackWorker();
         audioRecord.startRecording();`
 );
 
 service = service.replace(
-`        audioTrack.write(pcm, 0, pcm.length, AudioTrack.WRITE_BLOCKING);
+`    private synchronized void playPcm(byte[] pcm) {
+        if (audioTrack == null || pcm == null || pcm.length == 0) return;
+        assistantSpeaking.set(true);
+        updateNotification("SEXTA ativa • falando...");
+        audioTrack.write(pcm, 0, pcm.length, AudioTrack.WRITE_BLOCKING);
     }
 
     private void persistTurn`,
-`        int written = audioTrack.write(pcm, 0, pcm.length, AudioTrack.WRITE_BLOCKING);
-        if (written > 0) {
-            outputFramesWritten += written / 2L;
-            lastOutputWriteAtMs = System.currentTimeMillis();
+`    private synchronized void playPcm(byte[] pcm) {
+        if (audioTrack == null || pcm == null || pcm.length == 0 || !nativePlaybackRunning.get()) return;
+        if (assistantSpeaking.compareAndSet(false, true)) updateNotification("SEXTA ativa • falando...");
+        byte[] copy = java.util.Arrays.copyOf(pcm, pcm.length);
+        if (!nativePlaybackQueue.offer(copy)) {
+            // Never block the websocket callback. A full queue means playback is
+            // unhealthy; keep the oldest contiguous audio and reject this chunk.
+            return;
         }
     }
 
+    private void startNativePlaybackWorker() {
+        if (!nativePlaybackRunning.compareAndSet(false, true)) return;
+        nativePlaybackThread = new Thread(() -> {
+            while (nativePlaybackRunning.get() && nativeConversationActive) {
+                try {
+                    byte[] chunk = nativePlaybackQueue.poll(300L, TimeUnit.MILLISECONDS);
+                    if (chunk == null) continue;
+                    AudioTrack track = audioTrack;
+                    if (track == null) break;
+                    int offset = 0;
+                    while (offset < chunk.length && nativePlaybackRunning.get() && nativeConversationActive) {
+                        int written = track.write(chunk, offset, chunk.length - offset, AudioTrack.WRITE_BLOCKING);
+                        if (written <= 0) break;
+                        offset += written;
+                        outputFramesWritten += written / 2L;
+                        lastOutputWriteAtMs = System.currentTimeMillis();
+                    }
+                } catch (InterruptedException ignored) {
+                    break;
+                } catch (Exception ignored) {}
+            }
+        }, "sexta-live-playback");
+        nativePlaybackThread.start();
+    }
+
+    private void stopNativePlaybackWorker() {
+        nativePlaybackRunning.set(false);
+        Thread worker = nativePlaybackThread;
+        nativePlaybackThread = null;
+        if (worker != null) worker.interrupt();
+        nativePlaybackQueue.clear();
+    }
+
     private void persistTurn`
+);
+
+service = service.replace(
+`        if (audioTrack != null) {
+            try { audioTrack.stop(); } catch (Exception ignored) {}`,
+`        stopNativePlaybackWorker();
+        if (audioTrack != null) {
+            try { audioTrack.stop(); } catch (Exception ignored) {}`
 );
 
 service = service.replace(
@@ -210,4 +260,4 @@ for (const dependency of dependencies) {
 }
 fs.writeFileSync(gradlePath, gradle);
 
-console.log('SEXTA Android preparado: foreground service, wake word local, Gemini Live nativo, playback estável e permissões opt-in.');
+console.log('SEXTA Android preparado: foreground service, wake word local, Gemini Live nativo, playback em fila dedicada e permissões opt-in.');
