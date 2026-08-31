@@ -1,12 +1,15 @@
 import { answer, inferAndQueueSafeAction, isOwner, maybeExtractMemory, parseJson, saveMemory, saveMessage, send } from '../lib/core.mjs';
 import { detectWorkspaceIntent, executeWorkspaceAction, formatWorkspaceResult, googleStatus } from '../lib/google.mjs';
 import { detectWhatsAppIntent, evolutionStatus, sendWhatsAppText } from '../lib/evolution.mjs';
+
+const SHARED_CONVERSATION_ID = 'main';
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
   if (!isOwner(req)) return send(res, 401, { error: 'unauthorized' });
   const body = await parseJson(req);
   const message = String(body.message || '').trim();
-  const conversationId = String(body.conversationId || 'main').slice(0, 100);
+  const conversationId = SHARED_CONVERSATION_ID;
   const deviceId = String(body.deviceId || 'unknown').slice(0, 120);
   if (!message) return send(res, 400, { error: 'message_required' });
   try {
@@ -60,7 +63,7 @@ export default async function handler(req, res) {
       settings: body.settings || {}, clientContext: body.context || {}, actionContext
     });
     await saveMessage({ conversation_id: conversationId, role: 'assistant', content: reply, device_id: 'cloud-core' });
-    send(res, 200, { reply, action: actionContext, memorySaved: Boolean(memory) });
+    send(res, 200, { reply, action: actionContext, memorySaved: Boolean(memory), conversationId });
   } catch (error) {
     console.error(error);
     if (String(error?.message || '').startsWith('GEMINI_NETWORK:')) {
