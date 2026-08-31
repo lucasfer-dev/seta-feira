@@ -1,6 +1,7 @@
 import { isOwner, parseJson, send } from '../lib/core.mjs';
 
 const LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-3.1-flash-live-preview';
+const LIVE_VOICE = process.env.GEMINI_LIVE_VOICE || 'Sulafat';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
@@ -10,7 +11,8 @@ export default async function handler(req, res) {
   if (!key) return send(res, 503, { error: 'gemini_live_not_configured' });
 
   const body = await parseJson(req).catch(() => ({}));
-  const systemInstruction = String(body.systemInstruction || 'Você é SEXTA-feira, uma assistente pessoal de voz. Fale em português brasileiro de forma natural, curta e conversacional.').slice(0, 12000);
+  const baseInstruction = String(body.systemInstruction || 'Você é SEXTA-feira, uma assistente pessoal de voz. Fale em português brasileiro de forma natural, curta e conversacional.').slice(0, 11500);
+  const systemInstruction = `${baseInstruction}\n\nREGRA DE VOZ: mantenha uma única identidade vocal feminina consistente durante toda a sessão. Não altere deliberadamente timbre, personagem, gênero percebido ou identidade da voz entre turnos.`.slice(0, 12000);
 
   const now = Date.now();
   const expireTime = new Date(now + 15 * 60 * 1000).toISOString();
@@ -19,7 +21,14 @@ export default async function handler(req, res) {
   const setup = {
     model: `models/${LIVE_MODEL}`,
     generationConfig: {
-      responseModalities: ['AUDIO']
+      responseModalities: ['AUDIO'],
+      speechConfig: {
+        voiceConfig: {
+          prebuiltVoiceConfig: {
+            voiceName: LIVE_VOICE
+          }
+        }
+      }
     },
     systemInstruction: {
       parts: [{ text: systemInstruction }]
@@ -29,9 +38,10 @@ export default async function handler(req, res) {
   };
 
   try {
-    // Lock the effective Live setup into the ephemeral token. This makes Google
-    // validate the model/config before the browser opens the WebSocket and avoids
-    // silent setup handshakes that never reach setupComplete.
+    // Lock model, audio modality and voice into the ephemeral token so every
+    // turn in this Live session requests the same prebuilt voice. Gemini 3.1
+    // Live is still preview, so the backend may occasionally drift despite the
+    // requested voice; the app keeps one long-lived session to minimize that.
     const response = await fetch('https://generativelanguage.googleapis.com/v1beta/auth_tokens', {
       method: 'POST',
       headers: {
@@ -56,6 +66,7 @@ export default async function handler(req, res) {
     return send(res, 200, {
       token: data.name,
       model: LIVE_MODEL,
+      voice: LIVE_VOICE,
       expireTime,
       newSessionExpireTime,
       setupLocked: true
