@@ -15,6 +15,9 @@ export default async function handler(req, res) {
   const newSessionExpireTime = new Date(now + 60 * 1000).toISOString();
 
   try {
+    // Current REST AuthToken schema: when bidiGenerateContentSetup is omitted,
+    // the effective Live setup is supplied by the WebSocket connection itself.
+    // This keeps the token short-lived and one-use without exposing GEMINI_API_KEY.
     const response = await fetch('https://generativelanguage.googleapis.com/v1beta/auth_tokens', {
       method: 'POST',
       headers: {
@@ -24,13 +27,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         uses: 1,
         expireTime,
-        newSessionExpireTime,
-        liveConnectConstraints: {
-          model: `models/${LIVE_MODEL}`,
-          config: {
-            responseModalities: ['AUDIO']
-          }
-        }
+        newSessionExpireTime
       })
     });
 
