@@ -19,6 +19,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 import org.json.JSONArray;
+import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -67,6 +68,47 @@ public class AssistantBridgePlugin extends Plugin {
         JSObject result = new JSObject();
         result.put("ok", true);
         call.resolve(result);
+    }
+
+    @PluginMethod
+    public void executeVoiceCommand(PluginCall call) {
+        String text = call.getString("text", "");
+        if (text == null || text.trim().isEmpty()) {
+            call.reject("VOICE_COMMAND_REQUIRED");
+            return;
+        }
+
+        final Context context = getContext().getApplicationContext();
+        final String commandText = text.trim();
+        new Thread(() -> {
+            try {
+                JSONObject result = AndroidCommandLoop.executeTextResult(context, commandText);
+                String provider = "android";
+                if (!result.optBoolean("handled", false)) {
+                    result = CloudVoiceActionBridge.execute(context, commandText);
+                    provider = result.optString("provider", "cloud");
+                }
+
+                JSObject out = new JSObject();
+                out.put("handled", result.optBoolean("handled", false));
+                out.put("ok", result.optBoolean("ok", false));
+                out.put("provider", result.optString("provider", provider));
+                out.put("action", result.optString("action", ""));
+                out.put("reply", result.optString("reply", result.optString("message", "")));
+                out.put("message", result.optString("message", ""));
+                if (result.has("result")) out.put("result", result.opt("result"));
+                if (result.has("needsGoogleConnect")) out.put("needsGoogleConnect", result.optBoolean("needsGoogleConnect"));
+                if (result.has("needsGoogleConfig")) out.put("needsGoogleConfig", result.optBoolean("needsGoogleConfig"));
+                if (result.has("needsEvolutionConnect")) out.put("needsEvolutionConnect", result.optBoolean("needsEvolutionConnect"));
+                call.resolve(out);
+            } catch (Exception error) {
+                JSObject out = new JSObject();
+                out.put("handled", false);
+                out.put("ok", false);
+                out.put("message", error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
+                call.resolve(out);
+            }
+        }, "sexta-voice-command").start();
     }
 
     private void addCapabilityPermissions(String capability, Set<String> permissions) {
