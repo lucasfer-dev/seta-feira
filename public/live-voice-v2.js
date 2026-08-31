@@ -37,6 +37,8 @@
   let voiceActionSequence = 0;
   let lastVoiceActionText = '';
   let lastVoiceActionAt = 0;
+  let actionTurnPending = false;
+  let actionTurnHandled = false;
 
   function setHint(text) {
     if (voiceHint) voiceHint.textContent = text;
@@ -75,7 +77,7 @@
   function looksLikeVoiceAction(text) {
     const value = normalizeSpeech(text);
     if (!value) return false;
-    return /\b(?:abre|abrir|abra|inicia|iniciar|liga|ligue|desliga|desligue|acende|apaga|aumenta|sobe|abaixa|diminui|reduz|volume|lanterna|flash|pausa|pause|toca|toque|play|continua|proxima|pula|anterior|responde|responder|responda|envia|enviar|mande|manda|agenda|calendario|calendar|gmail|email|e-mail|drive|documento|planilha|tarefa|whatsapp|wpp|zap)\b/.test(value);
+    return /\b(?:abre|abrir|abra|inicia|iniciar|liga|ligue|desliga|desligue|acende|apaga|aumenta|sobe|abaixa|diminui|reduz|volume|lanterna|flash|pausa|pause|toca|toque|play|continua|proxima|pula|anterior|responde|responder|responda|envia|enviar|envie|mande|manda|agenda|calendario|calendar|google|gmail|email|e-mail|drive|documento|planilha|tarefa|contato|contatos|whatsapp|wpp|zap)\b/.test(value);
   }
 
   async function routeVoiceAction(text, sequence) {
@@ -100,22 +102,37 @@
             })
           });
 
-      if (!sessionActive || sequence !== voiceActionSequence || !result?.handled) return;
+      if (!sessionActive || sequence !== voiceActionSequence) return;
+      if (!result?.handled) {
+        actionTurnPending = false;
+        return;
+      }
+
+      actionTurnHandled = true;
+      actionTurnPending = false;
+      stopOutput();
+      outputTranscript = '';
       const reply = String(result.reply || result.message || (result.ok ? 'Ação executada.' : 'Não consegui executar a ação.')).trim();
       setHint(`${result.ok ? '✓' : '⚠'} ${reply.slice(0, 110)}`);
+      document.querySelector('#syncBtn')?.click();
     } catch (error) {
+      actionTurnPending = false;
       console.warn('Roteamento de ação por voz:', error);
     }
   }
 
   function scheduleVoiceAction(text) {
     if (!looksLikeVoiceAction(text)) return;
+    actionTurnPending = true;
+    actionTurnHandled = false;
+    stopOutput();
+    outputTranscript = '';
     if (voiceActionTimer) clearTimeout(voiceActionTimer);
     const sequence = ++voiceActionSequence;
     voiceActionTimer = setTimeout(() => {
       voiceActionTimer = null;
       void routeVoiceAction(text, sequence);
-    }, 320);
+    }, 120);
   }
 
   function mergeTranscript(current, incoming) {
@@ -193,7 +210,7 @@
 
   async function scheduleOutput(base64, mimeType = '') {
     const bytes = base64ToBytes(base64);
-    if (!bytes.length || !sessionActive) return;
+    if (!bytes.length || !sessionActive || actionTurnPending || looksLikeVoiceAction(inputTranscript)) return;
     const match = String(mimeType).match(/rate=(\d+)/i);
     const sampleRate = Number(match?.[1] || OUTPUT_RATE);
     const ctx = await ensureOutputContext();
@@ -267,8 +284,6 @@
     inputContext = new AudioContextCtor({ latencyHint: 'interactive' });
     if (inputContext.state === 'suspended') await inputContext.resume();
     inputSource = inputContext.createMediaStreamSource(mediaStream);
-    // ~85-95 ms on common Android 44.1/48 kHz input devices. This is much
-    // closer to the Live API guidance than the previous ~40 ms chunks.
     processor = inputContext.createScriptProcessor(4096, 1, 1);
     silentGain = inputContext.createGain();
     silentGain.gain.value = 0;
@@ -318,6 +333,7 @@
       'Se o usuário disser para desativar, desligar, encerrar ou sair do modo de voz, não continue a resposta; o aplicativo encerrará a sessão localmente.',
       `Ajustes: humor ${settings.humor ?? 68}/100, sarcasmo ${settings.sarcasm ?? 42}/100, proatividade ${settings.proactivity ?? 55}/100, verbosidade ${settings.verbosity ?? 32}/100.`,
       'Nunca afirme que uma ação externa foi executada sem confirmação real de uma ferramenta.',
+      'Pedidos de Gmail, Google, WhatsApp, agenda, contatos, apps, Android, PC, Drive, Docs, Sheets e Tasks são resolvidos pelo roteador da SEXTA. Não improvise resultados nem limitações e não use memórias pessoais como comentário extra nesses turnos.',
       memories ? `Memórias relevantes:\n${memories}` : '',
       recent ? `Contexto recente:\n${recent}` : ''
     ].filter(Boolean).join('\n\n');
@@ -353,15 +369,19 @@
     finishingTurn = true;
     captureEnabled = false;
     try {
-      await waitForOutputDrain();
+      const actionTurn = actionTurnPending || actionTurnHandled || looksLikeVoiceAction(inputTranscript);
+      if (!actionTurn) await waitForOutputDrain();
+      else stopOutput();
       if (!sessionActive || stoppingByVoice) return;
       const userText = inputTranscript;
-      const assistantText = outputTranscript;
+      const assistantText = actionTurn ? '' : outputTranscript;
       resetTurnTranscripts();
-      void persistTurn(userText, assistantText);
+      if (!actionTurn) void persistTurn(userText, assistantText);
       assistantSpeaking = false;
       captureEnabled = true;
-      setHint('Gemini Live • ouvindo...');
+      if (!actionTurnHandled) setHint(actionTurn ? 'SEXTA • processando ação...' : 'Gemini Live • ouvindo...');
+      actionTurnPending = false;
+      actionTurnHandled = false;
     } finally {
       finishingTurn = false;
     }
@@ -373,6 +393,8 @@
     captureEnabled = false;
     assistantSpeaking = false;
     finishingTurn = false;
+    actionTurnPending = false;
+    actionTurnHandled = false;
     setActiveUI(false);
     if (handshakeTimeout) clearTimeout(handshakeTimeout);
     handshakeTimeout = null;
@@ -435,7 +457,7 @@
       }
       scheduleVoiceAction(inputTranscript);
     }
-    if (content?.outputTranscription?.text) {
+    if (content?.outputTranscription?.text && !actionTurnPending && !looksLikeVoiceAction(inputTranscript)) {
       outputTranscript = mergeTranscript(outputTranscript, content.outputTranscription.text);
     }
 
@@ -443,12 +465,13 @@
     const parts = content?.modelTurn?.parts || [];
     for (const part of parts) {
       if (!part?.inlineData?.data || !sessionActive) continue;
+      if (actionTurnPending || looksLikeVoiceAction(inputTranscript)) {
+        stopOutput();
+        continue;
+      }
       if (!assistantSpeaking) {
         assistantSpeaking = true;
         captureEnabled = false;
-        // We intentionally pause the upstream mic while SEXTA speaks. Flushing
-        // the audio stream keeps server-side VAD from carrying stale mic audio
-        // into the next user turn.
         sendRealtime({ audioStreamEnd: true });
       }
       setHint('Gemini Live • falando...');
@@ -456,8 +479,6 @@
     }
 
     if (interrupted) {
-      // With NO_INTERRUPTION this should be rare. Never discard audio already
-      // queued locally; finish the contiguous playback before reopening the mic.
       if (assistantSpeaking || outputSources.size > 0) {
         captureEnabled = false;
         setHint('Gemini Live • finalizando fala...');
@@ -486,6 +507,8 @@
     assistantSpeaking = false;
     finishingTurn = false;
     stoppingByVoice = false;
+    actionTurnPending = false;
+    actionTurnHandled = false;
     resetTurnTranscripts();
     nextOutputTime = 0;
     outputChunkVersion = 0;
