@@ -64,7 +64,7 @@ jobs:
 
       - name: Apply SEXTA native Android layer
         working-directory: apps/android-capacitor
-        run: node scripts/prepare-android.mjs
+        run: npm run android:prepare
 
       - name: Build debug APK
         working-directory: apps/android-capacitor/android
