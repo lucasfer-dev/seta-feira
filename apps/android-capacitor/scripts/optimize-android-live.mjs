@@ -38,6 +38,12 @@ if (service.includes(buildEnd)) service = service.replace(buildEnd, buildEndRepl
 // 40 ms de PCM a 16 kHz/16-bit mono em vez de ~100 ms. Menos atraso de entrada.
 service = service.replace('            byte[] buffer = new byte[3200];', '            byte[] buffer = new byte[1280];');
 
+// Segunda rodada: reduz a pausa entre a wake word e a captura do comando.
+service = service.replace('            try { Thread.sleep(260L); } catch (InterruptedException ignored) {}', '            try { Thread.sleep(80L); } catch (InterruptedException ignored) {}');
+
+// Evita ficar mais de 4 s esperando o comando local antes do fallback.
+service = service.replace('                try { Thread.sleep(4300L); } catch (InterruptedException ignored) {}', '                try { Thread.sleep(2500L); } catch (InterruptedException ignored) {}');
+
 // Atualiza o contexto depois de cada turno sem bloquear a conversa atual.
 service = service.replace(
   '                try (Response ignored = http.newCall(req).execute()) {}',
@@ -45,4 +51,4 @@ service = service.replace(
 );
 
 fs.writeFileSync(servicePath, service);
-console.log('SEXTA Android Live otimizado: contexto em cache + refresh assíncrono + áudio de entrada em blocos de 40 ms.');
+console.log('SEXTA Android Live otimizado: contexto em cache + refresh assíncrono + PCM 40 ms + wake 80 ms + captura local 2,5 s.');
