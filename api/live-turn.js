@@ -1,9 +1,15 @@
 import { getMessages, isOwner, maybeExtractMemory, parseJson, saveMemory, saveMessage, send } from '../lib/core.mjs';
 
+const SHARED_CONVERSATION_ID = 'main';
+
 function stripAssistantPrefix(text = '') {
   return String(text)
     .trim()
+    // Voice transcription can confuse the wake word with another weekday.
+    // For memory-command parsing only, tolerate these prefixes.
+    .replace(/^(?:(?:segunda|ter[cç]a|quarta|quinta|sexta|s[aá]bado|domingo)(?:[- ]feira)?)\s*[,;:.-]?\s*/i, '')
     .replace(/^sexta(?:[- ]feira)?\s*[,;:.-]?\s*/i, '')
+    .replace(/^(?:ent[aã]o|por favor|pra mim|para mim)\s*[,;:.-]?\s*/i, '')
     .trim();
 }
 
@@ -12,17 +18,26 @@ function normalizeMemorySpeech(text = '') {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
-    .replace(/[.,!?;:]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-function isReferenceMemoryRequest(text = '') {
+const SAVE_VERB = '(?:salva|salve|salvar|guarda|guarde|guardar|anota|anote|anotar|memoriza|memorize|memorizar|registra|registre|registrar|adiciona|adicione|adicionar|coloca|coloque|lembrar|lembre)';
+
+function hasMemoryIntent(text = '') {
   const value = normalizeMemorySpeech(text);
   if (!value) return false;
-  const hasSaveVerb = /^(?:guarda|guarde|guardar|salva|salve|salvar|anota|anote|anotar|memoriza|memorize|memorizar|registre|registrar|atualiza|atualize|atualizar|coloca|coloque|adiciona|adicione|adicionar)\b/.test(value);
-  if (!hasSaveVerb) return false;
-  return /\b(?:isso|essa informacao|esta informacao|essa coisa|isso ai|o que eu (?:acabei de )?falei|a informacao anterior|o que eu disse antes|de novo na (?:sua|minha) memoria essa informacao)\b/.test(value);
+  return new RegExp(`\\b${SAVE_VERB}\\b`, 'i').test(value)
+    || /\b(?:na|em)\s+(?:sua|minha)\s+memoria\b/i.test(value)
+    || /\baba\s+memoria\b/i.test(value)
+    || /\blembre-se\s+(?:disso|dessa|desta)\b/i.test(value);
+}
+
+function isReferenceMemoryRequest(text = '') {
+  const value = normalizeMemorySpeech(text);
+  if (!value || !hasMemoryIntent(value)) return false;
+  return /\b(?:isso|essa informacao|esta informacao|essa coisa|isso ai|o que eu (?:acabei de )?falei|a informacao anterior|o que eu disse antes|de novo|na aba memoria)\b/i.test(value)
+    && !/[.:]\s*[^.]{5,}$/.test(value);
 }
 
 function classifyMemory(content = '') {
@@ -39,34 +54,46 @@ function classifyMemory(content = '') {
   return { kind: 'fact', importance: 0.88 };
 }
 
+function makeMemory(content, source = 'explicit_voice') {
+  const value = String(content || '').replace(/^\s*(?:que\s+)?/i, '').replace(/\s+/g, ' ').trim();
+  if (value.length < 5) return null;
+  const normalized = normalizeMemorySpeech(value);
+  if (/^(?:isso|essa informacao|esta informacao|essa coisa|isso ai|na aba memoria)$/.test(normalized)) return null;
+  const { kind, importance } = classifyMemory(value);
+  return { content: value.slice(0, 2000), kind, importance, source };
+}
+
 function extractLiveMemory(text = '') {
   const clean = stripAssistantPrefix(text);
-  if (!clean || isReferenceMemoryRequest(clean)) return null;
+  if (!clean) return null;
 
-  // Preserve the older deterministic rules too, but run them after removing
-  // "Sexta-feira" because voice transcription commonly includes the full wake name.
   const legacy = maybeExtractMemory(clean);
   if (legacy) {
-    const legacyContent = normalizeMemorySpeech(legacy.content);
-    if (!/^(?:isso|essa informacao|esta informacao|essa coisa|isso ai)$/.test(legacyContent)) return legacy;
+    const normalized = normalizeMemorySpeech(legacy.content);
+    if (!/^(?:isso|essa informacao|esta informacao|essa coisa|isso ai)$/.test(normalized)) return legacy;
   }
 
-  const patterns = [
-    /^(?:salva|salve|salvar|guarda|guarde|guardar|anota|anote|anotar|memoriza|memorize|memorizar|registre|registrar)(?:\s+(?:isso|a[ií]))?(?:\s+(?:na|em)\s+(?:sua|minha)\s+mem[oó]ria)?(?:\s+agora)?\s*[,;:.-]*\s*(?:que\s+)?(.{5,})$/i,
-    /^(?:atualiza|atualize|atualizar)\s+(?:a\s+)?(?:sua|minha)?\s*mem[oó]ria(?:\s+agora)?\s*[,;:.-]+\s*(.{5,})$/i,
-    /^(?:coloca|coloque|adiciona|adicione|adicionar)\s+(?:isso\s+)?(?:na|em)\s+(?:sua|minha)\s+mem[oó]ria(?:\s+agora)?\s*[,;:.-]*\s*(?:que\s+)?(.{5,})$/i,
-    /^(?:eu\s+)?(?:pedi|tinha pedido)\s+(?:para|pra)\s+voc[eê]\s+(?:salvar|guardar|anotar|lembrar)(?:\s+que)?\s+(.{5,})$/i,
-    /^(?:quero|preciso)\s+que\s+voc[eê]\s+(?:salve|guarde|anote|lembre|memorize)(?:\s+que)?\s+(.{5,})$/i
-  ];
+  if (!hasMemoryIntent(clean)) return null;
 
-  for (const pattern of patterns) {
-    const match = clean.match(pattern);
-    const content = String(match?.[1] || '').trim();
-    if (!content) continue;
-    const normalized = normalizeMemorySpeech(content);
-    if (/^(?:isso|essa informacao|esta informacao|essa coisa|isso ai)$/.test(normalized)) continue;
-    const { kind, importance } = classifyMemory(content);
-    return { content, kind, importance, source: 'explicit_voice' };
+  // Natural voice form: "salva essa informação. Aniversário ..."
+  let match = clean.match(/\b(?:salva|salve|salvar|guarda|guarde|guardar|anota|anote|anotar|memoriza|memorize|memorizar|registra|registre|registrar|adiciona|adicione|adicionar|coloca|coloque)\b[\s\S]{0,120}?\b(?:essa|esta)\s+informa[cç][aã]o\b\s*[.:;-]+\s*(.{5,})$/i);
+  if (match?.[1]) return makeMemory(match[1]);
+
+  // "salva ... que X" / "quero que você guarde X" / commands with filler words.
+  match = clean.match(/\b(?:salva|salve|salvar|guarda|guarde|guardar|anota|anote|anotar|memoriza|memorize|memorizar|registra|registre|registrar|adiciona|adicione|adicionar|coloca|coloque)\b(?:\s+(?:isso|ai|pra mim|para mim|na sua memoria|na minha memoria|em sua memoria|em minha memoria|na aba memoria))*\s*[,;:.-]*\s*(?:que\s+)?(.{5,})$/i);
+  if (match?.[1] && !/^(?:essa|esta)\s+informa[cç][aã]o\b/i.test(match[1])) return makeMemory(match[1]);
+
+  match = clean.match(/\b(?:quero|preciso)\s+que\s+voc[eê]\s+(?:salve|guarde|anote|lembre|memorize|registre)(?:\s+que)?\s+(.{5,})$/i);
+  if (match?.[1]) return makeMemory(match[1]);
+
+  // "X. Lembre-se disso..." — keep the statement immediately before the reminder.
+  const rememberIndex = clean.search(/\blembre(?:-se)?\s+(?:disso|dessa|desta)\b/i);
+  if (rememberIndex > 0) {
+    const before = clean.slice(0, rememberIndex).replace(/[.!?\s]+$/g, '').trim();
+    const sentences = before.split(/[.!?]+/).map(x => x.trim()).filter(Boolean);
+    const candidate = sentences.at(-1) || before;
+    const memory = makeMemory(candidate);
+    if (memory) return memory;
   }
 
   return null;
@@ -77,8 +104,7 @@ function resolveReferencedMemory(messages = []) {
     const message = messages[index];
     if (message?.role !== 'user') continue;
     const memory = extractLiveMemory(message.content);
-    if (!memory) continue;
-    return { ...memory, source: 'explicit_voice_reference' };
+    if (memory) return { ...memory, source: 'explicit_voice_reference' };
   }
   return null;
 }
@@ -88,7 +114,8 @@ export default async function handler(req, res) {
   if (!isOwner(req)) return send(res, 401, { error: 'unauthorized' });
 
   const body = await parseJson(req);
-  const conversationId = String(body.conversationId || 'main').slice(0, 100);
+  // Personal SEXTA uses one shared conversation across PC/Android/browser.
+  const conversationId = SHARED_CONVERSATION_ID;
   const deviceId = String(body.deviceId || 'live-voice').slice(0, 120);
   const userText = String(body.userText || '').replace(/\s+/g, ' ').trim().slice(0, 8000);
   const assistantText = String(body.assistantText || '').replace(/\s+/g, ' ').trim().slice(0, 12000);
@@ -101,9 +128,7 @@ export default async function handler(req, res) {
     let recentMessages = [];
 
     if (userText && isReferenceMemoryRequest(userText)) {
-      // Resolve "guarde isso / essa informação" only from a prior explicit
-      // user memory command. Never promote a model answer into permanent memory.
-      recentMessages = await getMessages(conversationId, 40);
+      recentMessages = await getMessages(conversationId, 60);
       memory = resolveReferencedMemory(recentMessages);
     }
 
@@ -117,14 +142,12 @@ export default async function handler(req, res) {
     }
 
     if (assistantText) {
-      // A resposta do Gemini Live pertence ao mesmo dispositivo que iniciou
-      // o turno. Isso evita que a UI interprete a própria SEXTA como um
-      // "outro dispositivo" e mostre um handoff falso.
       await saveMessage({ conversation_id: conversationId, role: 'assistant', content: assistantText, device_id: deviceId });
     }
 
     return send(res, 200, {
       ok: true,
+      conversationId,
       memorySaved,
       memoryKind: memory?.kind || null,
       memoryResolvedFromContext: Boolean(memory && recentMessages.length),
