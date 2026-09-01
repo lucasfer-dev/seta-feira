@@ -7,5 +7,9 @@
   },
   "projects": {
     "meu-projeto": "C:\\Users\\SEU_USUARIO\\Projetos\\meu-projeto"
+  },
+  "codex": {
+    "command": "codex",
+    "timeoutMs": 900000
   }
 }
