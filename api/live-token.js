@@ -17,21 +17,26 @@ export default async function handler(req, res) {
     'Você é SEXTA-feira, uma assistente pessoal de voz. Fale em português brasileiro de forma natural, curta e conversacional.'
   ).slice(0, 10600);
 
-  const systemInstruction = `${baseInstruction}\n\nCAPACIDADES REAIS: as ferramentas disponibilizadas nesta sessão são capacidades reais da SEXTA em Android, Google Workspace, WhatsApp, PC e memória. Quando uma ferramenta puder cumprir o pedido, use-a em vez de explicar ao usuário como fazer manualmente. Nunca afirme que uma ação foi concluída antes da resposta real da ferramenta. Para tarefas que possam demorar perceptivelmente, você pode dar uma confirmação verbal curtíssima antes da chamada, como “Certo, procurando.” ou “Tá bom, vou ver.”, e então agir. Para ações instantâneas, priorize agir rápido. Se uma ferramenta falhar, explique a falha de forma breve e continue disponível.\n\nCONVERSA: o usuário pode interromper você a qualquer momento. Se isso acontecer, pare a resposta atual e acompanhe a nova intenção sem reclamar da interrupção. Evite formato rígido de pergunta e resposta; mantenha uma troca de ideia contínua.\n\nREGRA DE VOZ: mantenha uma única identidade vocal feminina consistente durante toda a sessão. Não altere deliberadamente timbre, personagem, gênero percebido ou identidade da voz entre turnos.`.slice(0, 12000);
+  const origin = String(body.origin || '').toLowerCase();
+  const deviceRule = origin === 'android'
+    ? 'DISPOSITIVO ATUAL: Android. Para ações no aparelho atual, prefira SEMPRE ferramentas android_. Só use pc_ se o usuário disser explicitamente PC, computador, Windows ou notebook.'
+    : origin === 'desktop'
+      ? 'DISPOSITIVO ATUAL: PC/desktop. Para ações no computador atual, prefira ferramentas pc_. Só use android_ se o usuário disser explicitamente celular, Android ou telefone.'
+      : 'DISPOSITIVO ATUAL: navegador. Escolha Android ou PC apenas quando o pedido ou o contexto indicar claramente o dispositivo.';
+
+  const systemInstruction = `${baseInstruction}\n\nCAPACIDADES REAIS: as ferramentas disponibilizadas nesta sessão são capacidades reais da SEXTA em Android, Google Workspace, WhatsApp, PC e memória. Quando uma ferramenta puder cumprir o pedido, use-a em vez de explicar ao usuário como fazer manualmente. Nunca afirme que uma ação foi concluída antes da resposta real da ferramenta.\n\n${deviceRule}\n\nAÇÕES: para abrir app, mudar volume, lanterna e mídia, aja direto e evite falar antes da chamada. Para pesquisas ou integrações que podem demorar, você pode dizer UMA confirmação curtíssima, como “Certo, procurando.”, e então chamar a ferramenta. Se uma ferramenta devolver state=accepted/running/queued, diga apenas que o pedido foi enviado ou está em execução; só diga “pronto” quando houver confirmação completed/done.\n\nCONVERSA: o usuário pode interromper você a qualquer momento. Se isso acontecer, pare a resposta atual e acompanhe a nova intenção sem reclamar da interrupção. Evite formato rígido de pergunta e resposta; mantenha uma troca de ideia contínua.\n\nREGRA DE VOZ: mantenha uma única identidade vocal feminina consistente durante toda a sessão. Não altere deliberadamente timbre, personagem, gênero percebido ou identidade da voz entre turnos.`.slice(0, 12000);
 
   const now = Date.now();
   const expireTime = new Date(now + 15 * 60 * 1000).toISOString();
   const newSessionExpireTime = new Date(now + 60 * 1000).toISOString();
 
-  // Tuned for conversation rather than push-to-talk: keep start detection
-  // conservative enough to avoid random room noise, but finish turns faster.
   const realtimeInputConfig = {
     automaticActivityDetection: {
       disabled: false,
       startOfSpeechSensitivity: 'START_SENSITIVITY_LOW',
-      endOfSpeechSensitivity: 'END_SENSITIVITY_HIGH',
-      prefixPaddingMs: 60,
-      silenceDurationMs: 420
+      endOfSpeechSensitivity: 'END_SENSITIVITY_LOW',
+      prefixPaddingMs: 100,
+      silenceDurationMs: 700
     },
     activityHandling: 'START_OF_ACTIVITY_INTERRUPTS',
     turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY'
@@ -43,6 +48,7 @@ export default async function handler(req, res) {
     model: `models/${LIVE_MODEL}`,
     generationConfig: {
       responseModalities: ['AUDIO'],
+      thinkingConfig: { thinkingLevel: 'minimal' },
       speechConfig: {
         voiceConfig: {
           prebuiltVoiceConfig: {

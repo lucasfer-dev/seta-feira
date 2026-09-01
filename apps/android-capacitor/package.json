@@ -5,7 +5,7 @@
   "scripts": {
     "android:add": "cap add android",
     "android:sync": "cap sync android",
-    "android:prepare": "node scripts/prepare-android.mjs && node scripts/prepare-actions.mjs && node scripts/prepare-live-tools.mjs && node scripts/optimize-android-live.mjs",
+    "android:prepare": "node scripts/prepare-android.mjs && node scripts/prepare-actions.mjs && node scripts/prepare-live-tools.mjs && node scripts/optimize-android-live.mjs && node scripts/stabilize-android-runtime.mjs",
     "android:open": "cap open android",
     "android:debug": "npm run android:sync && npm run android:prepare && cd android && ./gradlew assembleDebug"
   },
