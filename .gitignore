@@ -4,6 +4,8 @@
 agent/config.json
 .vercel
 node_modules
+apps/android-capacitor/android/
+supabase/.temp/
 *.log
 .DS_Store
 

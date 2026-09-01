@@ -1,14 +1,33 @@
 import { answer, getMemories, getMessages, inferAndQueueSafeAction, isOwner, maybeExtractMemory, parseJson, saveMemory, saveMessage, send } from '../lib/core.mjs';
 import { detectWorkspaceIntent, executeWorkspaceAction, formatWorkspaceResult, googleStatus } from '../lib/google.mjs';
 import { getConnectedGoogleAccount, isGoogleAccountQuestion } from '../lib/google-account.mjs';
-import { detectWhatsAppIntent, evolutionStatus, sendWhatsAppText } from '../lib/evolution.mjs';
+import { detectWhatsAppIntent, evolutionStatus } from '../lib/evolution.mjs';
 import { absorbAutomaticMemory } from '../lib/auto-memory.mjs';
-import { planAndExecuteTools } from '../lib/tool-bus.mjs';
+import { executeTool, planAndExecuteTools } from '../lib/tool-bus.mjs';
 
 const SHARED_CONVERSATION_ID = 'main';
 
 function likelyAction(text = '') {
-  return /\b(manda|mande|envia|envie|avisa|avise|fala|diz|abre|abra|abrir|fecha|liga|desliga|aumenta|abaixa|volume|lanterna|spotify|whatsapp|wpp|gmail|e-?mail|agenda|calend[aá]rio|reuni[aã]o|evento|drive|documento|planilha|tarefa|contato|pc|computador|celular|android|notifica[cç][aã]o|responde|responda|procura|busca|consulta|cria|crie|marca|marque|coloca|coloque|mostra|ver|veja|ler|leia)\b/i.test(String(text));
+  return /\b(manda|mande|envia|envie|avisa|avise|fala|diz|abre|abra|abrir|fecha|liga|desliga|aumenta|abaixa|volume|lanterna|spotify|whatsapp|wpp|gmail|e-?mail|agenda|calend[aá]rio|reuni[aã]o|evento|drive|documento|planilha|tarefa|contato|pc|computador|celular|android|notifica[cç][aã]o|responde|responda|procura|busca|consulta|cria|crie|marca|marque|coloca|coloque|mostra|ver|veja|ler|leia|confirma|confirmo|cancelar|cancela)\b/i.test(String(text));
+}
+
+function confirmationIntent(text = '') {
+  const value = String(text || '').trim().toLocaleLowerCase('pt-BR');
+  if (/^(?:sim[, ]*)?(?:confirmo|confirmar|confirma|pode (?:fazer|enviar|executar)|pode sim|manda|envia)(?: isso)?[.! ]*$/.test(value)) return 'confirm_action';
+  if (/^(?:não[, ]*)?(?:cancelar|cancela|cancele|desiste|deixa pra lá|não envia|não execute)[.! ]*$/.test(value)) return 'cancel_action';
+  return '';
+}
+
+function workspaceSensitiveTool(intent = {}) {
+  const names = {
+    'gmail.send-smart': 'google_send_email',
+    'calendar.create': 'google_calendar_create',
+    'docs.create': 'google_docs_create',
+    'sheets.create': 'google_sheets_create',
+    'tasks.create': 'google_task_create'
+  };
+  const name = names[intent.action];
+  return name ? { name, args: intent.args || {} } : null;
 }
 
 function detectDirectAddressEmailIntent(text = '') {
@@ -56,7 +75,11 @@ async function plannerInput(message, conversationId) {
     getMessages(conversationId, 10).catch(() => []),
     getMemories(10).catch(() => [])
   ]);
-  const recent = messages.slice(-9).map(m => `${m.role === 'assistant' ? 'SEXTA' : 'USUÁRIO'}: ${m.content}`).join('\n');
+  const normalizedCurrent = String(message || '').replace(/\s+/g, ' ').trim();
+  const history = messages.slice(-10);
+  const last = history.at(-1);
+  if (last?.role === 'user' && String(last.content || '').replace(/\s+/g, ' ').trim() === normalizedCurrent) history.pop();
+  const recent = history.slice(-9).map(m => `${m.role === 'assistant' ? 'SEXTA' : 'USUÁRIO'}: ${m.content}`).join('\n');
   const memoryText = memories.map(m => `- ${m.content}`).join('\n');
   return [
     'Você é o roteador de ferramentas da SEXTA. Use o contexto abaixo apenas para resolver referências como "o mesmo", "aquele arquivo", "ela", "ele" ou nomes já citados. Execute somente o pedido atual.',
@@ -92,6 +115,16 @@ export default async function handler(req, res) {
       return send(res, 200, { reply, needsGoogleConnect: true, memorySaved: Boolean(memory) });
     }
 
+    const sensitive = workspaceSensitiveTool(intent);
+    if (sensitive) {
+      const result = await executeTool(sensitive.name, sensitive.args, { deviceId });
+      if (result.confirmationRequired) {
+        const reply = result.message;
+        await persistReply(reply, 'confirmation');
+        return send(res, 200, { reply, confirmation: result, memorySaved: Boolean(memory) });
+      }
+    }
+
     const workspaceResult = await executeWorkspaceAction(intent.action, intent.args);
     if (intent.action === 'calendar.create') {
       const title = String(intent.args.title || '').trim();
@@ -112,6 +145,14 @@ export default async function handler(req, res) {
     await saveMessage({ conversation_id: conversationId, role: 'user', content: message, device_id: deviceId });
     const memory = maybeExtractMemory(message);
     if (memory) await saveMemory(memory);
+
+    const confirmation = confirmationIntent(message);
+    if (confirmation) {
+      const result = await executeTool(confirmation, {} , { deviceId });
+      const reply = result.message || (result.ok === false ? 'Não consegui processar essa confirmação.' : 'Certo.');
+      const automatic = await persistReply(reply, 'confirmation');
+      return send(res, 200, { reply, confirmationResult: result, memorySaved: Boolean(memory) || automatic.saved.length > 0 });
+    }
 
     if (isGoogleAccountQuestion(message)) {
       const status = await googleStatus();
@@ -142,10 +183,17 @@ export default async function handler(req, res) {
         return send(res, 200, { reply, needsEvolutionConnect: true, memorySaved: Boolean(memory) || automatic.saved.length > 0 });
       }
       try {
-        const sent = await sendWhatsAppText(whatsappIntent.args);
-        const reply = `Enviado no WhatsApp para ${sent.to.label}.`;
+        const result = await executeTool('whatsapp_send_message', whatsappIntent.args, { deviceId });
+        if (result.confirmationRequired) {
+          const reply = result.message;
+          const automatic = await persistReply(reply, 'confirmation');
+          return send(res, 200, { reply, confirmation: result, memorySaved: Boolean(memory) || automatic.saved.length > 0 });
+        }
+        if (result.ok === false) throw new Error(result.error || 'WHATSAPP_SEND_FAILED');
+        const sent = result.result;
+        const reply = result.message || 'Mensagem enviada no WhatsApp.';
         const automatic = await persistReply(reply, 'whatsapp-evolution');
-        return send(res, 200, { reply, whatsappAction: whatsappIntent, whatsappResult: { to: sent.to }, memorySaved: Boolean(memory) || automatic.saved.length > 0 });
+        return send(res, 200, { reply, whatsappAction: whatsappIntent, whatsappResult: sent, memorySaved: Boolean(memory) || automatic.saved.length > 0 });
       } catch (error) {
         if (error.message === 'WHATSAPP_RECIPIENT_AMBIGUOUS') {
           const names = (error.candidates || []).map(x => `${x.name} (${x.phone})`).join(', ');

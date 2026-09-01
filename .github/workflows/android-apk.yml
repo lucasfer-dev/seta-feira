@@ -34,7 +34,7 @@ jobs:
 
       - name: Install Capacitor dependencies
         working-directory: apps/android-capacitor
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Generate Android project
         working-directory: apps/android-capacitor

@@ -60,8 +60,8 @@ public class AssistantBridgePlugin extends Plugin {
         String token = call.getString("token", "");
         String conversationId = call.getString("conversationId", "main");
         String deviceId = call.getString("deviceId", "android-native");
+        SecureTokenStore.saveOwnerToken(getContext(), token);
         getContext().getSharedPreferences("sexta_native", Context.MODE_PRIVATE).edit()
-                .putString("owner_token", token == null ? "" : token)
                 .putString("conversation_id", conversationId == null ? "main" : conversationId)
                 .putString("device_id", deviceId == null ? "android-native" : deviceId)
                 .apply();

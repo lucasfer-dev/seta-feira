@@ -29,8 +29,7 @@ public final class CloudVoiceActionBridge {
             fallback.put("handled", false).put("ok", false);
             if (context == null || text == null || text.trim().isEmpty()) return fallback;
 
-            String token = context.getSharedPreferences("sexta_native", Context.MODE_PRIVATE)
-                    .getString("owner_token", "");
+            String token = SecureTokenStore.getOwnerToken(context);
             if (token == null || token.trim().isEmpty()) return fallback;
 
             String deviceId = context.getSharedPreferences("sexta_native", Context.MODE_PRIVATE)
