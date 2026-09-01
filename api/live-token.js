@@ -3,7 +3,7 @@ import { LIVE_TOOL_DECLARATIONS } from '../lib/tool-bus.mjs';
 
 const LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-2.5-flash-native-audio-preview-12-2025';
 const LIVE_VOICE = process.env.GEMINI_LIVE_VOICE || 'Sulafat';
-const SUPPORTS_NON_BLOCKING = /gemini-2\.5/i.test(LIVE_MODEL);
+const SUPPORTS_25_LIVE_FEATURES = /gemini-2\.5/i.test(LIVE_MODEL);
 
 const NON_BLOCKING_LIVE_TOOLS = new Set([
   'android_open_app',
@@ -29,7 +29,8 @@ export default async function handler(req, res) {
   const baseInstruction = String(
     body.systemInstruction ||
     'Você é SEXTA-feira, uma assistente pessoal de voz. Fale em português brasileiro de forma natural, curta e conversacional.'
-  ).slice(0, 8000);
+  ).slice(0, 9000);
+  const resumptionHandle = String(body.resumptionHandle || '').trim().slice(0, 4096);
 
   const origin = String(body.origin || '').toLowerCase();
   const deviceRule = origin === 'android'
@@ -38,50 +39,49 @@ export default async function handler(req, res) {
       ? 'DISPOSITIVO ATUAL: PC/desktop. Para ações no computador atual, prefira ferramentas pc_. Só use android_ se o usuário disser explicitamente celular, Android ou telefone.'
       : 'DISPOSITIVO ATUAL: navegador. Escolha Android ou PC apenas quando o pedido ou o contexto indicar claramente o dispositivo. pc_codex_task pode ser usado para delegar programação ao agente Windows.';
 
-  const conversationRule = [
-    'MODO CONVERSA CONTÍNUA: isto é uma conversa de voz ao vivo, não um formulário de pergunta e resposta. Acompanhe assunto, tom, piadas, correções, hesitações e mudanças de ideia como numa conversa normal.',
-    'INTERRUPÇÃO NATURAL: durante uma sessão Live ativa, NÃO exija “Sexta-feira”, “minha vez” ou “calma” para ceder a palavra. Qualquer fala clara do usuário enquanto você estiver falando significa que ele quer entrar na conversa. Pare a ideia atual e escute. Esta regra substitui qualquer regra anterior que exija palavra de ativação para interromper.',
-    'FRASES INCOMPLETAS: se a fala parecer claramente um fragmento, uma hesitação ou continuação — por exemplo “mas tu viu que é...”, “eu... eu...” — não invente uma resposta completa nem mude de assunto. Dê espaço. Se for útil, use no máximo uma reação curta e natural; caso contrário aguarde a continuação.',
-    'RITMO: conversa casual pede respostas curtas, normalmente uma ou duas frases. Só aprofunde quando o usuário pedir ou quando o assunto realmente exigir. Evite introduções genéricas como “claro”, “com certeza”, “como posso ajudar” e evite repetir “chefe” em toda fala.',
-    'CONTEXTO: referências curtas como “isso”, “ele”, “mas tu viu”, “e aquilo?” devem usar o assunto imediatamente anterior. Não obrigue o usuário a repetir contexto que já está na sessão.',
-    'REPARO DE FALA: transcrição de voz pode vir quebrada, repetida ou estranha. Priorize a intenção e o contexto. Se realmente não der para entender, faça uma pergunta curta e específica, sem transformar a conversa numa entrevista.',
-    'AÇÕES + CONVERSA: quando o usuário misturar uma ação com conversa, execute a ação e continue a conversa naturalmente. Não transforme “abre o Spotify... e qual Pokémon tu acha mais bonito?” em duas interações separadas.',
-    'FERRAMENTAS RÁPIDAS: quando a plataforma permitir ações não bloqueantes, elas podem rodar enquanto a conversa continua. Não narre “executando ferramenta”. Só mencione o resultado quando ele importar e nunca diga que terminou antes da confirmação real.',
-    'PERSONALIDADE: seja espontânea e consistente, mas não siga bordões fixos. Humor e informalidade devem surgir do contexto, não de um script.'
+  const liveRule = [
+    'CONVERSA LIVE: enquanto a sessão estiver ativa, o usuário não precisa repetir “Sexta-feira” antes de cada fala. Trate a interação como conversa contínua.',
+    'ESCUTA: respeite pausas, hesitações e frases inacabadas. Se parecer que o usuário ainda vai continuar, espere em vez de responder só para preencher silêncio.',
+    'INTERRUPÇÃO: se o usuário falar durante sua resposta, ceda a vez imediatamente e acompanhe a nova fala.',
+    'PRESENÇA: comentários, piadas, desabafos e observações podem receber reações naturais mesmo sem formato de pergunta. Fala ambiente irrelevante pode ser ignorada.',
+    'RITMO: prefira respostas curtas e deixe espaço para o usuário entrar. Não termine toda fala com pergunta nem use bordões fixos.',
+    'FERRAMENTAS: ações rápidas podem acontecer sem narração e, quando forem não bloqueantes, não precisam parar a conversa.'
   ].join('\n');
 
-  const systemInstruction = `${baseInstruction}\n\n${conversationRule}\n\nCAPACIDADES REAIS: as ferramentas disponibilizadas nesta sessão são capacidades reais da SEXTA em Android, Google Workspace, WhatsApp, PC, Codex e memória. Quando uma ferramenta puder cumprir o pedido, use-a em vez de explicar ao usuário como fazer manualmente. Nunca afirme que uma ação foi concluída antes da resposta real da ferramenta.\n\n${deviceRule}\n\nAÇÕES RÁPIDAS: para abrir app, mudar volume, lanterna ou mídia, aja direto e evite falar antes da chamada. Se a ação puder continuar em segundo plano, mantenha a conversa em vez de esperar em silêncio. Se uma ferramenta devolver state=accepted/running/queued, diga apenas que foi enviada ou está em execução quando isso for relevante; só diga “pronto” quando houver confirmação completed/done.\n\nAÇÕES MAIS LENTAS: quando o pedido exigir leitura/análise cujo resultado seja necessário para responder, especialmente e-mails ou agenda, dê no máximo UMA confirmação curta antes da ferramenta se houver espera perceptível. Não repita a mesma frase em todas as tarefas.\n\nCODEX: quando o usuário pedir para o Codex analisar, revisar, corrigir ou trabalhar em um projeto configurado no agente Windows, use pc_codex_task. Use mode=analyze quando ele só pedir análise/diagnóstico; use mode=edit somente quando ele pedir explicitamente para corrigir, alterar, implementar ou editar. A ferramenta apenas inicia a tarefa e retorna commandId; não diga que o Codex terminou enquanto o status não estiver completed. Para consultar depois, use pc_codex_status com o commandId disponível no contexto. Não tente instalar Codex, fazer login ou usar OPENAI_API_KEY por conta própria.\n\nGMAIL: para LER e-mails use google_unread_email e leia de forma natural remetente, assunto e trecho disponível. Para ABRIR o Gmail no Android use android_open_app com app=gmail. Para ABRIR o Gmail no PC use pc_open_url com https://mail.google.com/.\n\nREGRA DE VOZ: mantenha uma única identidade vocal feminina consistente durante toda a sessão. Não altere deliberadamente timbre, personagem, gênero percebido ou identidade da voz entre turnos.`.slice(0, 14000);
+  const systemInstruction = `${baseInstruction}\n\n${liveRule}\n\nCAPACIDADES REAIS: as ferramentas disponibilizadas nesta sessão são capacidades reais da SEXTA em Android, Google Workspace, WhatsApp, PC, Codex e memória. Quando uma ferramenta puder cumprir o pedido, use-a em vez de explicar manualmente. Nunca afirme que uma ação foi concluída antes da resposta real da ferramenta.\n\n${deviceRule}\n\nCODEX: pc_codex_task inicia tarefas no agente Windows e pode ser chamado mesmo a partir do Android. Use mode=analyze para diagnóstico e mode=edit somente quando o usuário pedir alteração. Não diga que terminou antes de pc_codex_status confirmar completed.\n\nREGRA DE VOZ: mantenha uma única identidade vocal feminina consistente durante toda a sessão.`.slice(0, 14000);
 
   const now = Date.now();
   const expireTime = new Date(now + 15 * 60 * 1000).toISOString();
   const newSessionExpireTime = new Date(now + 60 * 1000).toISOString();
 
-  // VAD híbrido: o servidor detecta rapidamente o começo da fala e funciona
-  // como fallback de fim de fala. O cliente ainda pode usar audioStreamEnd para
-  // finalizar cedo sem a espera extra do servidor.
   const realtimeInputConfig = {
     automaticActivityDetection: {
       disabled: false,
       startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
       endOfSpeechSensitivity: 'END_SENSITIVITY_LOW',
-      prefixPaddingMs: 100,
-      silenceDurationMs: 750
+      prefixPaddingMs: 80,
+      silenceDurationMs: 700
     },
     activityHandling: 'START_OF_ACTIVITY_INTERRUPTS',
     turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY'
   };
 
   const functionDeclarations = LIVE_TOOL_DECLARATIONS.map(declaration => (
-    SUPPORTS_NON_BLOCKING && NON_BLOCKING_LIVE_TOOLS.has(declaration.name)
+    SUPPORTS_25_LIVE_FEATURES && NON_BLOCKING_LIVE_TOOLS.has(declaration.name)
       ? { ...declaration, behavior: 'NON_BLOCKING' }
       : declaration
   ));
   const tools = [{ functionDeclarations }];
-  const transcription = {
+
+  const inputAudioTranscription = {
     languageCodes: ['pt-BR'],
-    mode: 'SMART',
+    mode: 'VERBATIM',
     customVocabulary: ['Sexta-feira', 'minha vez', 'calma', 'Codex']
   };
+  const outputAudioTranscription = { languageCodes: ['pt-BR'], mode: 'SMART' };
+  const contextWindowCompression = { slidingWindow: {} };
+  const sessionResumption = resumptionHandle ? { handle: resumptionHandle } : {};
+  const proactivity = SUPPORTS_25_LIVE_FEATURES ? { proactiveAudio: true } : null;
 
   const setup = {
     model: `models/${LIVE_MODEL}`,
@@ -96,14 +96,14 @@ export default async function handler(req, res) {
         }
       }
     },
-    systemInstruction: {
-      parts: [{ text: systemInstruction }]
-    },
+    systemInstruction: { parts: [{ text: systemInstruction }] },
     realtimeInputConfig,
     tools,
-    inputAudioTranscription: transcription,
-    outputAudioTranscription: { languageCodes: ['pt-BR'], mode: 'SMART' },
-    contextWindowCompression: { slidingWindow: {} }
+    inputAudioTranscription,
+    outputAudioTranscription,
+    sessionResumption,
+    contextWindowCompression,
+    ...(SUPPORTS_25_LIVE_FEATURES ? { enableAffectiveDialog: true, proactivity } : {})
   };
 
   try {
@@ -138,7 +138,13 @@ export default async function handler(req, res) {
       actionRouter: 'gemini-live-tool-calling',
       activityHandling: realtimeInputConfig.activityHandling,
       realtimeInputConfig,
-      inputAudioTranscription: transcription,
+      inputAudioTranscription,
+      outputAudioTranscription,
+      contextWindowCompression,
+      sessionResumption,
+      enableAffectiveDialog: SUPPORTS_25_LIVE_FEATURES,
+      proactivity,
+      supportsNonBlocking: SUPPORTS_25_LIVE_FEATURES,
       thinkingBudget: 0,
       tools
     });
