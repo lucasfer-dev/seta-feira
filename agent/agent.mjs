@@ -12,6 +12,7 @@ try { cfg = { ...cfg, ...JSON.parse(fs.readFileSync(configPath, 'utf8')) }; } ca
 
 const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const activeCodexProjects = new Set();
 
 async function post(route, body) {
   const r = await fetch(`${BASE}${route}`, { method: 'POST', headers, body: JSON.stringify(body) });
@@ -129,6 +130,51 @@ async function runCodexTask(payload = {}) {
   }
 }
 
+async function launchCodexTask(command) {
+  const payload = command.payload || {};
+  const project = String(payload.project || '').trim();
+  if (!project) throw new Error('Projeto do Codex não informado');
+  if (activeCodexProjects.has(project)) throw new Error(`CODEX_PROJECT_BUSY: ${project}`);
+  projectPath(project);
+
+  activeCodexProjects.add(project);
+  try {
+    await post('/api/agent-result', {
+      commandId: command.id,
+      deviceId: DEVICE_ID,
+      action: 'codex_task',
+      status: 'running',
+      ok: true,
+      result: { project, mode: payload.mode === 'edit' ? 'edit' : 'analyze' },
+      message: `Codex trabalhando em ${project}.`
+    });
+  } catch (error) {
+    activeCodexProjects.delete(project);
+    throw error;
+  }
+
+  void runCodexTask(payload)
+    .then(result => post('/api/agent-result', {
+      commandId: command.id,
+      deviceId: DEVICE_ID,
+      action: 'codex_task',
+      status: 'done',
+      ok: true,
+      result,
+      message: `Tarefa do Codex concluída em ${project}.`
+    }))
+    .catch(error => post('/api/agent-result', {
+      commandId: command.id,
+      deviceId: DEVICE_ID,
+      action: 'codex_task',
+      status: 'failed',
+      ok: false,
+      result: {},
+      message: String(error?.message || error).slice(0, 1200)
+    }).catch(() => {}))
+    .finally(() => activeCodexProjects.delete(project));
+}
+
 async function execute(command) {
   const { action, payload = {} } = command;
   if (action === 'open_url') {
@@ -148,9 +194,6 @@ async function execute(command) {
     const project = projectPath(payload.project);
     execDetached('code', [project.value]);
     return { project: project.key, path: project.value };
-  }
-  if (action === 'git_status' && payload.codexTask === true) {
-    return runCodexTask(payload);
   }
   if (action === 'git_status') {
     const names = Object.keys(cfg.projects || {});
@@ -191,7 +234,8 @@ async function heartbeat() {
     capabilities: ['open_url','open_app','open_project','git_status','get_system_info','read_clipboard','copy_text','codex_task'],
     context: {
       hostname: os.hostname(), platform: os.platform(), uptime: Math.round(os.uptime()),
-      projects: Object.keys(cfg.projects || {}), codexTask: true
+      projects: Object.keys(cfg.projects || {}), codexTask: true,
+      codexActiveProjects: [...activeCodexProjects]
     }
   });
 }
@@ -209,11 +253,28 @@ while (true) {
     if (Date.now() - lastBeat > 15000) { await heartbeat(); lastBeat = Date.now(); }
     const { commands = [] } = await poll();
     for (const command of commands) {
+      if (command.payload?.codexTask === true) {
+        try {
+          await launchCodexTask(command);
+        } catch (error) {
+          await post('/api/agent-result', {
+            commandId: command.id,
+            deviceId: DEVICE_ID,
+            action: 'codex_task',
+            status: 'failed',
+            ok: false,
+            result: {},
+            message: String(error?.message || error).slice(0, 1200)
+          }).catch(() => {});
+        }
+        continue;
+      }
+
       try {
         const result = await execute(command);
-        await post('/api/agent-result', { commandId: command.id, deviceId: DEVICE_ID, action: command.payload?.codexTask ? 'codex_task' : command.action, ok: true, result, message: command.payload?.codexTask ? 'Tarefa concluída pelo Codex no agente Windows.' : 'Executado pelo agente Windows.' });
+        await post('/api/agent-result', { commandId: command.id, deviceId: DEVICE_ID, action: command.action, status: 'done', ok: true, result, message: 'Executado pelo agente Windows.' });
       } catch (error) {
-        await post('/api/agent-result', { commandId: command.id, deviceId: DEVICE_ID, action: command.payload?.codexTask ? 'codex_task' : command.action, ok: false, result: {}, message: error.message });
+        await post('/api/agent-result', { commandId: command.id, deviceId: DEVICE_ID, action: command.action, status: 'failed', ok: false, result: {}, message: error.message });
       }
     }
   } catch (error) {
