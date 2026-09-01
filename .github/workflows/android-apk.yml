@@ -3,7 +3,7 @@ name: Build SEXTA Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, sexta-runtime-stability-v4]
     paths:
       - 'apps/android-capacitor/**'
       - 'public/**'
