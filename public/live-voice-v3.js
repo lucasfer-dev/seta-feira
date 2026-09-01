@@ -14,8 +14,8 @@
   const OUTPUT_PREBUFFER_MAX = IS_ANDROID ? 0.34 : 0.20;
   const OUTPUT_DRAIN_QUIET_MS = IS_ANDROID ? 220 : 130;
   const CLIENT_END_SILENCE_MS = IS_ANDROID ? 620 : 560;
-  const BARGE_MIN_RMS = IS_ANDROID ? 0.040 : 0.028;
-  const BARGE_FRAMES_REQUIRED = 3;
+  const BARGE_MIN_RMS = IS_ANDROID ? 0.050 : 0.036;
+  const BARGE_FRAMES_REQUIRED = 4;
   const PRE_SPEECH_FRAMES = 5;
   const WS_BASE = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained';
 
@@ -51,6 +51,11 @@
   let noiseFloor = 0.006;
   let bargeFrames = 0;
   let preSpeech = [];
+  let interruptCaptureActive = false;
+  let interruptWindowActive = false;
+  let interruptTranscript = '';
+  let hardInterruptTriggered = false;
+  let discardAssistantAudio = false;
 
   let turnStartedAt = 0;
   let firstServerEventAt = 0;
@@ -95,6 +100,11 @@
     return /^(?:desativar|desative|desliga|desligue|desligar|encerrar|encerre|fechar|fecha|pare|parar)\s+(?:o\s+)?modo\s+de\s+voz$/.test(value)
       || /^(?:sair|saia)\s+do\s+modo\s+de\s+voz$/.test(value)
       || /^(?:desativar|desative|desliga|desligue|desligar)\s+(?:a\s+)?voz$/.test(value);
+  }
+
+  function isHardInterruptCommand(text) {
+    const value = normalizeSpeech(text);
+    return /^(?:sexta(?: feira)?|minha vez|calma)(?:\s|$)/.test(value);
   }
 
   function mergeTranscript(current, incoming) {
@@ -205,19 +215,27 @@
     endAudioStream();
   }
 
-  function stopOutput() {
+  function clearScheduledOutput() {
     for (const source of outputSources) {
       try { source.stop(); } catch {}
     }
     outputSources.clear();
     nextOutputTime = 0;
     lastOutputChunkAt = 0;
+  }
+
+  function stopOutput() {
+    clearScheduledOutput();
     assistantSpeaking = false;
+  }
+
+  function muteCurrentAssistantOutput() {
+    clearScheduledOutput();
   }
 
   async function scheduleOutput(base64, mimeType = '') {
     const bytes = base64ToBytes(base64);
-    if (!bytes.length || !sessionActive) return;
+    if (!bytes.length || !sessionActive || discardAssistantAudio) return;
     const match = String(mimeType).match(/rate=(\d+)/i);
     const sampleRate = Number(match?.[1] || OUTPUT_RATE);
     const ctx = await ensureOutputContext();
@@ -287,6 +305,34 @@
     for (const frame of buffered) sendPcm(frame);
   }
 
+  function beginInterruptCandidate(now) {
+    interruptCaptureActive = true;
+    interruptWindowActive = true;
+    interruptTranscript = '';
+    assistantInputPaused = false;
+    bargeFrames = 0;
+    beginUserSpeechFromBuffer(now);
+    setHint('SEXTA • ouvindo interrupção...');
+  }
+
+  function finishInterruptCandidate() {
+    interruptCaptureActive = false;
+    speechActive = false;
+    endAudioStream();
+    preSpeech = [];
+    bargeFrames = 0;
+    setHint(hardInterruptTriggered ? 'SEXTA • sua vez...' : 'SEXTA • falando...');
+  }
+
+  function triggerHardInterrupt() {
+    if (hardInterruptTriggered) return;
+    hardInterruptTriggered = true;
+    discardAssistantAudio = true;
+    muteCurrentAssistantOutput();
+    assistantInputPaused = false;
+    setHint('SEXTA • sua vez...');
+  }
+
   function handleMicFrame(raw) {
     if (!sessionActive || !captureEnabled || websocket?.readyState !== WebSocket.OPEN || !setupComplete) return;
     const resampled = resampleLinear(raw, inputContext.sampleRate, INPUT_RATE);
@@ -295,18 +341,20 @@
     const now = performance.now();
 
     if (assistantSpeaking) {
+      const threshold = Math.max(BARGE_MIN_RMS, noiseFloor * 5.5);
+
+      if (interruptCaptureActive) {
+        sendPcm(pcm);
+        if (level >= Math.max(speechThreshold(), threshold * 0.65)) lastSpeechAt = now;
+        if (now - lastSpeechAt >= CLIENT_END_SILENCE_MS) finishInterruptCandidate();
+        return;
+      }
+
       pushPreSpeech(pcm);
-      const threshold = Math.max(BARGE_MIN_RMS, noiseFloor * 4.5);
       if (level >= threshold) bargeFrames += 1;
       else bargeFrames = Math.max(0, bargeFrames - 1);
 
-      if (bargeFrames >= BARGE_FRAMES_REQUIRED) {
-        stopOutput();
-        assistantInputPaused = false;
-        bargeFrames = 0;
-        beginUserSpeechFromBuffer(now);
-        setHint('SEXTA • ouvindo...');
-      }
+      if (bargeFrames >= BARGE_FRAMES_REQUIRED) beginInterruptCandidate(now);
       return;
     }
 
@@ -374,6 +422,11 @@
     speechActive = false;
     audioStreamOpen = false;
     preSpeech = [];
+    interruptCaptureActive = false;
+    interruptWindowActive = false;
+    interruptTranscript = '';
+    hardInterruptTriggered = false;
+    discardAssistantAudio = false;
   }
 
   async function buildSystemInstruction() {
@@ -392,10 +445,12 @@
     return [
       'Você é SEXTA-feira, uma assistente pessoal de voz. Fale sempre em português brasileiro natural, espontâneo e conversacional.',
       'A conversa é contínua e deve parecer uma troca de ideia, não um formulário de pergunta e resposta. Respostas comuns devem começar rápido e ser curtas por padrão.',
-      'Você pode ser interrompida a qualquer momento. Se eu corrigir, complementar ou mudar de assunto enquanto você fala, pare e acompanhe imediatamente.',
+      'Enquanto você estiver falando, áudio ambiente ou falas que não comecem com “Sexta-feira”, “minha vez” ou “calma” não são uma ordem para interromper. Ignore esse ruído e continue.',
+      'Se uma fala durante sua resposta começar com “Sexta-feira”, “minha vez” ou “calma”, trate como interrupção intencional: abandone a ideia anterior e acompanhe o que o usuário disser em seguida.',
       platformRule,
       'Quando eu pedir uma ação e houver ferramenta adequada, use a ferramenta. Nunca diga que concluiu antes da resposta real.',
       'Para abrir app, volume, lanterna ou mídia, não faça frase antes da ferramenta: aja primeiro. Para pesquisas mais lentas, pode dar uma confirmação curtíssima como “Certo, procurando.”.',
+      'Para ler e-mails, use google_unread_email e leia remetente, assunto e trecho disponível. Para abrir Gmail no Android use android_open_app com app gmail. Para abrir no PC use pc_open_url com https://mail.google.com/.',
       'Se a ferramenta responder accepted, queued ou running, diga que está em execução; só diga “pronto” quando responder completed/done.',
       'Se eu pedir para desativar ou sair do modo de voz, não continue a resposta; o aplicativo encerrará a sessão localmente.',
       `Ajustes: humor ${settings.humor ?? 68}/100, sarcasmo ${settings.sarcasm ?? 42}/100, proatividade ${settings.proactivity ?? 55}/100, verbosidade ${settings.verbosity ?? 32}/100.`,
@@ -424,7 +479,8 @@
       speechStartToFirstAudioMs: snapshot.firstAudioAt && snapshot.turnStartedAt ? Math.max(0, Math.round(snapshot.firstAudioAt - snapshot.turnStartedAt)) : null,
       firstServerEventMs: snapshot.firstServerEventAt && snapshot.turnStartedAt ? Math.max(0, Math.round(snapshot.firstServerEventAt - snapshot.turnStartedAt)) : null,
       outputUnderruns: Math.max(0, snapshot.outputUnderruns - snapshot.turnUnderrunsAtStart),
-      prebufferMs: Math.round(adaptivePrebuffer * 1000)
+      prebufferMs: Math.round(adaptivePrebuffer * 1000),
+      hardInterrupted: Boolean(snapshot.hardInterrupted)
     };
     void api('/api/live-metrics', { method: 'POST', body: JSON.stringify(payload) }).catch(() => {});
   }
@@ -482,10 +538,24 @@
   function completeCurrentTurn() {
     if (!sessionActive || stoppingByVoice || finishingTurn) return;
     finishingTurn = true;
-    const snapshot = { userText: inputTranscript, assistantText: outputTranscript, turnStartedAt, firstServerEventAt, firstAudioAt, lastSpeechEndAt, outputUnderruns, turnUnderrunsAtStart };
+    const snapshot = {
+      userText: inputTranscript,
+      assistantText: outputTranscript,
+      turnStartedAt,
+      firstServerEventAt,
+      firstAudioAt,
+      lastSpeechEndAt,
+      outputUnderruns,
+      turnUnderrunsAtStart,
+      hardInterrupted: hardInterruptTriggered
+    };
     inputTranscript = '';
     outputTranscript = '';
     resetTurnMetrics();
+    interruptWindowActive = false;
+    interruptTranscript = '';
+    hardInterruptTriggered = false;
+    discardAssistantAudio = false;
 
     void (async () => {
       try {
@@ -498,7 +568,7 @@
         bargeFrames = 0;
         const turnUnderruns = Math.max(0, snapshot.outputUnderruns - snapshot.turnUnderrunsAtStart);
         if (turnUnderruns === 0 && adaptivePrebuffer > OUTPUT_PREBUFFER_BASE) adaptivePrebuffer = Math.max(OUTPUT_PREBUFFER_BASE, adaptivePrebuffer - 0.012);
-        if (pendingToolCalls === 0) setHint('SEXTA • ouvindo...');
+        if (pendingToolCalls === 0 && !interruptCaptureActive) setHint('SEXTA • ouvindo...');
       } finally { finishingTurn = false; }
     })();
   }
@@ -515,6 +585,11 @@
     assistantInputPaused = false;
     bargeFrames = 0;
     preSpeech = [];
+    interruptCaptureActive = false;
+    interruptWindowActive = false;
+    interruptTranscript = '';
+    hardInterruptTriggered = false;
+    discardAssistantAudio = false;
     setActiveUI(false);
     if (handshakeTimeout) clearTimeout(handshakeTimeout);
     handshakeTimeout = null;
@@ -565,9 +640,15 @@
     if (content.inputTranscription?.text) {
       const incoming = content.inputTranscription.text;
       inputTranscript = mergeTranscript(inputTranscript, incoming);
+
+      if (interruptWindowActive) {
+        interruptTranscript = mergeTranscript(interruptTranscript, incoming);
+        if (isHardInterruptCommand(interruptTranscript)) triggerHardInterrupt();
+      }
+
       if (isVoiceOffCommand(incoming) || isVoiceOffCommand(inputTranscript)) { deactivateVoiceMode({ spoken: true }); return; }
     }
-    if (content.outputTranscription?.text) outputTranscript = mergeTranscript(outputTranscript, content.outputTranscription.text);
+    if (content.outputTranscription?.text && !discardAssistantAudio) outputTranscript = mergeTranscript(outputTranscript, content.outputTranscription.text);
 
     if (content.interrupted) {
       stopOutput();
@@ -580,7 +661,7 @@
 
     const parts = content.modelTurn?.parts || [];
     for (const part of parts) {
-      if (!part?.inlineData?.data || !sessionActive) continue;
+      if (!part?.inlineData?.data || !sessionActive || discardAssistantAudio) continue;
       if (!firstAudioAt) {
         firstAudioAt = performance.now();
         console.debug('[SEXTA Live] primeiro áudio', { fromSpeechEndMs: lastSpeechEndAt ? Math.round(firstAudioAt - lastSpeechEndAt) : null, fromSpeechStartMs: turnStartedAt ? Math.round(firstAudioAt - turnStartedAt) : null, prebufferMs: Math.round(adaptivePrebuffer * 1000) });
@@ -609,6 +690,11 @@
     assistantInputPaused = false;
     preSpeech = [];
     bargeFrames = 0;
+    interruptCaptureActive = false;
+    interruptWindowActive = false;
+    interruptTranscript = '';
+    hardInterruptTriggered = false;
+    discardAssistantAudio = false;
     adaptivePrebuffer = OUTPUT_PREBUFFER_BASE;
     nextOutputTime = 0;
     inputTranscript = '';
@@ -629,7 +715,20 @@
       websocket.onopen = () => {
         if (!sessionActive) return;
         setHint('SEXTA Live conectada • validando sessão...');
-        websocket.send(JSON.stringify({ setup: { model: `models/${session.model}`, generationConfig: { responseModalities: ['AUDIO'], thinkingConfig: { thinkingLevel: 'minimal' }, speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: session.voice } } } }, realtimeInputConfig: session.realtimeInputConfig, tools: session.tools || [], inputAudioTranscription: {}, outputAudioTranscription: {} } }));
+        websocket.send(JSON.stringify({
+          setup: {
+            model: `models/${session.model}`,
+            generationConfig: {
+              responseModalities: ['AUDIO'],
+              thinkingConfig: { thinkingBudget: Number(session.thinkingBudget ?? 0) },
+              speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: session.voice } } }
+            },
+            realtimeInputConfig: session.realtimeInputConfig,
+            tools: session.tools || [],
+            inputAudioTranscription: session.inputAudioTranscription || {},
+            outputAudioTranscription: {}
+          }
+        }));
       };
       websocket.onmessage = event => { void handleServerMessage(event); };
       websocket.onerror = event => { if (sessionActive) { console.warn('Gemini Live WebSocket error:', event); setHint('SEXTA Live • erro de conexão'); } };
@@ -667,6 +766,17 @@
     stop: () => deactivateVoiceMode(),
     toggle: toggleVoiceMode,
     active: () => sessionActive,
-    debug: () => ({ platform: ORIGIN, noiseFloor, adaptivePrebuffer, outputUnderruns, speechActive, assistantSpeaking, pendingToolCalls })
+    debug: () => ({
+      platform: ORIGIN,
+      noiseFloor,
+      adaptivePrebuffer,
+      outputUnderruns,
+      speechActive,
+      assistantSpeaking,
+      pendingToolCalls,
+      interruptCaptureActive,
+      hardInterruptTriggered,
+      discardAssistantAudio
+    })
   };
 })();
