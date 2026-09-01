@@ -151,7 +151,7 @@
   function base64ToBytes(value) {
     const binary = atob(value);
     const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    for (let i = 0; i < bytes.length; i += 1) bytes[i] = binary.charCodeAt(i);
     return bytes;
   }
 
@@ -266,7 +266,7 @@
 
   async function waitForOutputDrain() {
     const startedAt = performance.now();
-    while (sessionActive && !stoppingByVoice && performance.now() - startedAt < 20000) {
+    while (sessionActive && !stoppingByVoice && performance.now() - startedAt < 45000) {
       let ctx = outputContext;
       try { ctx = await ensureOutputContext(); } catch {}
       const scheduledTail = ctx ? Math.max(0, nextOutputTime - ctx.currentTime) : 0;
@@ -437,7 +437,7 @@
     const memories = (sync.memories || []).slice(0, 10).map(item => `- ${item.content}`).join('\n');
     const recent = (sync.messages || []).slice(-8).map(item => `${item.role === 'assistant' ? 'SEXTA' : 'USUÁRIO'}: ${item.content}`).join('\n');
     const platformRule = IS_ANDROID
-      ? 'Você está rodando no Android. Use android_ para ações no aparelho atual. Só use pc_ se eu disser explicitamente PC/computador/Windows.'
+      ? 'Você está rodando no Android. Use android_ para ações no aparelho atual. Só use pc_ se eu disser explicitamente PC/computador/Windows, exceto pc_codex_task e pc_codex_status quando eu pedir Codex/programação.'
       : IS_DESKTOP
         ? 'Você está rodando no PC. Use pc_ para ações no computador atual. Só use android_ se eu disser explicitamente celular/Android.'
         : 'Você está no navegador; confirme o dispositivo pelo contexto do pedido quando necessário.';
@@ -449,8 +449,10 @@
       'Se uma fala durante sua resposta começar com “Sexta-feira”, “minha vez” ou “calma”, trate como interrupção intencional: abandone a ideia anterior e acompanhe o que o usuário disser em seguida.',
       platformRule,
       'Quando eu pedir uma ação e houver ferramenta adequada, use a ferramenta. Nunca diga que concluiu antes da resposta real.',
-      'Para abrir app, volume, lanterna ou mídia, não faça frase antes da ferramenta: aja primeiro. Para pesquisas mais lentas, pode dar uma confirmação curtíssima como “Certo, procurando.”.',
+      'Para abrir app, volume, lanterna ou mídia, não faça frase antes da ferramenta: aja primeiro.',
+      'Para tarefas mais lentas, especialmente análise de e-mails ou delegação ao Codex, pode dar uma confirmação curta antes da ferramenta, como “Calma, chefe, tô pensando.”. Não use isso em toda resposta.',
       'Para ler e-mails, use google_unread_email e leia remetente, assunto e trecho disponível. Para abrir Gmail no Android use android_open_app com app gmail. Para abrir no PC use pc_open_url com https://mail.google.com/.',
+      'Quando eu pedir Codex para analisar/corrigir um projeto, use pc_codex_task. No celular essa ferramenta delega ao agente Windows; o Codex não roda dentro do Android.',
       'Se a ferramenta responder accepted, queued ou running, diga que está em execução; só diga “pronto” quando responder completed/done.',
       'Se eu pedir para desativar ou sair do modo de voz, não continue a resposta; o aplicativo encerrará a sessão localmente.',
       `Ajustes: humor ${settings.humor ?? 68}/100, sarcasmo ${settings.sarcasm ?? 42}/100, proatividade ${settings.proactivity ?? 55}/100, verbosidade ${settings.verbosity ?? 32}/100.`,
@@ -536,7 +538,7 @@
   }
 
   function completeCurrentTurn() {
-    if (!sessionActive || stoppingByVoice || finishingTurn) return;
+    if (!sessionActive || stoppingByVoice || finishingTurn || pendingToolCalls > 0) return;
     finishingTurn = true;
     const snapshot = {
       userText: inputTranscript,
@@ -671,7 +673,13 @@
       await scheduleOutput(part.inlineData.data, part.inlineData.mimeType || 'audio/pcm;rate=24000');
     }
 
-    if (content.turnComplete) completeCurrentTurn();
+    if (content.turnComplete) {
+      if (pendingToolCalls > 0) {
+        setHint('SEXTA • aguardando ferramenta...');
+        return;
+      }
+      completeCurrentTurn();
+    }
   }
 
   async function activateVoiceMode() {
