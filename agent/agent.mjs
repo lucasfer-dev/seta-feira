@@ -36,9 +36,10 @@ function execCapture(command, args = [], timeout = 8000) {
   });
 }
 
-function execCaptureLong(command, args = [], timeout = 15 * 60 * 1000) {
+function execCaptureLong(command, args = [], { timeout = 15 * 60 * 1000, input = '' } = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { windowsHide: true });
+    const useShell = process.platform === 'win32' && !/\.exe$/i.test(String(command || ''));
+    const child = spawn(command, args, { windowsHide: true, shell: useShell });
     let out = '', err = '';
     let settled = false;
     const append = (current, chunk) => `${current}${chunk}`.slice(-200000);
@@ -68,6 +69,7 @@ function execCaptureLong(command, args = [], timeout = 15 * 60 * 1000) {
       if (code === 0) resolve({ out: out.trim(), err: err.trim() });
       else reject(new Error(err.trim() || out.trim() || `codex exit ${code}`));
     });
+    if (child.stdin) child.stdin.end(String(input || ''), 'utf8');
   });
 }
 
@@ -108,11 +110,11 @@ async function runCodexTask(payload = {}) {
     '--ask-for-approval', 'never',
     '--cd', cwd,
     '--output-last-message', outputFile,
-    prompt
+    '-'
   ];
 
   try {
-    const execution = await execCaptureLong(codexCommand, args, timeout);
+    const execution = await execCaptureLong(codexCommand, args, { timeout, input: prompt });
     let summary = '';
     try { summary = fs.readFileSync(outputFile, 'utf8').trim(); } catch {}
     if (!summary) summary = execution.out || execution.err || 'Codex concluiu sem mensagem final.';
