@@ -131,7 +131,7 @@
 
   class SextaWebSocket extends NativeWebSocket {
     constructor(url, protocols) {
-      super(url, protocols);
+      super(url, ...(protocols === undefined ? [] : [protocols]));
       this.__sextaTracked = String(url || '').includes(GEMINI_HOST);
       this.__sextaTurn = null;
       if (this.__sextaTracked) {
@@ -191,18 +191,18 @@
   const nativeStart = sourceProto?.start;
   if (sourceProto && nativeStart && !sourceProto.__sextaLatencyPatched) {
     Object.defineProperty(sourceProto, '__sextaLatencyPatched', { value: true });
-    sourceProto.start = function patchedStart(when, ...rest) {
+    sourceProto.start = function patchedStart(...args) {
       const state = playbackCandidate;
       if (state && !state.firstAudioScheduledAt) {
         const now = stamp();
         state.firstAudioScheduledAt = now;
         const contextNow = Number(this.context?.currentTime || 0);
-        const requestedStart = Number.isFinite(Number(when)) ? Number(when) : contextNow;
+        const requestedStart = args.length && Number.isFinite(Number(args[0])) ? Number(args[0]) : contextNow;
         const delayMs = Math.max(0, (requestedStart - contextNow) * 1000);
         state.firstPlaybackDueAt = now + delayMs;
         playbackCandidate = null;
       }
-      return nativeStart.call(this, when, ...rest);
+      return nativeStart.apply(this, args);
     };
   }
 
