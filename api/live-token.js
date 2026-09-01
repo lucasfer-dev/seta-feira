@@ -30,13 +30,16 @@ export default async function handler(req, res) {
   const expireTime = new Date(now + 15 * 60 * 1000).toISOString();
   const newSessionExpireTime = new Date(now + 60 * 1000).toISOString();
 
+  // O cliente já envia cerca de 560-620 ms de silêncio antes de audioStreamEnd.
+  // O VAD do servidor precisa concluir o turno ANTES disso; caso contrário ele
+  // pode ficar esperando por silêncio que o cliente já parou de transmitir.
   const realtimeInputConfig = {
     automaticActivityDetection: {
       disabled: false,
-      startOfSpeechSensitivity: 'START_SENSITIVITY_LOW',
-      endOfSpeechSensitivity: 'END_SENSITIVITY_LOW',
-      prefixPaddingMs: 100,
-      silenceDurationMs: 700
+      startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
+      endOfSpeechSensitivity: 'END_SENSITIVITY_HIGH',
+      prefixPaddingMs: 80,
+      silenceDurationMs: 400
     },
     activityHandling: 'NO_INTERRUPTION',
     turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY'
