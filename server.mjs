@@ -9,6 +9,7 @@ import chat from './api/chat.js';
 import tts from './api/tts.js';
 import liveToken from './api/live-token.js';
 import liveTurn from './api/live-turn.js';
+import liveMetrics from './api/live-metrics.js';
 import sync from './api/sync.js';
 import memory from './api/memory.js';
 import settings from './api/settings.js';
@@ -40,7 +41,7 @@ import { runMonitor } from './lib/monitor.mjs';
 const root = fileURLToPath(new URL('./public/', import.meta.url));
 const routes = new Map([
   ['/api/health', health], ['/api/login', login], ['/api/chat', chat], ['/api/tts', tts],
-  ['/api/live-token', liveToken], ['/api/live-turn', liveTurn], ['/api/sync', sync],
+  ['/api/live-token', liveToken], ['/api/live-turn', liveTurn], ['/api/live-metrics', liveMetrics], ['/api/sync', sync],
   ['/api/memory', memory], ['/api/settings', settings], ['/api/device-heartbeat', heartbeat],
   ['/api/commands', commands], ['/api/agent-poll', agentPoll], ['/api/agent-result', agentResult],
   ['/api/android-poll', androidPoll], ['/api/android-result', androidResult], ['/api/voice-action', voiceAction], ['/api/tool-execute', toolExecute],
