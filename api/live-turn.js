@@ -102,11 +102,19 @@ function resolveReferencedMemory(messages = []) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message?.role !== 'user') continue;
-    const memory = extractLiveMemory(message.content);
+    const content = String(message.content || '').replace(/\s+/g, ' ').trim();
+    if (!content || isReferenceMemoryRequest(content)) continue;
+    const memory = extractLiveMemory(content) || makeMemory(content, 'explicit_voice_reference');
     if (memory) return { ...memory, source: 'explicit_voice_reference' };
   }
   return null;
 }
+
+export const __test__ = {
+  extractLiveMemory,
+  isReferenceMemoryRequest,
+  resolveReferencedMemory
+};
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });

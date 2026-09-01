@@ -1,8 +1,8 @@
-# SEXTA 1.3 — Knowledge Vault
+# SEXTA 1.5 — Knowledge Vault
 
 Assistente pessoal cloud-first, voice-first e multiplataforma. O mesmo Core atende navegador, programa Windows e app Android.
 
-## O que a 1.3 adiciona
+## O que a 1.5 adiciona
 
 - **Knowledge Vault compatível com Obsidian** para memória de longo prazo.
 - Cada memória permanente pode virar uma nota `.md` com frontmatter e links `[[...]]`.
@@ -11,6 +11,9 @@ Assistente pessoal cloud-first, voice-first e multiplataforma. O mesmo Core aten
 - **Windows/Electron**: escolhe uma pasta local, sincroniza e abre diretamente no Obsidian.
 - **Android/Capacitor**: bridge Kotlin preparado para selecionar uma pasta pelo Storage Access Framework e espelhar o mesmo Vault.
 - Supabase protegido por RLS + chave interna adicional da SEXTA no Data API.
+- Confirmação idempotente antes de enviar mensagens/e-mails, criar itens no Google ou permitir edição pelo Codex.
+- Voz Android full-duplex com interrupção durante a fala, ferramentas nativas e token protegido pelo Android Keystore.
+- Cache de sincronização invalidado após escrita, limitação de tentativas de login, cron autenticado e CI com testes.
 
 ## Arquitetura
 
@@ -92,11 +95,17 @@ SEXTA_DATA_API_KEY=
 
 A Data API exige a chave publishable **e** a chave interna `x-sexta-api-key` enviada somente pelo backend. As tabelas públicas continuam com RLS.
 
+O schema canônico está em `supabase/migrations/20260901193718_harden_sexta_core.sql`. Aplique a migration antes de publicar a versão 1.5, pois o fluxo de confirmação usa `sexta_pending_actions`.
+
+Na Vercel, defina também `CRON_SECRET` com um valor aleatório forte. O cron diário chama `/api/monitor/run` às 11:00 UTC (08:00 em São Paulo fora de mudanças históricas de fuso).
+
+Depois do deploy, reconecte o Google Workspace para substituir os escopos antigos e amplos pelos escopos mínimos da versão 1.5.
+
 ## Segurança
 
 - O browser não recebe `SEXTA_DATA_API_KEY`, Gemini key, tokens Google ou credenciais Evolution.
 - Não coloque credenciais na memória/Obsidian.
-- Ações destrutivas devem exigir confirmação.
+- Ações que enviam conteúdo ou criam dados externos exigem confirmação única.
 - Este ZIP de teste inclui `.env.local` com credenciais temporárias por solicitação explícita do proprietário. Rotacione-as antes de compartilhar/publicar.
 
 ## Estrutura
@@ -123,4 +132,4 @@ A função usada em `pgrst.db_pre_request` deve ficar em `public` com `SECURITY 
 - Remove o `db_pre_request` e valida a chave interna diretamente nas políticas RLS.
 - A função de validação é `SECURITY INVOKER`; não há função privilegiada exposta por RPC.
 - O schema `private` e a tabela de chaves continuam sem acesso direto pelo cliente.
-- Security Advisor validado sem alertas após a migração.
+- Valide novamente o Security Advisor depois de aplicar qualquer migração.

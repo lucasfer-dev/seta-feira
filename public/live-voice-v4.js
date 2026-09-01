@@ -464,10 +464,15 @@
       return planned;
     }
 
-    return api('/api/tool-execute', {
+    const planned = await api('/api/tool-execute', {
       method: 'POST',
       body: JSON.stringify({ name, args, deviceId, preferLocalAndroid: false, origin: ORIGIN })
     });
+    if (IS_ANDROID && planned?.clientAction?.action && plugin?.execute) {
+      const result = await plugin.execute({ action: planned.clientAction.action, payload: planned.clientAction.payload || {} });
+      return { ...result, tool: planned.action?.name || name, scope: 'android-local', state: result?.ok === false ? 'failed' : 'completed', confirmationId: planned.confirmationId || '' };
+    }
+    return planned;
   }
 
   function sendToolResponse(functionResponses) {

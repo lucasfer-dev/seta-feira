@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('sextaDesktop', {
   platform: process.platform,
   desktop: true,
-  version: '1.3.0',
+  version: '1.5.0',
   vault: {
     choose: () => ipcRenderer.invoke('vault:choose'),
     status: () => ipcRenderer.invoke('vault:status'),

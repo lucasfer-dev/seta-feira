@@ -1,10 +1,7 @@
 import { getDevices, getEvents, getMemories, getMessages, getNotifications, getSettings, isOwner, send } from '../lib/core.mjs';
+import { getSyncCache, getSyncInFlight, loadSyncCache } from '../lib/sync-cache.mjs';
 
 const SHARED_CONVERSATION_ID = 'main';
-const CACHE_MS = Math.max(3000, Math.min(30000, Number(process.env.SEXTA_SYNC_CACHE_MS || 12000)));
-let cache = null;
-let cacheAt = 0;
-let inFlight = null;
 
 async function loadSnapshot() {
   const [messages, memories, devices, events, notifications, settings] = await Promise.all([
@@ -34,25 +31,16 @@ export default async function handler(req, res) {
   try {
     const url = new URL(req.url, 'http://localhost');
     const forceFresh = url.searchParams.get('fresh') === '1';
-    const now = Date.now();
-
-    if (!forceFresh && cache && now - cacheAt < CACHE_MS) {
+    const cached = forceFresh ? null : getSyncCache();
+    if (cached) {
       res.setHeader('X-SEXTA-Sync-Cache', 'HIT');
-      return send(res, 200, cache);
+      return send(res, 200, cached);
     }
 
-    if (!inFlight) {
-      inFlight = loadSnapshot()
-        .then(snapshot => {
-          cache = snapshot;
-          cacheAt = Date.now();
-          return snapshot;
-        })
-        .finally(() => { inFlight = null; });
-    }
-
-    const snapshot = await inFlight;
+    const wasInFlight = Boolean(getSyncInFlight());
+    const snapshot = await loadSyncCache(loadSnapshot);
     res.setHeader('X-SEXTA-Sync-Cache', forceFresh ? 'BYPASS' : 'MISS');
+    if (wasInFlight) res.setHeader('X-SEXTA-Sync-Coalesced', '1');
     return send(res, 200, snapshot);
   } catch (error) {
     console.error(error);

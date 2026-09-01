@@ -10,7 +10,7 @@ const nativeJava = path.join(appRoot, 'native', 'java');
 
 if (!fs.existsSync(javaTarget)) throw new Error('Projeto Android preparado não encontrado. Rode prepare-android primeiro.');
 
-for (const name of ['AndroidActionExecutor.java', 'AndroidCommandLoop.java', 'CloudVoiceActionBridge.java', 'SextaAccessibilityService.java']) {
+for (const name of ['AndroidActionExecutor.java', 'AndroidCommandLoop.java', 'CloudVoiceActionBridge.java', 'SextaAccessibilityService.java', 'SecureTokenStore.java']) {
   fs.copyFileSync(path.join(nativeJava, name), path.join(javaTarget, name));
 }
 

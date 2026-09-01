@@ -1,11 +1,30 @@
 import { getMemories, getMessages, isOwner, parseJson, saveMemory, saveMessage, send } from '../lib/core.mjs';
 import { detectWorkspaceIntent, executeWorkspaceAction, formatWorkspaceResult, googleStatus } from '../lib/google.mjs';
 import { getConnectedGoogleAccount, isGoogleAccountQuestion } from '../lib/google-account.mjs';
-import { detectWhatsAppIntent, evolutionStatus, sendWhatsAppText } from '../lib/evolution.mjs';
+import { detectWhatsAppIntent, evolutionStatus } from '../lib/evolution.mjs';
 import { absorbAutomaticMemory } from '../lib/auto-memory.mjs';
-import { planAndExecuteTools } from '../lib/tool-bus.mjs';
+import { executeTool, planAndExecuteTools } from '../lib/tool-bus.mjs';
 
 const SHARED_CONVERSATION_ID = 'main';
+
+function confirmationIntent(text = '') {
+  const value = String(text || '').trim().toLocaleLowerCase('pt-BR');
+  if (/^(?:sim[, ]*)?(?:confirmo|confirmar|confirma|pode (?:fazer|enviar|executar)|pode sim|manda|envia)(?: isso)?[.! ]*$/.test(value)) return 'confirm_action';
+  if (/^(?:não[, ]*)?(?:cancelar|cancela|cancele|desiste|deixa pra lá|não envia|não execute)[.! ]*$/.test(value)) return 'cancel_action';
+  return '';
+}
+
+function workspaceSensitiveTool(intent = {}) {
+  const names = {
+    'gmail.send-smart': 'google_send_email',
+    'calendar.create': 'google_calendar_create',
+    'docs.create': 'google_docs_create',
+    'sheets.create': 'google_sheets_create',
+    'tasks.create': 'google_task_create'
+  };
+  const name = names[intent.action];
+  return name ? { name, args: intent.args || {} } : null;
+}
 
 function plannerReply(planned) {
   if (planned?.modelText) return planned.modelText;
@@ -142,6 +161,14 @@ async function executeGoogleVoiceIntent(intent, text, deviceId) {
   if (!status.connected) return { handled: true, ok: false, provider: 'google-workspace', action: intent.action, needsGoogleConnect: true, reply: 'Sua conta Google ainda precisa ser autorizada nas Integrações.' };
 
   try {
+    const sensitive = workspaceSensitiveTool(intent);
+    if (sensitive) {
+      const proposed = await executeTool(sensitive.name, sensitive.args, { deviceId });
+      if (proposed.confirmationRequired) {
+        await persistActionTurn(text, proposed.message, deviceId, 'confirmation');
+        return { handled: true, ok: true, provider: 'confirmation', action: intent.action, reply: proposed.message, confirmation: proposed };
+      }
+    }
     const result = await executeWorkspaceAction(intent.action, intent.args);
     if (intent.action === 'calendar.create') {
       const title = String(intent.args.title || '').trim();
@@ -161,6 +188,14 @@ async function answerGoogleAccountQuestion(text, deviceId) {
   if (!status.configured) return { handled: true, ok: false, provider: 'google-workspace', action: 'google.account', reply: 'O Google Workspace ainda não está configurado no servidor.' };
   if (!status.connected) return { handled: true, ok: false, provider: 'google-workspace', action: 'google.account', needsGoogleConnect: true, reply: 'Nenhuma conta Google está conectada agora.' };
   try {
+    const confirmation = confirmationIntent(text);
+    if (confirmation) {
+      const result = await executeTool(confirmation, {}, { deviceId });
+      const reply = result.message || (result.ok === false ? 'Não consegui processar essa confirmação.' : 'Certo.');
+      await persistActionTurn(text, reply, deviceId, 'confirmation');
+      return send(res, 200, { handled: true, ok: result.ok !== false, provider: 'confirmation', action: confirmation, reply, result });
+    }
+
     const account = await getConnectedGoogleAccount();
     const reply = account.email
       ? `A conta Google conectada é ${account.email}${account.name ? `, de ${account.name}` : ''}.`
@@ -213,7 +248,7 @@ export default async function handler(req, res) {
     }
 
     try {
-      const planned = await planAndExecuteTools(await contextualPlannerInput(text), { deviceId: '', maxRounds: 4 });
+      const planned = await planAndExecuteTools(await contextualPlannerInput(text), { deviceId, maxRounds: 4 });
       if (planned.handled) {
         const reply = plannerReply(planned);
         await persistActionTurn(text, reply, deviceId);
@@ -240,10 +275,16 @@ export default async function handler(req, res) {
       }
 
       try {
-        const sent = await sendWhatsAppText(whatsappIntent.args);
-        const reply = `Enviado no WhatsApp para ${sent.to.label}.`;
+        const result = await executeTool('whatsapp_send_message', whatsappIntent.args, { deviceId });
+        if (result.confirmationRequired) {
+          const reply = result.message;
+          await persistActionTurn(text, reply, deviceId, 'confirmation');
+          return send(res, 200, { handled: true, ok: true, provider: 'confirmation', action: whatsappIntent.action, reply, confirmation: result });
+        }
+        if (result.ok === false) throw new Error(result.error || 'WHATSAPP_SEND_FAILED');
+        const reply = result.message || 'Mensagem enviada no WhatsApp.';
         await persistActionTurn(text, reply, deviceId, 'whatsapp-evolution');
-        return send(res, 200, { handled: true, ok: true, provider: 'evolution', action: whatsappIntent.action, reply, result: { to: sent.to } });
+        return send(res, 200, { handled: true, ok: true, provider: 'evolution', action: whatsappIntent.action, reply, result: result.result });
       } catch (error) {
         if (error.message === 'WHATSAPP_RECIPIENT_AMBIGUOUS') {
           const candidates = error.candidates || [];

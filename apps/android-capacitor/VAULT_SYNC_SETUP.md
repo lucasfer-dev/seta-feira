@@ -1,6 +1,6 @@
 # Vault Obsidian no Android
 
-A SEXTA 1.3 usa um plugin nativo para deixar o usuário escolher a mesma pasta que o Obsidian Mobile usa como Vault.
+A SEXTA 1.5 usa um plugin nativo para deixar o usuário escolher a mesma pasta que o Obsidian Mobile usa como Vault.
 
 ## Depois de gerar o Android
 

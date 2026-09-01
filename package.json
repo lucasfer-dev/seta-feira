@@ -1,11 +1,16 @@
 {
   "name": "sexta",
-  "version": "1.3.2",
+  "version": "1.5.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "node --env-file=.env.local server.mjs",
     "start": "node --env-file-if-exists=.env.local server.mjs",
+    "lint": "node scripts/check-source.mjs",
+    "typecheck": "node scripts/check-source.mjs",
+    "test": "node --test",
+    "verify": "npm run lint && npm test",
+    "build": "npm run verify",
     "agent:start": "node --env-file-if-exists=.env.local agent/start-cloud.mjs",
     "agent:install": "powershell -NoProfile -ExecutionPolicy Bypass -File agent/install-windows.ps1",
     "agent:status": "powershell -NoProfile -ExecutionPolicy Bypass -File agent/status-windows.ps1",

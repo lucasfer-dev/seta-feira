@@ -99,7 +99,7 @@ public final class AndroidCommandLoop {
     }
 
     private static String token(Context context) {
-        return context.getSharedPreferences("sexta_native", Context.MODE_PRIVATE).getString("owner_token", "");
+        return SecureTokenStore.getOwnerToken(context);
     }
 
     private static String deviceId(Context context) {
@@ -221,11 +221,9 @@ public final class AndroidCommandLoop {
         // Explicit PC commands must never execute on Android.
         if (t.matches(".*\\b(no|pro|para o|do)\\s+(pc|computador|windows|notebook)\\b.*")) return null;
 
-        Matcher reply = Pattern.compile("(?i)\\b(?:responde|responder|responda)\\s+(?:no\\s+(?:whatsapp|wpp|zap)\\s+)?(?:a|ao|o|pra|para)?\\s*([^,.:]+?)\\s+(?:no\\s+(?:whatsapp|wpp|zap)\\s+)?(?:dizendo|falando|com|que)\\s+(.+)$").matcher(raw);
-        if (reply.find()) return command("notification_reply", new JSONObject().put("package", "whatsapp").put("recipient", reply.group(1).trim()).put("text", reply.group(2).trim()));
-
-        Matcher lastReply = Pattern.compile("(?i)\\b(?:responde|responder|responda)\\s+(?:a\\s+)?(?:ultima|última)\\s+(?:mensagem|notificacao|notificação)(?:\\s+do\\s+(?:whatsapp|wpp|zap))?\\s+(?:dizendo|falando|com|que)\\s+(.+)$").matcher(raw);
-        if (lastReply.find()) return command("notification_reply", new JSONObject().put("package", "whatsapp").put("text", lastReply.group(1).trim()));
+        // Replies send external content. Route them through the cloud Tool Bus
+        // so the confirmation and idempotency gate runs before Android acts.
+        if (t.matches(".*\\b(responde|responder|responda)\\b.*")) return null;
 
         if (t.matches(".*\\b(proxima|pula|pular)\\b.*\\b(musica|faixa).*")) return command("media_next", new JSONObject());
         if (t.matches(".*\\b(volta|anterior)\\b.*\\b(musica|faixa).*")) return command("media_previous", new JSONObject());

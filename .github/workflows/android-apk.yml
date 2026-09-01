@@ -2,6 +2,11 @@ name: Build SEXTA Android APK
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'apps/android-capacitor/**'
+      - 'public/**'
+      - '.github/workflows/android-apk.yml'
   push:
     branches: [main]
     paths:
@@ -34,7 +39,7 @@ jobs:
 
       - name: Install Capacitor dependencies
         working-directory: apps/android-capacitor
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       - name: Generate Android project
         working-directory: apps/android-capacitor
