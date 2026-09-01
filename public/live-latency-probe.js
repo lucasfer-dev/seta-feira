@@ -184,11 +184,7 @@
     }
   }
 
-  // Preserve the familiar constants used by live-voice-v3.
-  SextaWebSocket.CONNECTING = NativeWebSocket.CONNECTING;
-  SextaWebSocket.OPEN = NativeWebSocket.OPEN;
-  SextaWebSocket.CLOSING = NativeWebSocket.CLOSING;
-  SextaWebSocket.CLOSED = NativeWebSocket.CLOSED;
+  // A subclasse herda CONNECTING/OPEN/CLOSING/CLOSED do WebSocket nativo.
   window.WebSocket = SextaWebSocket;
 
   const sourceProto = window.AudioBufferSourceNode?.prototype;
