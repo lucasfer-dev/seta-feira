@@ -30,13 +30,12 @@ export default async function handler(req, res) {
   const expireTime = new Date(now + 15 * 60 * 1000).toISOString();
   const newSessionExpireTime = new Date(now + 60 * 1000).toISOString();
 
+  // A SEXTA já faz VAD no cliente. Desligar o VAD automático do Gemini evita
+  // uma segunda espera de silêncio: o cliente envia activityStart/activityEnd
+  // exatamente nas fronteiras detectadas localmente.
   const realtimeInputConfig = {
     automaticActivityDetection: {
-      disabled: false,
-      startOfSpeechSensitivity: 'START_SENSITIVITY_LOW',
-      endOfSpeechSensitivity: 'END_SENSITIVITY_LOW',
-      prefixPaddingMs: 100,
-      silenceDurationMs: 700
+      disabled: true
     },
     activityHandling: 'NO_INTERRUPTION',
     turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY'
