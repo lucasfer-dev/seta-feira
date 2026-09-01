@@ -3,6 +3,7 @@ import { LIVE_TOOL_DECLARATIONS } from '../lib/tool-bus.mjs';
 
 const LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-2.5-flash-native-audio-preview-12-2025';
 const LIVE_VOICE = process.env.GEMINI_LIVE_VOICE || 'Sulafat';
+const SUPPORTS_NON_BLOCKING = /gemini-2\.5/i.test(LIVE_MODEL);
 
 const NON_BLOCKING_LIVE_TOOLS = new Set([
   'android_open_app',
@@ -28,7 +29,7 @@ export default async function handler(req, res) {
   const baseInstruction = String(
     body.systemInstruction ||
     'Você é SEXTA-feira, uma assistente pessoal de voz. Fale em português brasileiro de forma natural, curta e conversacional.'
-  ).slice(0, 9400);
+  ).slice(0, 8000);
 
   const origin = String(body.origin || '').toLowerCase();
   const deviceRule = origin === 'android'
@@ -45,7 +46,7 @@ export default async function handler(req, res) {
     'CONTEXTO: referências curtas como “isso”, “ele”, “mas tu viu”, “e aquilo?” devem usar o assunto imediatamente anterior. Não obrigue o usuário a repetir contexto que já está na sessão.',
     'REPARO DE FALA: transcrição de voz pode vir quebrada, repetida ou estranha. Priorize a intenção e o contexto. Se realmente não der para entender, faça uma pergunta curta e específica, sem transformar a conversa numa entrevista.',
     'AÇÕES + CONVERSA: quando o usuário misturar uma ação com conversa, execute a ação e continue a conversa naturalmente. Não transforme “abre o Spotify... e qual Pokémon tu acha mais bonito?” em duas interações separadas.',
-    'FERRAMENTAS RÁPIDAS: ações marcadas como não bloqueantes podem rodar enquanto a conversa continua. Não narre “executando ferramenta”. Só mencione o resultado quando ele importar e nunca diga que terminou antes da confirmação real.',
+    'FERRAMENTAS RÁPIDAS: quando a plataforma permitir ações não bloqueantes, elas podem rodar enquanto a conversa continua. Não narre “executando ferramenta”. Só mencione o resultado quando ele importar e nunca diga que terminou antes da confirmação real.',
     'PERSONALIDADE: seja espontânea e consistente, mas não siga bordões fixos. Humor e informalidade devem surgir do contexto, não de um script.'
   ].join('\n');
 
@@ -71,7 +72,7 @@ export default async function handler(req, res) {
   };
 
   const functionDeclarations = LIVE_TOOL_DECLARATIONS.map(declaration => (
-    NON_BLOCKING_LIVE_TOOLS.has(declaration.name)
+    SUPPORTS_NON_BLOCKING && NON_BLOCKING_LIVE_TOOLS.has(declaration.name)
       ? { ...declaration, behavior: 'NON_BLOCKING' }
       : declaration
   ));
