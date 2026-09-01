@@ -48,7 +48,6 @@ export default async function handler(req, res) {
     model: `models/${LIVE_MODEL}`,
     generationConfig: {
       responseModalities: ['AUDIO'],
-      thinkingConfig: { thinkingLevel: 'minimal' },
       speechConfig: {
         voiceConfig: {
           prebuiltVoiceConfig: {
