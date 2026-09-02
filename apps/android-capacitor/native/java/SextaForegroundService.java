@@ -504,28 +504,33 @@ public class SextaForegroundService extends Service implements RecognitionListen
         if (calls == null || calls.length() == 0 || socket == null) return;
         awaitingResponseSinceMs = 0L;
         io.execute(() -> {
-            JSONArray responses = new JSONArray();
-            for (int i = 0; i < calls.length(); i++) {
-                JSONObject call = calls.optJSONObject(i);
-                if (call == null) continue;
-                String id = call.optString("id", "");
-                String name = call.optString("name", "");
-                JSONObject result;
-                try {
-                    result = executeNativeLiveTool(name, call.optJSONObject("args"));
-                } catch (Exception error) {
-                    Log.e(TAG, "tool failed: " + name, error);
-                    result = new JSONObject()
-                            .put("ok", false)
-                            .put("handled", true)
-                            .put("state", "failed")
-                            .put("error", String.valueOf(error.getMessage()));
+            try {
+                JSONArray responses = new JSONArray();
+                for (int i = 0; i < calls.length(); i++) {
+                    JSONObject call = calls.optJSONObject(i);
+                    if (call == null) continue;
+                    String id = call.optString("id", "");
+                    String name = call.optString("name", "");
+                    JSONObject result;
+                    try {
+                        result = executeNativeLiveTool(name, call.optJSONObject("args"));
+                    } catch (Exception error) {
+                        Log.e(TAG, "tool failed: " + name, error);
+                        result = new JSONObject()
+                                .put("ok", false)
+                                .put("handled", true)
+                                .put("state", "failed")
+                                .put("error", String.valueOf(error.getMessage()));
+                    }
+                    responses.put(new JSONObject().put("id", id).put("name", name).put("response", result));
                 }
-                responses.put(new JSONObject().put("id", id).put("name", name).put("response", result));
+                if (!nativeConversationActive || socket != liveSocket || responses.length() == 0) return;
+                boolean sent = socket.send(new JSONObject().put("toolResponse", new JSONObject().put("functionResponses", responses)).toString());
+                if (!sent) scheduleNativeReconnect("tool-response-send-failed");
+            } catch (Exception error) {
+                Log.e(TAG, "tool response serialization failed", error);
+                scheduleNativeReconnect("tool-response-serialization-failed");
             }
-            if (!nativeConversationActive || socket != liveSocket || responses.length() == 0) return;
-            boolean sent = socket.send(new JSONObject().put("toolResponse", new JSONObject().put("functionResponses", responses)).toString());
-            if (!sent) scheduleNativeReconnect("tool-response-send-failed");
         });
     }
 
