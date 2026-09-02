@@ -1,0 +1,33 @@
+name: Web Smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'public/**'
+      - 'api/**'
+      - '.github/workflows/web-smoke.yml'
+  pull_request:
+    paths:
+      - 'public/**'
+      - 'api/**'
+      - '.github/workflows/web-smoke.yml'
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check Voice Core v5
+        run: node --check public/voice-core-v5.js
+      - name: Check SEXTA shell v2
+        run: node --check public/sexta-shell-v2.js
+      - name: Check audio worklet
+        run: node --check public/live-input-worklet.js
+      - name: Check app entry
+        run: node --check public/app.js
+      - name: Check health endpoint
+        run: node --check api/health.js
