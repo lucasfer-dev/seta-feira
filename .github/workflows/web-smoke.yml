@@ -23,14 +23,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Check Voice Core v8
+      - name: Check Voice Core v9
+        run: node --check public/voice-core-v9.js
+      - name: Check Voice Core v8 fallback
         run: node --check public/voice-core-v8.js
-      - name: Check Voice Core v7 fallback
-        run: node --check public/voice-core-v7.js
       - name: Check voice loader
         run: node --check public/voice-loader.js
       - name: Check live token endpoint
         run: node --check api/live-token.js
+      - name: Assert Gemini 3.1 Live migration
+        run: |
+          grep -q "gemini-3.1-flash-live-preview" api/live-token.js
+          grep -q "clientVersion:'v9'" public/voice-core-v9.js
+          grep -q "audioStreamEnd:true" public/voice-core-v9.js
       - name: Check audio resampler
         run: node --check public/audio-resampler.js
       - name: Test audio resampler quality
