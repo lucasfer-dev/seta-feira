@@ -16,19 +16,17 @@ export default async function handler(req, res) {
 
   const body = await parseJson(req).catch(() => ({}));
   const metrics = {
-    kind: shortString(body.kind || 'legacy', 32),
+    kind: shortString(body.kind || 'legacy', 40),
     phase: shortString(body.phase || 'complete', 32),
     platform: shortString(body.platform || 'unknown', 24),
     turnId: shortString(body.turnId, 80),
 
-    // Legacy measurements from live-voice-v3/v4.
     speechEndToFirstAudioMs: boundedNumber(body.speechEndToFirstAudioMs),
     speechStartToFirstAudioMs: boundedNumber(body.speechStartToFirstAudioMs),
     firstServerEventMs: boundedNumber(body.firstServerEventMs),
     outputUnderruns: boundedNumber(body.outputUnderruns, 100),
     prebufferMs: boundedNumber(body.prebufferMs, 1000),
 
-    // Pipeline telemetry from live-latency-probe.
     clientEndSilenceConfiguredMs: boundedNumber(body.clientEndSilenceConfiguredMs, 5000),
     speechActivityMs: boundedNumber(body.speechActivityMs),
     endToFirstServerMs: boundedNumber(body.endToFirstServerMs),
@@ -45,7 +43,18 @@ export default async function handler(req, res) {
     toolCalls: boundedNumber(body.toolCalls, 100),
     audioChunks: boundedNumber(body.audioChunks, 10000),
 
-    // Native Android full-duplex telemetry.
+    // Browser recognition path (speech -> live transcript -> response).
+    speechStartToInterimMs: boundedNumber(body.speechStartToInterimMs),
+    speechStartToFinalMs: boundedNumber(body.speechStartToFinalMs),
+    speechStartToSpeakingMs: boundedNumber(body.speechStartToSpeakingMs),
+    trackSampleRate: boundedNumber(body.trackSampleRate, 192000),
+    trackSampleSize: boundedNumber(body.trackSampleSize, 64),
+    trackChannelCount: boundedNumber(body.trackChannelCount, 8),
+    trackLatencyMs: boundedNumber(body.trackLatencyMs, 10000),
+    echoCancellation: body.echoCancellation === true,
+    noiseSuppression: body.noiseSuppression === true,
+    autoGainControl: body.autoGainControl === true,
+
     nativeFullDuplex: Boolean(body.nativeFullDuplex),
     audioSource: shortString(body.audioSource, 40),
     aecAvailable: Boolean(body.aecAvailable),
@@ -58,9 +67,10 @@ export default async function handler(req, res) {
     bargeInRms: boundedNumber(body.bargeInRms, 32768)
   };
 
-  const mainLatency = metrics.endToPlaybackDueMs ?? metrics.endToFirstAudioMs ?? metrics.speechEndToFirstAudioMs;
+  const mainLatency = metrics.speechStartToInterimMs ?? metrics.endToPlaybackDueMs ?? metrics.endToFirstAudioMs ?? metrics.speechEndToFirstAudioMs;
   const interruptionSlow = metrics.phase === 'interrupted' && Number.isFinite(metrics.interruptToSilenceMs) && metrics.interruptToSilenceMs > 800;
-  const level = interruptionSlow || (Number.isFinite(mainLatency) && mainLatency > 3000) ? 'warn' : 'info';
+  const recognitionSlow = Number.isFinite(metrics.speechStartToInterimMs) && metrics.speechStartToInterimMs > 2200;
+  const level = interruptionSlow || recognitionSlow || (Number.isFinite(mainLatency) && mainLatency > 3000) ? 'warn' : 'info';
   console[level]('[SEXTA Live Metrics]', JSON.stringify(metrics));
   return send(res, 200, { ok: true });
 }
