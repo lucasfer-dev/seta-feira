@@ -4,6 +4,6 @@ import './sync-policy.js';
 import './app-original.js';
 import './native-bridge.js';
 import './browser-audio-tuning.js';
-import './voice-core-v5.js';
+import './voice-loader.js';
 import './sexta-shell-v2.js';
 import './voice-latency-probe.js';
