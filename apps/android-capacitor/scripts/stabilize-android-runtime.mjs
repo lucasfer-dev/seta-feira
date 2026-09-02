@@ -24,11 +24,19 @@ if (fs.existsSync(loopPath)) {
 
 if (fs.existsSync(servicePath)) {
   let service = fs.readFileSync(servicePath, 'utf8');
-  service = service.replace(
-    'new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, INPUT_RATE,',
-    'new AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, INPUT_RATE,'
-  );
+
+  // Legacy builds used VOICE_RECOGNITION directly. Only upgrade that old path.
+  // Full-duplex builds own their source selection in createLiveAudioRecord():
+  // VOICE_COMMUNICATION first, VOICE_RECOGNITION as a real fallback. Rewriting
+  // every VOICE_RECOGNITION occurrence would silently destroy that fallback.
+  if (!service.includes('createLiveAudioRecord(')) {
+    service = service.replace(
+      'new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, INPUT_RATE,',
+      'new AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, INPUT_RATE,'
+    );
+  }
+
   fs.writeFileSync(servicePath, service);
 }
 
-console.log('SEXTA runtime estabilizado: sem sync polling duplicado, fila reduzida e áudio Android em VOICE_COMMUNICATION.');
+console.log('SEXTA runtime estabilizado: sem sync polling duplicado, fila reduzida e fonte de áudio full-duplex preservada.');
