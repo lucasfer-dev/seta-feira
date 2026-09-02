@@ -14,11 +14,8 @@ import { StreamingSincResampler } from './audio-resampler.js';
   const WS_BASE = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained';
 
   const OUTPUT_PREBUFFER = IS_ANDROID ? 0.09 : 0.028;
-  const PRE_ROLL_MS = 220;
   const START_CONFIRM_MS = 60;
-  const END_SILENCE_FAST_MS = 360;
-  const END_SILENCE_MEDIUM_MS = 430;
-  const END_SILENCE_DEFAULT_MS = 520;
+  const LOCAL_SPEECH_RELEASE_MS = 420;
   const OUTPUT_SETTLE_MS = 80;
   const OUTPUT_DRAIN_POLL_MS = 30;
 
@@ -46,9 +43,7 @@ import { StreamingSincResampler } from './audio-resampler.js';
   let noiseFloor = 0.0045;
   let speechEvidenceMs = 0;
   let lastVoicedAt = 0;
-  let speechStreamOpen = false;
-  let preRollFrames = [];
-  let maxPreRollFrames = 6;
+  let localSpeechActive = false;
 
   let outputContext = null;
   let nextOutputTime = 0;
@@ -61,38 +56,25 @@ import { StreamingSincResampler } from './audio-resampler.js';
 
   function freshTurn() {
     return {
-      interimInput: '',
-      finalInput: '',
-      outputText: '',
-      speechStartAt: 0,
-      streamEndAt: 0,
-      firstInterimAt: 0,
-      firstFinalAt: 0,
-      firstModelAt: 0,
-      firstAudioAt: 0
+      interimInput: '', finalInput: '', outputText: '',
+      speechStartAt: 0, firstInterimAt: 0, firstFinalAt: 0,
+      firstModelAt: 0, firstAudioAt: 0
     };
   }
 
-  function emit(name, detail = {}) {
-    window.dispatchEvent(new CustomEvent(name, { detail }));
-  }
+  function emit(name, detail = {}) { window.dispatchEvent(new CustomEvent(name, { detail })); }
 
   function transition(next, extra = {}) {
     if (!next) return;
     state = next;
     emit('sexta:voice-state', {
-      state,
-      sessionActive,
-      setupComplete,
-      assistantSpeaking,
-      pendingToolCalls,
-      speechStreamOpen,
-      ...extra
+      state, sessionActive, setupComplete, assistantSpeaking,
+      pendingToolCalls, localSpeechActive, ...extra
     });
   }
 
   function emitTranscript() {
-    emit('sexta:voice-transcript', { interim: turn.interimInput, final: turn.finalInput });
+    emit('sexta:voice-transcript', { interim:turn.interimInput, final:turn.finalInput });
   }
 
   function authHeaders(extra = {}) {
@@ -109,8 +91,7 @@ import { StreamingSincResampler } from './audio-resampler.js';
 
   function reportMetric(kind, extra = {}) {
     void api('/api/live-metrics', {
-      method:'POST',
-      body:JSON.stringify({ kind:`voice_core_v9:${kind}`, platform:ORIGIN, state, ...extra })
+      method:'POST', body:JSON.stringify({ kind:`voice_core_v9:${kind}`, platform:ORIGIN, state, ...extra })
     }).catch(() => {});
   }
 
@@ -124,8 +105,7 @@ import { StreamingSincResampler } from './audio-resampler.js';
     if (!next) return current;
     if (!current || next.startsWith(current)) return next;
     if (current === next || current.endsWith(next)) return current;
-    const a = normalizeSpeech(current);
-    const b = normalizeSpeech(next);
+    const a = normalizeSpeech(current), b = normalizeSpeech(next);
     if (a === b || a.endsWith(b)) return current;
     if (b.startsWith(a)) return next;
     return `${current} ${next}`.replace(/\s+/g,' ').trim();
@@ -149,19 +129,6 @@ import { StreamingSincResampler } from './audio-resampler.js';
     const base = IS_ANDROID ? 0.012 : 0.0065;
     const echoGuard = assistantSpeaking ? 0.018 : 0;
     return Math.max(base, echoGuard, noiseFloor * (assistantSpeaking ? 4.0 : 2.7));
-  }
-
-  function currentEndSilenceMs() {
-    const raw = String(turn.finalInput || turn.interimInput || '').trim();
-    if (!raw) return END_SILENCE_DEFAULT_MS;
-    const normalized = normalizeSpeech(raw);
-    const words = normalized.split(' ').filter(Boolean);
-    const clearPunctuation = /[?!\.]\s*$/.test(raw);
-    const directIntent = /^(?:sexta(?: feira)?\s+)?(?:quem|como|qual|quais|onde|quando|quanto|quantos|por que|porque|abre|abra|fecha|feche|mostra|mostre|liga|desliga|aumenta|diminui|manda|envia|procura|pesquisa|lembra|fala|me fala|faz|faca)\b/.test(normalized);
-    const hangingWord = /\b(?:e|mas|que|porque|tipo|entao|ai|de|do|da|para|pra|com|se)\s*$/.test(normalized);
-    if (clearPunctuation || (directIntent && words.length >= 2)) return END_SILENCE_FAST_MS;
-    if (words.length >= 4 && !hangingWord) return END_SILENCE_MEDIUM_MS;
-    return END_SILENCE_DEFAULT_MS;
   }
 
   function sendRealtime(payload) {
@@ -211,51 +178,33 @@ import { StreamingSincResampler } from './audio-resampler.js';
     sendRealtime({ audio:{ data:bytesToBase64(bytes), mimeType:`audio/pcm;rate=${INPUT_RATE}` } });
   }
 
-  function pushPreRoll(frame) {
-    preRollFrames.push(frame.slice());
-    while (preRollFrames.length > maxPreRollFrames) preRollFrames.shift();
-  }
-
   function stopOutput(resetTurnComplete = true) {
     settlementGeneration += 1;
-    for (const source of outputSources) {
-      try { source.stop(); } catch {}
-    }
+    for (const source of outputSources) { try { source.stop(); } catch {} }
     outputSources.clear();
     nextOutputTime = 0;
     assistantSpeaking = false;
     if (resetTurnComplete) serverTurnComplete = false;
   }
 
-  function beginSpeech(now) {
-    if (speechStreamOpen || !sessionActive || !setupComplete) return;
+  function beginLocalSpeech(now) {
+    if (localSpeechActive) return;
+    localSpeechActive = true;
+    turn.speechStartAt ||= now;
     if (assistantSpeaking) stopOutput(false);
-
-    serverTurnComplete = false;
-    settlementGeneration += 1;
-    turn = freshTurn();
-    turn.speechStartAt = now;
-    emitTranscript();
-
-    speechStreamOpen = true;
     transition('user_speaking');
     reportMetric('speech_start');
-
-    for (const frame of preRollFrames) sendAudioFrame(frame);
-    preRollFrames = [];
   }
 
-  function endSpeech(now) {
-    if (!speechStreamOpen) return;
-    const endSilenceMs = currentEndSilenceMs();
-    sendRealtime({ audioStreamEnd:true });
-    speechStreamOpen = false;
+  function endLocalSpeech() {
+    if (!localSpeechActive) return;
+    localSpeechActive = false;
     speechEvidenceMs = 0;
     lastVoicedAt = 0;
-    turn.streamEndAt = now;
-    preRollFrames = [];
-    transition('thinking');
-    reportMetric('stream_end', { clientEndSilenceConfiguredMs:endSilenceMs });
+    // Server VAD owns turn completion. Never send audioStreamEnd here.
+    // Keep UI calm while Gemini finalizes the turn.
+    if (!assistantSpeaking && pendingToolCalls === 0) transition('listening');
+    reportMetric('local_speech_end');
   }
 
   function processMicFrame(raw) {
@@ -263,32 +212,28 @@ import { StreamingSincResampler } from './audio-resampler.js';
     const frame = resampler.process(raw);
     if (!frame.length) return;
 
+    // Automatic server VAD requires a continuous stream. This is the only
+    // authoritative audio path in v9.2: no manual/hybrid turn-closing events.
+    sendAudioFrame(frame);
+
     const now = performance.now();
     const frameMs = frame.length / INPUT_RATE * 1000;
     const level = rms(frame);
 
-    if (!speechStreamOpen && !assistantSpeaking && level < 0.018) {
+    if (!localSpeechActive && !assistantSpeaking && level < 0.018) {
       noiseFloor = noiseFloor * 0.994 + level * 0.006;
     }
 
     const voiced = level >= speechThreshold();
-
-    if (!speechStreamOpen) {
-      pushPreRoll(frame);
-      if (voiced) {
-        speechEvidenceMs += frameMs;
-        lastVoicedAt = now;
-        if (speechEvidenceMs >= START_CONFIRM_MS) beginSpeech(now - speechEvidenceMs);
-      } else {
-        speechEvidenceMs = Math.max(0, speechEvidenceMs - frameMs * 0.6);
-      }
-      return;
+    if (voiced) {
+      speechEvidenceMs += frameMs;
+      lastVoicedAt = now;
+      if (!localSpeechActive && speechEvidenceMs >= START_CONFIRM_MS) beginLocalSpeech(now - speechEvidenceMs);
+    } else if (!localSpeechActive) {
+      speechEvidenceMs = Math.max(0, speechEvidenceMs - frameMs * 0.6);
     }
 
-    sendAudioFrame(frame);
-    if (voiced) lastVoicedAt = now;
-    const targetSilence = currentEndSilenceMs();
-    if (lastVoicedAt && now - lastVoicedAt >= targetSilence) endSpeech(now);
+    if (localSpeechActive && lastVoicedAt && now - lastVoicedAt >= LOCAL_SPEECH_RELEASE_MS) endLocalSpeech();
   }
 
   async function ensureOutputContext() {
@@ -318,7 +263,6 @@ import { StreamingSincResampler } from './audio-resampler.js';
     source.connect(ctx.destination);
     outputSources.add(source);
     source.onended = () => outputSources.delete(source);
-
     const now = ctx.currentTime;
     if (nextOutputTime < now + 0.008) nextOutputTime = now + OUTPUT_PREBUFFER;
     source.start(nextOutputTime);
@@ -329,7 +273,7 @@ import { StreamingSincResampler } from './audio-resampler.js';
     const generation = ++settlementGeneration;
     const startedAt = performance.now();
     while (sessionActive && generation === settlementGeneration && performance.now() - startedAt < 30000) {
-      if (!speechStreamOpen && serverTurnComplete && pendingToolCalls === 0 && playbackDrained()) {
+      if (serverTurnComplete && pendingToolCalls === 0 && playbackDrained()) {
         await new Promise(resolve => setTimeout(resolve, OUTPUT_SETTLE_MS));
         if (!sessionActive || generation !== settlementGeneration) return;
         assistantSpeaking = false;
@@ -341,8 +285,7 @@ import { StreamingSincResampler } from './audio-resampler.js';
         reportMetric('turn', {
           speechStartToInterimMs:snapshot.firstInterimAt && snapshot.speechStartAt ? Math.round(snapshot.firstInterimAt - snapshot.speechStartAt) : null,
           speechStartToFinalMs:snapshot.firstFinalAt && snapshot.speechStartAt ? Math.round(snapshot.firstFinalAt - snapshot.speechStartAt) : null,
-          speechStartToSpeakingMs:snapshot.firstAudioAt && snapshot.speechStartAt ? Math.round(snapshot.firstAudioAt - snapshot.speechStartAt) : null,
-          endToFirstAudioMs:snapshot.firstAudioAt && snapshot.streamEndAt ? Math.round(snapshot.firstAudioAt - snapshot.streamEndAt) : null
+          speechStartToSpeakingMs:snapshot.firstAudioAt && snapshot.speechStartAt ? Math.round(snapshot.firstAudioAt - snapshot.speechStartAt) : null
         });
         transition('listening');
         return;
@@ -364,17 +307,13 @@ import { StreamingSincResampler } from './audio-resampler.js';
     });
     const track = mediaStream.getAudioTracks?.()[0];
     const settings = track?.getSettings?.() || {};
-
     inputContext = new AudioContextCtor({ latencyHint:'interactive' });
     if (inputContext.state === 'suspended') await inputContext.resume();
     resampler = new StreamingSincResampler(inputContext.sampleRate, INPUT_RATE, { radius:16, cutoffScale:0.92 });
     await inputContext.audioWorklet.addModule('/live-input-worklet.js');
-
     inputSource = inputContext.createMediaStreamSource(mediaStream);
     inputWorklet = new AudioWorkletNode(inputContext, 'sexta-mic-processor', {
-      numberOfInputs:1,
-      numberOfOutputs:1,
-      outputChannelCount:[1]
+      numberOfInputs:1, numberOfOutputs:1, outputChannelCount:[1]
     });
     silentGain = inputContext.createGain();
     silentGain.gain.value = 0;
@@ -385,8 +324,6 @@ import { StreamingSincResampler } from './audio-resampler.js';
     inputSource.connect(inputWorklet);
     inputWorklet.connect(silentGain);
     silentGain.connect(inputContext.destination);
-
-    maxPreRollFrames = Math.max(3, Math.ceil(PRE_ROLL_MS / 40));
     captureEnabled = true;
     reportMetric('capture_ready', {
       trackSampleRate:Number(settings.sampleRate || 0) || null,
@@ -394,20 +331,17 @@ import { StreamingSincResampler } from './audio-resampler.js';
       echoCancellation:settings.echoCancellation === true,
       noiseSuppression:settings.noiseSuppression === true,
       autoGainControl:settings.autoGainControl === true,
-      audioSource:`hybrid-vad:${inputContext.sampleRate}->${INPUT_RATE}`
+      audioSource:`automatic-vad-continuous:${inputContext.sampleRate}->${INPUT_RATE}`
     });
     emit('sexta:mic-settings', {
       settings:{ ...settings, audioContextSampleRate:inputContext.sampleRate },
-      capabilities:track?.getCapabilities?.() || {},
-      capturedAt:Date.now()
+      capabilities:track?.getCapabilities?.() || {}, capturedAt:Date.now()
     });
     transition('listening');
   }
 
   function stopMicrophone() {
     captureEnabled = false;
-    try { if (speechStreamOpen) sendRealtime({ audioStreamEnd:true }); } catch {}
-    speechStreamOpen = false;
     try { if (inputWorklet?.port) inputWorklet.port.onmessage = null; } catch {}
     try { inputWorklet?.disconnect(); } catch {}
     try { inputSource?.disconnect(); } catch {}
@@ -415,9 +349,7 @@ import { StreamingSincResampler } from './audio-resampler.js';
     for (const track of mediaStream?.getTracks?.() || []) track.stop();
     try { inputContext?.close(); } catch {}
     mediaStream = inputContext = inputSource = inputWorklet = silentGain = resampler = null;
-    speechEvidenceMs = 0;
-    lastVoicedAt = 0;
-    preRollFrames = [];
+    speechEvidenceMs = 0; lastVoicedAt = 0; localSpeechActive = false;
   }
 
   async function buildSystemInstruction() {
@@ -430,21 +362,17 @@ import { StreamingSincResampler } from './audio-resampler.js';
     const recent = (sync.messages || []).slice(-12).map(item => `${item.role === 'assistant' ? 'SEXTA' : 'USUÁRIO'}: ${item.content}`).join('\n');
     const platformRule = IS_ANDROID
       ? 'DISPOSITIVO ATUAL: Android. Use android_ para ações no aparelho; Codex pode ser delegado por pc_codex_task.'
-      : IS_DESKTOP
-        ? 'DISPOSITIVO ATUAL: PC. Use pc_ para ações no computador.'
+      : IS_DESKTOP ? 'DISPOSITIVO ATUAL: PC. Use pc_ para ações no computador.'
         : 'DISPOSITIVO ATUAL: navegador. Escolha o dispositivo pela capacidade e pelo pedido.';
-
     return [
       'Você é SEXTA-feira, assistente pessoal de voz. Converse em português brasileiro natural, curta e diretamente.',
       'A sessão é contínua. Depois de iniciada, o usuário não precisa repetir “Sexta-feira”.',
       'Responda assim que um turno terminar e a intenção estiver clara.',
       'Se o usuário falar por cima de você, ceda a vez imediatamente.',
       'Não narre estados internos. Ferramentas rápidas podem acontecer silenciosamente.',
-      'Nunca diga que uma ação terminou antes da ferramenta confirmar.',
-      platformRule,
+      'Nunca diga que uma ação terminou antes da ferramenta confirmar.', platformRule,
       `Ajustes: humor ${settings.humor ?? 68}/100, sarcasmo ${settings.sarcasm ?? 42}/100, proatividade ${settings.proactivity ?? 55}/100, verbosidade ${settings.verbosity ?? 32}/100.`,
-      memories ? `Memórias relevantes:\n${memories}` : '',
-      recent ? `Contexto recente:\n${recent}` : ''
+      memories ? `Memórias relevantes:\n${memories}` : '', recent ? `Contexto recente:\n${recent}` : ''
     ].filter(Boolean).join('\n\n');
   }
 
@@ -454,12 +382,9 @@ import { StreamingSincResampler } from './audio-resampler.js';
     if (!user && !assistant) return;
     try {
       await api('/api/live-turn', {
-        method:'POST',
-        body:JSON.stringify({
+        method:'POST', body:JSON.stringify({
           conversationId:localStorage.getItem('sexta_conversation') || 'main',
-          deviceId:localStorage.getItem('sexta_device_id') || 'voice-v9',
-          userText:user,
-          assistantText:assistant
+          deviceId:localStorage.getItem('sexta_device_id') || 'voice-v9', userText:user, assistantText:assistant
         })
       });
     } catch {}
@@ -470,12 +395,10 @@ import { StreamingSincResampler } from './audio-resampler.js';
     const args = call?.args && typeof call.args === 'object' ? call.args : {};
     const deviceId = localStorage.getItem('sexta_device_id') || (IS_ANDROID ? 'android-native' : 'voice-v9');
     if (!name) return { ok:false, handled:true, state:'failed', error:'TOOL_NAME_MISSING' };
-
     const plugin = window.Capacitor?.Plugins?.LiveToolBridge || null;
     if (IS_ANDROID && name.startsWith('android_') && plugin?.execute) {
       const planned = await api('/api/tool-execute', {
-        method:'POST',
-        body:JSON.stringify({ name, args, deviceId, preferLocalAndroid:true, origin:ORIGIN })
+        method:'POST', body:JSON.stringify({ name, args, deviceId, preferLocalAndroid:true, origin:ORIGIN })
       });
       if (planned?.clientAction?.action) {
         const result = await plugin.execute({ action:planned.clientAction.action, payload:planned.clientAction.payload || {} });
@@ -483,10 +406,8 @@ import { StreamingSincResampler } from './audio-resampler.js';
       }
       return planned;
     }
-
     return api('/api/tool-execute', {
-      method:'POST',
-      body:JSON.stringify({ name, args, deviceId, preferLocalAndroid:false, origin:ORIGIN })
+      method:'POST', body:JSON.stringify({ name, args, deviceId, preferLocalAndroid:false, origin:ORIGIN })
     });
   }
 
@@ -500,24 +421,16 @@ import { StreamingSincResampler } from './audio-resampler.js';
     if (!calls.length || !sessionActive) return;
     pendingToolCalls += calls.length;
     transition('tool');
-
     const responses = await Promise.all(calls.map(async call => {
       try {
         const result = await executeLiveTool(call);
         return { id:call.id, name:call.name, response:result ?? { ok:true, state:'completed' } };
       } catch (error) {
-        return {
-          id:call.id,
-          name:call.name,
-          response:{ ok:false, handled:true, state:'failed', error:String(error?.message || error || 'TOOL_FAILED').slice(0,700) }
-        };
-      } finally {
-        pendingToolCalls = Math.max(0, pendingToolCalls - 1);
-      }
+        return { id:call.id, name:call.name, response:{ ok:false, handled:true, state:'failed', error:String(error?.message || error || 'TOOL_FAILED').slice(0,700) } };
+      } finally { pendingToolCalls = Math.max(0, pendingToolCalls - 1); }
     }));
-
     sendToolResponses(responses);
-    if (!speechStreamOpen && serverTurnComplete && pendingToolCalls === 0) void settleCompletedTurn();
+    if (serverTurnComplete && pendingToolCalls === 0) void settleCompletedTurn();
   }
 
   function markModelActivity() {
@@ -534,31 +447,16 @@ import { StreamingSincResampler } from './audio-resampler.js';
     try { message = JSON.parse(raw); } catch { return; }
 
     if (message.setupComplete) {
-      setupComplete = true;
-      reconnectAttempts = 0;
-      reconnectRequested = false;
-      if (handshakeTimer) clearTimeout(handshakeTimer);
-      handshakeTimer = null;
+      setupComplete = true; reconnectAttempts = 0; reconnectRequested = false;
+      if (handshakeTimer) clearTimeout(handshakeTimer); handshakeTimer = null;
       try { await startMicrophone(); }
-      catch (error) {
-        console.error('[SEXTA v9] microfone:', error);
-        transition('error', { label:'Não consegui abrir o microfone.' });
-      }
+      catch (error) { console.error('[SEXTA v9.2] microfone:', error); transition('error', { label:'Não consegui abrir o microfone.' }); }
       return;
     }
 
     if (message.sessionResumptionUpdate) return;
-
-    if (message.goAway) {
-      reconnectRequested = true;
-      try { socket.close(1000, 'goaway'); } catch {}
-      return;
-    }
-
-    if (message.toolCall) {
-      markModelActivity();
-      void handleToolCall(message.toolCall);
-    }
+    if (message.goAway) { reconnectRequested = true; try { socket.close(1000, 'goaway'); } catch {} return; }
+    if (message.toolCall) { markModelActivity(); void handleToolCall(message.toolCall); }
 
     const content = message.serverContent;
     if (!content) return;
@@ -567,8 +465,7 @@ import { StreamingSincResampler } from './audio-resampler.js';
       const text = String(content.interimInputTranscription.text || '').trim();
       if (text) {
         if (!turn.firstInterimAt) turn.firstInterimAt = performance.now();
-        turn.interimInput = text;
-        emitTranscript();
+        turn.interimInput = text; emitTranscript();
       }
     }
 
@@ -576,136 +473,93 @@ import { StreamingSincResampler } from './audio-resampler.js';
       const text = String(content.inputTranscription.text || '').trim();
       if (text) {
         if (!turn.firstFinalAt) turn.firstFinalAt = performance.now();
-        turn.finalInput = mergeTranscript(turn.finalInput, text);
-        turn.interimInput = '';
-        emitTranscript();
-        if (isVoiceOffCommand(turn.finalInput)) {
-          stopVoice();
-          return;
-        }
+        turn.finalInput = mergeTranscript(turn.finalInput, text); turn.interimInput = ''; emitTranscript();
+        if (isVoiceOffCommand(turn.finalInput)) { stopVoice(); return; }
+        if (!assistantSpeaking && pendingToolCalls === 0) transition('thinking');
       }
     }
 
     if (content.waitingForInput) {
       assistantSpeaking = false;
-      if (!speechStreamOpen && pendingToolCalls === 0) transition('listening');
+      if (pendingToolCalls === 0) transition(localSpeechActive ? 'user_speaking' : 'listening');
     }
 
     if (content.interrupted) {
       stopOutput(false);
-      transition(speechStreamOpen ? 'user_speaking' : 'listening');
+      transition(localSpeechActive ? 'user_speaking' : 'listening');
     }
 
     if (content.outputTranscription?.text) {
-      markModelActivity();
-      turn.outputText = mergeTranscript(turn.outputText, content.outputTranscription.text);
+      markModelActivity(); turn.outputText = mergeTranscript(turn.outputText, content.outputTranscription.text);
     }
 
     for (const part of content.modelTurn?.parts || []) {
       if (!part?.inlineData?.data || !sessionActive) continue;
       markModelActivity();
       if (!turn.firstAudioAt) turn.firstAudioAt = performance.now();
-      assistantSpeaking = true;
-      transition('speaking');
+      assistantSpeaking = true; transition('speaking');
       await scheduleOutput(part.inlineData.data, part.inlineData.mimeType || 'audio/pcm;rate=24000');
     }
 
-    if (content.turnComplete && !speechStreamOpen) {
-      serverTurnComplete = true;
-      void settleCompletedTurn();
-    }
+    if (content.turnComplete) { serverTurnComplete = true; void settleCompletedTurn(); }
   }
 
   function scheduleReconnect(reason = 'reconnect') {
     if (!sessionActive || reconnectTimer) return;
-    setupComplete = false;
-    transition('recovering');
+    setupComplete = false; transition('recovering');
     const delay = reconnectRequested ? 150 : Math.min(4000, 400 * (2 ** Math.min(reconnectAttempts, 4)));
     reconnectAttempts += 1;
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null;
-      cachedInstruction = '';
-      void connectLive(reason);
-    }, delay);
+    reconnectTimer = setTimeout(() => { reconnectTimer = null; cachedInstruction = ''; void connectLive(reason); }, delay);
   }
 
   async function connectLive(reason = 'initial') {
     if (!sessionActive || connectingSocket || (websocket?.readyState === WebSocket.OPEN && setupComplete)) return;
     transition(reason === 'initial' ? 'connecting' : 'recovering');
-
     try {
       if (!cachedInstruction) cachedInstruction = await buildSystemInstruction();
       if (!sessionActive) return;
-
       const session = await api('/api/live-token', {
-        method:'POST',
-        body:JSON.stringify({
-          systemInstruction:cachedInstruction,
-          origin:ORIGIN,
-          resumptionHandle:'',
-          clientVersion:'v9',
-          liveGeneration:'3.1',
-          vadMode:'hybrid'
+        method:'POST', body:JSON.stringify({
+          systemInstruction:cachedInstruction, origin:ORIGIN, resumptionHandle:'',
+          clientVersion:'v9', liveGeneration:'3.1', vadMode:'automatic'
         })
       });
       if (!session?.token) throw new Error('token Live vazio');
       if (session.liveGeneration !== '3.1') throw new Error('Gemini 3.1 Live não foi ativado');
       currentSession = session;
-
       const socket = new WebSocket(`${WS_BASE}?access_token=${encodeURIComponent(session.token)}`);
       connectingSocket = socket;
-
       socket.onopen = () => {
-        if (!sessionActive) {
-          try { socket.close(1000, 'off'); } catch {}
-          return;
-        }
-        websocket = socket;
-        connectingSocket = null;
-        socket.send(JSON.stringify({
-          setup:{
-            model:`models/${session.model}`,
-            generationConfig:{
-              responseModalities:['AUDIO'],
-              thinkingConfig:session.thinkingConfig || { thinkingLevel:'minimal' },
-              speechConfig:{ voiceConfig:{ prebuiltVoiceConfig:{ voiceName:session.voice } } }
-            },
-            realtimeInputConfig:session.realtimeInputConfig,
-            tools:session.tools || [],
-            inputAudioTranscription:session.inputAudioTranscription || {},
-            outputAudioTranscription:session.outputAudioTranscription || {},
-            contextWindowCompression:session.contextWindowCompression || { slidingWindow:{} },
-            sessionResumption:{}
-          }
-        }));
-
+        if (!sessionActive) { try { socket.close(1000, 'off'); } catch {} return; }
+        websocket = socket; connectingSocket = null;
+        socket.send(JSON.stringify({ setup:{
+          model:`models/${session.model}`,
+          generationConfig:{
+            responseModalities:['AUDIO'], thinkingConfig:session.thinkingConfig || { thinkingLevel:'minimal' },
+            speechConfig:{ voiceConfig:{ prebuiltVoiceConfig:{ voiceName:session.voice } } }
+          },
+          realtimeInputConfig:session.realtimeInputConfig, tools:session.tools || [],
+          inputAudioTranscription:session.inputAudioTranscription || {}, outputAudioTranscription:session.outputAudioTranscription || {},
+          contextWindowCompression:session.contextWindowCompression || { slidingWindow:{} }, sessionResumption:{}
+        }}));
         if (handshakeTimer) clearTimeout(handshakeTimer);
         handshakeTimer = setTimeout(() => {
-          if (sessionActive && socket === websocket && !setupComplete) {
-            try { socket.close(4000, 'handshake-timeout'); } catch {}
-          }
+          if (sessionActive && socket === websocket && !setupComplete) { try { socket.close(4000, 'handshake-timeout'); } catch {} }
         }, 10000);
       };
-
       socket.onmessage = event => { void handleServerMessage(event, socket); };
-      socket.onerror = event => console.warn('[SEXTA v9] websocket:', event);
+      socket.onerror = event => console.warn('[SEXTA v9.2] websocket:', event);
       socket.onclose = event => {
         if (connectingSocket === socket) connectingSocket = null;
         if (websocket === socket) websocket = null;
         setupComplete = false;
-        if (handshakeTimer) clearTimeout(handshakeTimer);
-        handshakeTimer = null;
-        stopOutput();
-        speechStreamOpen = false;
-        speechEvidenceMs = 0;
-        lastVoicedAt = 0;
-        preRollFrames = [];
+        if (handshakeTimer) clearTimeout(handshakeTimer); handshakeTimer = null;
+        stopOutput(); localSpeechActive = false; speechEvidenceMs = 0; lastVoicedAt = 0;
         if (!sessionActive) return;
         scheduleReconnect(reconnectRequested ? 'goaway' : 'socket-close');
       };
     } catch (error) {
-      connectingSocket = null;
-      console.error('[SEXTA v9] conexão:', error);
+      connectingSocket = null; console.error('[SEXTA v9.2] conexão:', error);
       if (sessionActive) scheduleReconnect('connect-error');
     }
   }
@@ -713,48 +567,24 @@ import { StreamingSincResampler } from './audio-resampler.js';
   function cleanup(closeSocket = true) {
     if (reconnectTimer) clearTimeout(reconnectTimer);
     if (handshakeTimer) clearTimeout(handshakeTimer);
-    reconnectTimer = handshakeTimer = null;
-    setupComplete = false;
-    pendingToolCalls = 0;
-    reconnectAttempts = 0;
-    reconnectRequested = false;
-    cachedInstruction = '';
-    currentSession = null;
-    settlementGeneration += 1;
-    stopMicrophone();
-    stopOutput();
+    reconnectTimer = handshakeTimer = null; setupComplete = false; pendingToolCalls = 0;
+    reconnectAttempts = 0; reconnectRequested = false; cachedInstruction = ''; currentSession = null;
+    settlementGeneration += 1; stopMicrophone(); stopOutput();
     if (closeSocket) {
       try { connectingSocket?.close(1000, 'voice-off'); } catch {}
       try { websocket?.close(1000, 'voice-off'); } catch {}
     }
-    connectingSocket = websocket = null;
-    turn = freshTurn();
-    emitTranscript();
+    connectingSocket = websocket = null; turn = freshTurn(); emitTranscript();
   }
 
   async function startVoice() {
     if (sessionActive) return;
-    if (!AudioContextCtor || !window.AudioWorkletNode) {
-      transition('error', { label:'Este navegador não suporta áudio em tempo real.' });
-      return;
-    }
-    sessionActive = true;
-    turn = freshTurn();
-    transition('connecting');
-    await connectLive('initial');
+    if (!AudioContextCtor || !window.AudioWorkletNode) { transition('error', { label:'Este navegador não suporta áudio em tempo real.' }); return; }
+    sessionActive = true; turn = freshTurn(); transition('connecting'); await connectLive('initial');
   }
 
-  function stopVoice() {
-    if (!sessionActive) return;
-    sessionActive = false;
-    cleanup(true);
-    transition('off');
-  }
-
-  function toggleVoice() {
-    if (sessionActive) stopVoice();
-    else void startVoice();
-  }
+  function stopVoice() { if (!sessionActive) return; sessionActive = false; cleanup(true); transition('off'); }
+  function toggleVoice() { if (sessionActive) stopVoice(); else void startVoice(); }
 
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && sessionActive) {
@@ -768,29 +598,14 @@ import { StreamingSincResampler } from './audio-resampler.js';
   transition('off');
 
   window.__sextaGeminiLive = {
-    start:startVoice,
-    stop:stopVoice,
-    toggle:toggleVoice,
-    active:() => sessionActive,
+    start:startVoice, stop:stopVoice, toggle:toggleVoice, active:() => sessionActive,
     debug:() => ({
-      version:'voice-core-v9.1',
-      model:currentSession?.model || null,
-      liveGeneration:currentSession?.liveGeneration || null,
-      platform:ORIGIN,
-      vadMode:'hybrid-adaptive',
-      state,
-      sessionActive,
-      setupComplete,
-      captureEnabled,
-      speechStreamOpen,
-      assistantSpeaking,
-      pendingToolCalls,
-      interimTranscript:turn.interimInput,
-      finalTranscript:turn.finalInput,
-      outputTranscript:turn.outputText,
-      noiseFloor,
-      threshold:speechThreshold(),
-      endSilenceTargetMs:currentEndSilenceMs(),
+      version:'voice-core-v9.2', model:currentSession?.model || null,
+      liveGeneration:currentSession?.liveGeneration || null, platform:ORIGIN,
+      vadMode:'automatic-server', state, sessionActive, setupComplete, captureEnabled,
+      localSpeechActive, assistantSpeaking, pendingToolCalls,
+      interimTranscript:turn.interimInput, finalTranscript:turn.finalInput,
+      outputTranscript:turn.outputText, noiseFloor, threshold:speechThreshold(),
       inputSampleRate:inputContext?.sampleRate || null
     })
   };
