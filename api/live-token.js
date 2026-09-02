@@ -1,9 +1,9 @@
 import { isOwner, parseJson, send } from '../lib/core.mjs';
 import { LIVE_TOOL_DECLARATIONS } from '../lib/tool-bus.mjs';
 
-const LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-2.5-flash-native-audio-preview-12-2025';
+const LEGACY_LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-2.5-flash-native-audio-preview-12-2025';
+const MODERN_LIVE_MODEL = process.env.GEMINI_LIVE_MODEL_31 || 'gemini-3.1-flash-live-preview';
 const LIVE_VOICE = process.env.GEMINI_LIVE_VOICE || 'Sulafat';
-const SUPPORTS_25_LIVE_FEATURES = /gemini-2\.5/i.test(LIVE_MODEL);
 
 const NON_BLOCKING_LIVE_TOOLS = new Set([
   'android_open_app',
@@ -26,12 +26,20 @@ export default async function handler(req, res) {
   if (!key) return send(res, 503, { error: 'gemini_live_not_configured' });
 
   const body = await parseJson(req).catch(() => ({}));
+  const clientVersion = String(body.clientVersion || '').toLowerCase();
+  const useModernLive = clientVersion === 'v9' || String(body.liveGeneration || '') === '3.1';
+  const LIVE_MODEL = useModernLive ? MODERN_LIVE_MODEL : LEGACY_LIVE_MODEL;
+  const IS_GEMINI_31_LIVE = /gemini-3\.1-flash-live/i.test(LIVE_MODEL);
+  const SUPPORTS_25_NON_BLOCKING = /gemini-2\.5/i.test(LIVE_MODEL);
+
   const baseInstruction = String(
     body.systemInstruction ||
     'Você é SEXTA-feira, uma assistente pessoal de voz. Fale em português brasileiro de forma natural, curta e conversacional.'
   ).slice(0, 9000);
   const resumptionHandle = String(body.resumptionHandle || '').trim().slice(0, 4096);
-  const manualVad = String(body.vadMode || '').toLowerCase() === 'manual';
+  const requestedVad = String(body.vadMode || '').toLowerCase();
+  const manualVad = requestedVad === 'manual';
+  const hybridVad = requestedVad === 'hybrid';
 
   const origin = String(body.origin || '').toLowerCase();
   const deviceRule = origin === 'android'
@@ -42,40 +50,38 @@ export default async function handler(req, res) {
 
   const liveRule = [
     'CONVERSA LIVE: enquanto a sessão estiver ativa, o usuário não precisa repetir “Sexta-feira” antes de cada fala. Trate a interação como conversa contínua.',
-    'RESPOSTA DIRETA: quando o usuário disser “Sexta-feira”, chamar você diretamente ou fizer uma pergunta dirigida a você, responda. Não trate isso como fala ambiente irrelevante. Se ele disser apenas seu nome, uma confirmação curta como “tô aqui” é suficiente.',
-    'ESCUTA: respeite pausas e hesitações, mas não fique esperando indefinidamente depois que uma frase claramente terminou. Perguntas completas devem receber resposta imediatamente.',
+    'RESPOSTA DIRETA: quando o usuário disser “Sexta-feira”, chamar você diretamente ou fizer uma pergunta dirigida a você, responda. Se ele disser apenas seu nome, uma confirmação curta como “tô aqui” é suficiente.',
+    'ESCUTA: respeite pausas e hesitações, mas responda assim que o turno realmente terminar.',
     'INTERRUPÇÃO: se o usuário falar durante sua resposta, ceda a vez imediatamente e acompanhe a nova fala.',
-    'PRESENÇA: comentários, piadas, desabafos e observações podem receber reações naturais. Ignore somente fala ambiente que seja claramente de outra pessoa ou não dirigida a você.',
+    'PRESENÇA: comentários, piadas, desabafos e observações podem receber reações naturais. Ignore somente fala ambiente claramente alheia à conversa.',
     'RITMO: prefira respostas curtas e deixe espaço para o usuário entrar. Não termine toda fala com pergunta nem use bordões fixos.',
-    'FERRAMENTAS: ações rápidas podem acontecer sem narração e, quando forem não bloqueantes, não precisam parar a conversa.'
+    'FERRAMENTAS: quando houver ferramenta adequada, use-a. Não diga que uma ação terminou antes da confirmação real.'
   ].join('\n');
 
-  const systemInstruction = `${baseInstruction}\n\n${liveRule}\n\nCAPACIDADES REAIS: as ferramentas disponibilizadas nesta sessão são capacidades reais da SEXTA em Android, Google Workspace, WhatsApp, PC, Codex e memória. Quando uma ferramenta puder cumprir o pedido, use-a em vez de explicar manualmente. Nunca afirme que uma ação foi concluída antes da resposta real da ferramenta.\n\n${deviceRule}\n\nCODEX: pc_codex_task inicia tarefas no agente Windows e pode ser chamado mesmo a partir do Android. Use mode=analyze para diagnóstico e mode=edit somente quando o usuário pedir alteração. Não diga que terminou antes de pc_codex_status confirmar completed.\n\nREGRA DE VOZ: mantenha uma única identidade vocal feminina consistente durante toda a sessão.`.slice(0, 14000);
+  const systemInstruction = `${baseInstruction}\n\n${liveRule}\n\nCAPACIDADES REAIS: as ferramentas disponibilizadas nesta sessão são capacidades reais da SEXTA em Android, Google Workspace, WhatsApp, PC, Codex e memória.\n\n${deviceRule}\n\nCODEX: pc_codex_task inicia tarefas no agente Windows e pode ser chamado mesmo a partir do Android. Use mode=analyze para diagnóstico e mode=edit somente quando o usuário pedir alteração. Não diga que terminou antes de pc_codex_status confirmar completed.\n\nREGRA DE VOZ: mantenha uma única identidade vocal feminina consistente durante toda a sessão.`.slice(0, 14000);
 
   const now = Date.now();
   const expireTime = new Date(now + 15 * 60 * 1000).toISOString();
   const newSessionExpireTime = new Date(now + 60 * 1000).toISOString();
 
-  const realtimeInputConfig = manualVad
-    ? {
-        automaticActivityDetection: { disabled: true },
-        activityHandling: 'START_OF_ACTIVITY_INTERRUPTS',
-        turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY'
-      }
+  const automaticActivityDetection = manualVad
+    ? { disabled: true }
     : {
-        automaticActivityDetection: {
-          disabled: false,
-          startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
-          endOfSpeechSensitivity: 'END_SENSITIVITY_HIGH',
-          prefixPaddingMs: 40,
-          silenceDurationMs: 500
-        },
-        activityHandling: 'START_OF_ACTIVITY_INTERRUPTS',
-        turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY'
+        disabled: false,
+        startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
+        endOfSpeechSensitivity: 'END_SENSITIVITY_HIGH',
+        prefixPaddingMs: 80,
+        silenceDurationMs: hybridVad ? 800 : 600
       };
 
+  const realtimeInputConfig = {
+    automaticActivityDetection,
+    activityHandling: 'START_OF_ACTIVITY_INTERRUPTS',
+    turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY'
+  };
+
   const functionDeclarations = LIVE_TOOL_DECLARATIONS.map(declaration => (
-    SUPPORTS_25_LIVE_FEATURES && NON_BLOCKING_LIVE_TOOLS.has(declaration.name)
+    SUPPORTS_25_NON_BLOCKING && NON_BLOCKING_LIVE_TOOLS.has(declaration.name)
       ? { ...declaration, behavior: 'NON_BLOCKING' }
       : declaration
   ));
@@ -89,12 +95,13 @@ export default async function handler(req, res) {
   const outputAudioTranscription = { languageCodes: ['pt-BR'], mode: 'VERBATIM' };
   const contextWindowCompression = { slidingWindow: {} };
   const sessionResumption = resumptionHandle ? { handle: resumptionHandle } : {};
+  const thinkingConfig = IS_GEMINI_31_LIVE ? { thinkingLevel: 'minimal' } : { thinkingBudget: 0 };
 
   const setup = {
     model: `models/${LIVE_MODEL}`,
     generationConfig: {
       responseModalities: ['AUDIO'],
-      thinkingConfig: { thinkingBudget: 0 },
+      thinkingConfig,
       speechConfig: {
         voiceConfig: { prebuiltVoiceConfig: { voiceName: LIVE_VOICE } }
       }
@@ -138,17 +145,19 @@ export default async function handler(req, res) {
       newSessionExpireTime,
       setupLocked: true,
       actionRouter: 'gemini-live-tool-calling',
-      vadMode: manualVad ? 'manual' : 'automatic',
+      clientVersion: clientVersion || 'legacy',
+      liveGeneration: IS_GEMINI_31_LIVE ? '3.1' : '2.5',
+      vadMode: manualVad ? 'manual' : hybridVad ? 'hybrid' : 'automatic',
       activityHandling: realtimeInputConfig.activityHandling,
       realtimeInputConfig,
       inputAudioTranscription,
       outputAudioTranscription,
       contextWindowCompression,
       sessionResumption,
+      thinkingConfig,
       enableAffectiveDialog: false,
       proactivity: null,
-      supportsNonBlocking: SUPPORTS_25_LIVE_FEATURES,
-      thinkingBudget: 0,
+      supportsNonBlocking: SUPPORTS_25_NON_BLOCKING,
       tools
     });
   } catch (error) {
