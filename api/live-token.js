@@ -60,8 +60,8 @@ export default async function handler(req, res) {
       disabled: false,
       startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
       endOfSpeechSensitivity: 'END_SENSITIVITY_HIGH',
-      prefixPaddingMs: 100,
-      silenceDurationMs: 600
+      prefixPaddingMs: 40,
+      silenceDurationMs: 500
     },
     activityHandling: 'START_OF_ACTIVITY_INTERRUPTS',
     turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY'
@@ -74,19 +74,17 @@ export default async function handler(req, res) {
   ));
   const tools = [{ functionDeclarations }];
 
+  // VERBATIM is deliberately used on the live path: the UI can normalize names,
+  // while the recognizer stays as close as possible to the low-latency raw speech.
   const inputAudioTranscription = {
     languageCodes: ['pt-BR'],
-    mode: 'SMART',
-    customVocabulary: ['Sexta-feira', 'Sexta feira', 'Sexta', 'Lucas', 'Codex', 'Envista']
+    mode: 'VERBATIM',
+    customVocabulary: ['Sexta-feira', 'Codex', 'Envista', 'Lucas']
   };
-  const outputAudioTranscription = { languageCodes: ['pt-BR'], mode: 'SMART' };
+  const outputAudioTranscription = { languageCodes: ['pt-BR'], mode: 'VERBATIM' };
   const contextWindowCompression = { slidingWindow: {} };
   const sessionResumption = resumptionHandle ? { handle: resumptionHandle } : {};
 
-  // O endpoint de tokens efêmeros atualmente rejeita enableAffectiveDialog e
-  // proactivity dentro do BidiGenerateContentSetup travado, embora esses recursos
-  // existam no setup da Live API. Mantemos o setup compatível para não derrubar a
-  // sessão inteira; eles serão reativados depois via configuração parcial/unlocked.
   const setup = {
     model: `models/${LIVE_MODEL}`,
     generationConfig: {
