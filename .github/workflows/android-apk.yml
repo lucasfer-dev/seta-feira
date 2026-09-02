@@ -2,11 +2,19 @@ name: Build SEXTA Android APK
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/android-capacitor/**'
+      - 'public/**'
+      - 'api/live-metrics.js'
+      - '.github/workflows/android-apk.yml'
   push:
     branches: [main]
     paths:
       - 'apps/android-capacitor/**'
       - 'public/**'
+      - 'api/live-metrics.js'
       - '.github/workflows/android-apk.yml'
 
 jobs:

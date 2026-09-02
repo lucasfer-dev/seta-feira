@@ -21,7 +21,7 @@ export default async function handler(req, res) {
     platform: shortString(body.platform || 'unknown', 24),
     turnId: shortString(body.turnId, 80),
 
-    // Legacy measurements from live-voice-v3.
+    // Legacy measurements from live-voice-v3/v4.
     speechEndToFirstAudioMs: boundedNumber(body.speechEndToFirstAudioMs),
     speechStartToFirstAudioMs: boundedNumber(body.speechStartToFirstAudioMs),
     firstServerEventMs: boundedNumber(body.firstServerEventMs),
@@ -43,11 +43,24 @@ export default async function handler(req, res) {
     toolResponseMs: boundedNumber(body.toolResponseMs),
     endToTurnCompleteMs: boundedNumber(body.endToTurnCompleteMs),
     toolCalls: boundedNumber(body.toolCalls, 100),
-    audioChunks: boundedNumber(body.audioChunks, 10000)
+    audioChunks: boundedNumber(body.audioChunks, 10000),
+
+    // Native Android full-duplex telemetry.
+    nativeFullDuplex: Boolean(body.nativeFullDuplex),
+    audioSource: shortString(body.audioSource, 40),
+    aecAvailable: Boolean(body.aecAvailable),
+    aecEnabled: Boolean(body.aecEnabled),
+    noiseSuppressorAvailable: Boolean(body.noiseSuppressorAvailable),
+    noiseSuppressorEnabled: Boolean(body.noiseSuppressorEnabled),
+    agcAvailable: Boolean(body.agcAvailable),
+    agcEnabled: Boolean(body.agcEnabled),
+    interruptToSilenceMs: boundedNumber(body.interruptToSilenceMs, 10000),
+    bargeInRms: boundedNumber(body.bargeInRms, 32768)
   };
 
   const mainLatency = metrics.endToPlaybackDueMs ?? metrics.endToFirstAudioMs ?? metrics.speechEndToFirstAudioMs;
-  const level = Number.isFinite(mainLatency) && mainLatency > 3000 ? 'warn' : 'info';
+  const interruptionSlow = metrics.phase === 'interrupted' && Number.isFinite(metrics.interruptToSilenceMs) && metrics.interruptToSilenceMs > 800;
+  const level = interruptionSlow || (Number.isFinite(mainLatency) && mainLatency > 3000) ? 'warn' : 'info';
   console[level]('[SEXTA Live Metrics]', JSON.stringify(metrics));
   return send(res, 200, { ok: true });
 }

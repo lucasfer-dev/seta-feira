@@ -19,9 +19,13 @@ import android.media.AudioRecord;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
 import android.media.ToneGenerator;
+import android.media.audiofx.AcousticEchoCanceler;
+import android.media.audiofx.AutomaticGainControl;
+import android.media.audiofx.NoiseSuppressor;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.util.Base64;
 
 import androidx.annotation.Nullable;
@@ -93,6 +97,19 @@ public class SextaForegroundService extends Service implements RecognitionListen
     private String outputTranscript = "";
     private String pendingWakeCommand = "";
     private PowerManager.WakeLock wakeLock;
+
+    private AcousticEchoCanceler echoCanceler;
+    private NoiseSuppressor noiseSuppressor;
+    private AutomaticGainControl automaticGainControl;
+    private volatile boolean usingVoiceCommunication = false;
+    private volatile boolean aecEnabled = false;
+    private volatile boolean noiseSuppressorEnabled = false;
+    private volatile boolean agcEnabled = false;
+    private volatile long bargeInCandidateAtMs = 0L;
+    private volatile double bargeInCandidateRms = 0.0;
+    private volatile double duplexNoiseFloor = 500.0;
+    private int previousAudioMode = AudioManager.MODE_NORMAL;
+    private boolean communicationModeApplied = false;
 
     private final BroadcastReceiver conversationReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
@@ -415,8 +432,14 @@ public class SextaForegroundService extends Service implements RecognitionListen
             if (outTrans != null) outputTranscript = mergeTranscript(outputTranscript, outTrans.optString("text", ""));
 
             if (content.optBoolean("interrupted", false)) {
+                long interruptionLatencyMs = bargeInCandidateAtMs > 0L
+                        ? Math.max(0L, SystemClock.elapsedRealtime() - bargeInCandidateAtMs)
+                        : -1L;
                 assistantSpeaking.set(false);
                 if (audioTrack != null) { try { audioTrack.pause(); audioTrack.flush(); audioTrack.play(); } catch (Exception ignored) {} }
+                reportDuplexMetric("interrupted", interruptionLatencyMs);
+                bargeInCandidateAtMs = 0L;
+                bargeInCandidateRms = 0.0;
             }
 
             JSONObject modelTurn = content.optJSONObject("modelTurn");
@@ -431,6 +454,8 @@ public class SextaForegroundService extends Service implements RecognitionListen
             }
             if (content.optBoolean("turnComplete", false)) {
                 assistantSpeaking.set(false);
+                bargeInCandidateAtMs = 0L;
+                bargeInCandidateRms = 0.0;
                 String user = inputTranscript;
                 String assistant = outputTranscript;
                 inputTranscript = "";
@@ -456,10 +481,159 @@ public class SextaForegroundService extends Service implements RecognitionListen
                 || v.matches(".*(desativar|desative|desliga|desligue|desligar) (a )?voz.*");
     }
 
+    private AudioRecord createLiveAudioRecord(int bufferSize) {
+        AudioRecord preferred = null;
+        try {
+            preferred = new AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, INPUT_RATE,
+                    AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferSize);
+            if (preferred.getState() == AudioRecord.STATE_INITIALIZED) {
+                usingVoiceCommunication = true;
+                return preferred;
+            }
+        } catch (Exception ignored) {}
+        if (preferred != null) { try { preferred.release(); } catch (Exception ignored) {} }
+
+        usingVoiceCommunication = false;
+        return new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, INPUT_RATE,
+                AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, bufferSize);
+    }
+
+    private void enableCommunicationMode() {
+        try {
+            AudioManager manager = (AudioManager) getSystemService(AUDIO_SERVICE);
+            if (manager == null) return;
+            previousAudioMode = manager.getMode();
+            if (previousAudioMode != AudioManager.MODE_IN_COMMUNICATION) {
+                manager.setMode(AudioManager.MODE_IN_COMMUNICATION);
+                communicationModeApplied = true;
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void restoreCommunicationMode() {
+        if (!communicationModeApplied) return;
+        try {
+            AudioManager manager = (AudioManager) getSystemService(AUDIO_SERVICE);
+            if (manager != null) manager.setMode(previousAudioMode);
+        } catch (Exception ignored) {}
+        communicationModeApplied = false;
+    }
+
+    private void enableCommunicationEffects() {
+        releaseCommunicationEffects();
+        if (audioRecord == null) return;
+        int sessionId = audioRecord.getAudioSessionId();
+        try {
+            if (AcousticEchoCanceler.isAvailable()) {
+                echoCanceler = AcousticEchoCanceler.create(sessionId);
+                if (echoCanceler != null) {
+                    echoCanceler.setEnabled(true);
+                    aecEnabled = echoCanceler.getEnabled();
+                }
+            }
+        } catch (Exception ignored) { aecEnabled = false; }
+        try {
+            if (NoiseSuppressor.isAvailable()) {
+                noiseSuppressor = NoiseSuppressor.create(sessionId);
+                if (noiseSuppressor != null) {
+                    noiseSuppressor.setEnabled(true);
+                    noiseSuppressorEnabled = noiseSuppressor.getEnabled();
+                }
+            }
+        } catch (Exception ignored) { noiseSuppressorEnabled = false; }
+        try {
+            if (AutomaticGainControl.isAvailable()) {
+                automaticGainControl = AutomaticGainControl.create(sessionId);
+                if (automaticGainControl != null) {
+                    automaticGainControl.setEnabled(true);
+                    agcEnabled = automaticGainControl.getEnabled();
+                }
+            }
+        } catch (Exception ignored) { agcEnabled = false; }
+    }
+
+    private void releaseCommunicationEffects() {
+        if (echoCanceler != null) { try { echoCanceler.release(); } catch (Exception ignored) {} echoCanceler = null; }
+        if (noiseSuppressor != null) { try { noiseSuppressor.release(); } catch (Exception ignored) {} noiseSuppressor = null; }
+        if (automaticGainControl != null) { try { automaticGainControl.release(); } catch (Exception ignored) {} automaticGainControl = null; }
+        aecEnabled = false;
+        noiseSuppressorEnabled = false;
+        agcEnabled = false;
+    }
+
+    private double pcmRms(byte[] buffer, int read) {
+        int sampleCount = read / 2;
+        if (sampleCount <= 0) return 0.0;
+        double sumSquares = 0.0;
+        for (int i = 0; i + 1 < read; i += 2) {
+            int lo = buffer[i] & 0xff;
+            int hi = buffer[i + 1];
+            short sample = (short) ((hi << 8) | lo);
+            double value = sample;
+            sumSquares += value * value;
+        }
+        return Math.sqrt(sumSquares / sampleCount);
+    }
+
+    private void trackDuplexActivity(byte[] buffer, int read) {
+        double level = pcmRms(buffer, read);
+        if (!assistantSpeaking.get()) {
+            if (level < 5000.0) duplexNoiseFloor = duplexNoiseFloor * 0.985 + level * 0.015;
+            bargeInCandidateAtMs = 0L;
+            bargeInCandidateRms = 0.0;
+            return;
+        }
+
+        double threshold = Math.max(1100.0, duplexNoiseFloor * 3.0);
+        if (level >= threshold) {
+            if (bargeInCandidateAtMs == 0L) bargeInCandidateAtMs = SystemClock.elapsedRealtime();
+            bargeInCandidateRms = Math.max(bargeInCandidateRms, level);
+        }
+    }
+
+    private void reportDuplexMetric(String phase, long interruptLatencyMs) {
+        String token = ownerToken();
+        if (token.isEmpty()) return;
+        final boolean aecAvailable = AcousticEchoCanceler.isAvailable();
+        final boolean nsAvailable = NoiseSuppressor.isAvailable();
+        final boolean agcAvailable = AutomaticGainControl.isAvailable();
+        io.execute(() -> {
+            try {
+                JSONObject body = new JSONObject()
+                        .put("kind", "android_full_duplex_v1")
+                        .put("phase", phase)
+                        .put("platform", "android-native")
+                        .put("nativeFullDuplex", true)
+                        .put("audioSource", usingVoiceCommunication ? "VOICE_COMMUNICATION" : "VOICE_RECOGNITION")
+                        .put("aecAvailable", aecAvailable)
+                        .put("aecEnabled", aecEnabled)
+                        .put("noiseSuppressorAvailable", nsAvailable)
+                        .put("noiseSuppressorEnabled", noiseSuppressorEnabled)
+                        .put("agcAvailable", agcAvailable)
+                        .put("agcEnabled", agcEnabled)
+                        .put("bargeInRms", Math.round(bargeInCandidateRms));
+                if (interruptLatencyMs >= 0L) body.put("interruptToSilenceMs", interruptLatencyMs);
+                Request req = authorized(BASE_URL + "/api/live-metrics")
+                        .post(RequestBody.create(body.toString(), MediaType.parse("application/json; charset=utf-8"))).build();
+                try (Response ignored = http.newCall(req).execute()) {}
+            } catch (Exception ignored) {}
+        });
+    }
+
     private void startLiveAudio() {
         if (audioRunning.getAndSet(true)) return;
+        enableCommunicationMode();
         int minIn = AudioRecord.getMinBufferSize(INPUT_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
-        audioRecord = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, INPUT_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(minIn * 2, 4096));
+        int inputBufferSize = Math.max(minIn * 2, 4096);
+        audioRecord = createLiveAudioRecord(inputBufferSize);
+        if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
+            audioRunning.set(false);
+            restoreCommunicationMode();
+            finishNativeConversation(false);
+            return;
+        }
+        enableCommunicationEffects();
+
         int minOut = AudioTrack.getMinBufferSize(OUTPUT_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT);
         audioTrack = new AudioTrack.Builder()
                 .setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
@@ -468,11 +642,14 @@ public class SextaForegroundService extends Service implements RecognitionListen
                 .setTransferMode(AudioTrack.MODE_STREAM).build();
         audioTrack.play();
         audioRecord.startRecording();
+        reportDuplexMetric("audio_started", -1L);
+
         captureThread = new Thread(() -> {
             byte[] buffer = new byte[3200];
             while (audioRunning.get() && nativeConversationActive) {
                 int read = audioRecord.read(buffer, 0, buffer.length);
-                if (read <= 0 || assistantSpeaking.get() || !liveReady.get() || liveSocket == null) continue;
+                if (read <= 0 || !liveReady.get() || liveSocket == null) continue;
+                trackDuplexActivity(buffer, read);
                 try {
                     String b64 = Base64.encodeToString(buffer, 0, read, Base64.NO_WRAP);
                     JSONObject audio = new JSONObject().put("realtimeInput", new JSONObject().put("audio", new JSONObject().put("data", b64).put("mimeType", "audio/pcm;rate=" + INPUT_RATE)));
@@ -485,7 +662,10 @@ public class SextaForegroundService extends Service implements RecognitionListen
 
     private synchronized void playPcm(byte[] pcm) {
         if (audioTrack == null || pcm == null || pcm.length == 0) return;
-        assistantSpeaking.set(true);
+        if (!assistantSpeaking.getAndSet(true)) {
+            bargeInCandidateAtMs = 0L;
+            bargeInCandidateRms = 0.0;
+        }
         updateNotification("SEXTA ativa • falando...");
         audioTrack.write(pcm, 0, pcm.length, AudioTrack.WRITE_BLOCKING);
     }
@@ -509,6 +689,9 @@ public class SextaForegroundService extends Service implements RecognitionListen
     private synchronized void stopLiveAudio() {
         audioRunning.set(false);
         liveReady.set(false);
+        bargeInCandidateAtMs = 0L;
+        bargeInCandidateRms = 0.0;
+        releaseCommunicationEffects();
         if (audioRecord != null) {
             try { audioRecord.stop(); } catch (Exception ignored) {}
             try { audioRecord.release(); } catch (Exception ignored) {}
@@ -519,6 +702,7 @@ public class SextaForegroundService extends Service implements RecognitionListen
             try { audioTrack.release(); } catch (Exception ignored) {}
             audioTrack = null;
         }
+        restoreCommunicationMode();
         assistantSpeaking.set(false);
     }
 

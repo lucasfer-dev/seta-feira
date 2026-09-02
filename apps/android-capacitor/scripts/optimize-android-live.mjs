@@ -47,11 +47,14 @@ service = service.replace('            try { Thread.sleep(260L); } catch (Interr
 // 2,5 s estava curto para comandos naturais como “abre o WhatsApp pra mim”.
 service = service.replace('                try { Thread.sleep(4300L); } catch (InterruptedException ignored) {}', '                try { Thread.sleep(3500L); } catch (InterruptedException ignored) {}');
 
-// Atualiza o contexto depois de cada turno sem bloquear a conversa atual.
-service = service.replace(
-  '                try (Response ignored = http.newCall(req).execute()) {}',
-  '                try (Response ignored = http.newCall(req).execute()) {}\n                refreshSystemInstructionAsync(true);'
-);
+// Atualiza o contexto somente depois de persistir um turno. O replace antigo
+// acertava o primeiro `Response ignored` do arquivo; com telemetria de áudio,
+// isso podia disparar refresh após /api/live-metrics em vez de /api/live-turn.
+const persistRequest = `                Request req = authorized(BASE_URL + "/api/live-turn")\n                        .post(RequestBody.create(body.toString(), MediaType.parse("application/json; charset=utf-8"))).build();\n                try (Response ignored = http.newCall(req).execute()) {}`;
+const persistRequestWithRefresh = `${persistRequest}\n                refreshSystemInstructionAsync(true);`;
+if (service.includes(persistRequest) && !service.includes(persistRequestWithRefresh)) {
+  service = service.replace(persistRequest, persistRequestWithRefresh);
+}
 
 fs.writeFileSync(servicePath, service);
 console.log('SEXTA Android Live otimizado: contexto em cache + PCM 100 ms + wake 200 ms + captura local 3,5 s.');
