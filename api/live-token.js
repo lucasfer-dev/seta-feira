@@ -70,8 +70,8 @@ export default async function handler(req, res) {
         disabled: false,
         startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
         endOfSpeechSensitivity: 'END_SENSITIVITY_HIGH',
-        prefixPaddingMs: 80,
-        silenceDurationMs: hybridVad ? 800 : 600
+        prefixPaddingMs: hybridVad ? 40 : 80,
+        silenceDurationMs: hybridVad ? 450 : 600
       };
 
   const realtimeInputConfig = {
