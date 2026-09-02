@@ -13,12 +13,14 @@ import { StreamingSincResampler } from './audio-resampler.js';
   const ORIGIN = IS_ANDROID ? 'android' : IS_DESKTOP ? 'desktop' : 'browser';
   const WS_BASE = 'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained';
 
-  const OUTPUT_PREBUFFER = IS_ANDROID ? 0.09 : 0.045;
+  const OUTPUT_PREBUFFER = IS_ANDROID ? 0.09 : 0.028;
   const PRE_ROLL_MS = 220;
-  const START_CONFIRM_MS = 70;
-  const END_SILENCE_MS = 520;
-  const OUTPUT_SETTLE_MS = 90;
-  const OUTPUT_DRAIN_POLL_MS = 35;
+  const START_CONFIRM_MS = 60;
+  const END_SILENCE_FAST_MS = 360;
+  const END_SILENCE_MEDIUM_MS = 430;
+  const END_SILENCE_DEFAULT_MS = 520;
+  const OUTPUT_SETTLE_MS = 80;
+  const OUTPUT_DRAIN_POLL_MS = 30;
 
   let sessionActive = false;
   let setupComplete = false;
@@ -149,6 +151,19 @@ import { StreamingSincResampler } from './audio-resampler.js';
     return Math.max(base, echoGuard, noiseFloor * (assistantSpeaking ? 4.0 : 2.7));
   }
 
+  function currentEndSilenceMs() {
+    const raw = String(turn.finalInput || turn.interimInput || '').trim();
+    if (!raw) return END_SILENCE_DEFAULT_MS;
+    const normalized = normalizeSpeech(raw);
+    const words = normalized.split(' ').filter(Boolean);
+    const clearPunctuation = /[?!\.]\s*$/.test(raw);
+    const directIntent = /^(?:sexta(?: feira)?\s+)?(?:quem|como|qual|quais|onde|quando|quanto|quantos|por que|porque|abre|abra|fecha|feche|mostra|mostre|liga|desliga|aumenta|diminui|manda|envia|procura|pesquisa|lembra|fala|me fala|faz|faca)\b/.test(normalized);
+    const hangingWord = /\b(?:e|mas|que|porque|tipo|entao|ai|de|do|da|para|pra|com|se)\s*$/.test(normalized);
+    if (clearPunctuation || (directIntent && words.length >= 2)) return END_SILENCE_FAST_MS;
+    if (words.length >= 4 && !hangingWord) return END_SILENCE_MEDIUM_MS;
+    return END_SILENCE_DEFAULT_MS;
+  }
+
   function sendRealtime(payload) {
     if (websocket?.readyState === WebSocket.OPEN && setupComplete && sessionActive) {
       websocket.send(JSON.stringify({ realtimeInput:payload }));
@@ -232,7 +247,7 @@ import { StreamingSincResampler } from './audio-resampler.js';
 
   function endSpeech(now) {
     if (!speechStreamOpen) return;
-    // Official Hybrid VAD flush: this ends the current audio stream/turn, not the Live session.
+    const endSilenceMs = currentEndSilenceMs();
     sendRealtime({ audioStreamEnd:true });
     speechStreamOpen = false;
     speechEvidenceMs = 0;
@@ -240,7 +255,7 @@ import { StreamingSincResampler } from './audio-resampler.js';
     turn.streamEndAt = now;
     preRollFrames = [];
     transition('thinking');
-    reportMetric('stream_end');
+    reportMetric('stream_end', { clientEndSilenceConfiguredMs:endSilenceMs });
   }
 
   function processMicFrame(raw) {
@@ -272,7 +287,8 @@ import { StreamingSincResampler } from './audio-resampler.js';
 
     sendAudioFrame(frame);
     if (voiced) lastVoicedAt = now;
-    if (lastVoicedAt && now - lastVoicedAt >= END_SILENCE_MS) endSpeech(now);
+    const targetSilence = currentEndSilenceMs();
+    if (lastVoicedAt && now - lastVoicedAt >= targetSilence) endSpeech(now);
   }
 
   async function ensureOutputContext() {
@@ -531,7 +547,6 @@ import { StreamingSincResampler } from './audio-resampler.js';
       return;
     }
 
-    // V9 deliberately ignores resumption handles until the basic conversation loop is stable.
     if (message.sessionResumptionUpdate) return;
 
     if (message.goAway) {
@@ -586,7 +601,6 @@ import { StreamingSincResampler } from './audio-resampler.js';
       turn.outputText = mergeTranscript(turn.outputText, content.outputTranscription.text);
     }
 
-    // Gemini 3.1 may bundle several content parts in one server event; process every part.
     for (const part of content.modelTurn?.parts || []) {
       if (!part?.inlineData?.data || !sessionActive) continue;
       markModelActivity();
@@ -759,11 +773,11 @@ import { StreamingSincResampler } from './audio-resampler.js';
     toggle:toggleVoice,
     active:() => sessionActive,
     debug:() => ({
-      version:'voice-core-v9',
+      version:'voice-core-v9.1',
       model:currentSession?.model || null,
       liveGeneration:currentSession?.liveGeneration || null,
       platform:ORIGIN,
-      vadMode:'hybrid',
+      vadMode:'hybrid-adaptive',
       state,
       sessionActive,
       setupComplete,
@@ -776,6 +790,7 @@ import { StreamingSincResampler } from './audio-resampler.js';
       outputTranscript:turn.outputText,
       noiseFloor,
       threshold:speechThreshold(),
+      endSilenceTargetMs:currentEndSilenceMs(),
       inputSampleRate:inputContext?.sampleRate || null
     })
   };
