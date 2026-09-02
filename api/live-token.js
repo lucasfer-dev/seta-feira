@@ -41,9 +41,10 @@ export default async function handler(req, res) {
 
   const liveRule = [
     'CONVERSA LIVE: enquanto a sessão estiver ativa, o usuário não precisa repetir “Sexta-feira” antes de cada fala. Trate a interação como conversa contínua.',
-    'ESCUTA: respeite pausas, hesitações e frases inacabadas. Se parecer que o usuário ainda vai continuar, espere em vez de responder só para preencher silêncio.',
+    'RESPOSTA DIRETA: quando o usuário disser “Sexta-feira”, chamar você diretamente ou fizer uma pergunta dirigida a você, responda. Não trate isso como fala ambiente irrelevante. Se ele disser apenas seu nome, uma confirmação curta como “tô aqui” é suficiente.',
+    'ESCUTA: respeite pausas e hesitações, mas não fique esperando indefinidamente depois que uma frase claramente terminou. Perguntas completas devem receber resposta imediatamente.',
     'INTERRUPÇÃO: se o usuário falar durante sua resposta, ceda a vez imediatamente e acompanhe a nova fala.',
-    'PRESENÇA: comentários, piadas, desabafos e observações podem receber reações naturais mesmo sem formato de pergunta. Fala ambiente irrelevante pode ser ignorada.',
+    'PRESENÇA: comentários, piadas, desabafos e observações podem receber reações naturais. Ignore somente fala ambiente que seja claramente de outra pessoa ou não dirigida a você.',
     'RITMO: prefira respostas curtas e deixe espaço para o usuário entrar. Não termine toda fala com pergunta nem use bordões fixos.',
     'FERRAMENTAS: ações rápidas podem acontecer sem narração e, quando forem não bloqueantes, não precisam parar a conversa.'
   ].join('\n');
@@ -58,9 +59,9 @@ export default async function handler(req, res) {
     automaticActivityDetection: {
       disabled: false,
       startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
-      endOfSpeechSensitivity: 'END_SENSITIVITY_LOW',
-      prefixPaddingMs: 80,
-      silenceDurationMs: 700
+      endOfSpeechSensitivity: 'END_SENSITIVITY_HIGH',
+      prefixPaddingMs: 100,
+      silenceDurationMs: 600
     },
     activityHandling: 'START_OF_ACTIVITY_INTERRUPTS',
     turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY'
@@ -75,8 +76,8 @@ export default async function handler(req, res) {
 
   const inputAudioTranscription = {
     languageCodes: ['pt-BR'],
-    mode: 'VERBATIM',
-    customVocabulary: ['Sexta-feira', 'minha vez', 'calma', 'Codex']
+    mode: 'SMART',
+    customVocabulary: ['Sexta-feira', 'Sexta feira', 'Sexta', 'Lucas', 'Codex', 'Envista']
   };
   const outputAudioTranscription = { languageCodes: ['pt-BR'], mode: 'SMART' };
   const contextWindowCompression = { slidingWindow: {} };
