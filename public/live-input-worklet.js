@@ -1,8 +1,10 @@
 class SextaMicProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.frameSamples = Math.max(256, Math.round(sampleRate * 0.02));
-    this.buffer = new Float32Array(this.frameSamples * 3);
+    // ~64 ms: after resampling to 16 kHz this is ~1024 samples, reducing
+    // cross-thread/WebSocket overhead without making speech feel buffered.
+    this.frameSamples = Math.max(512, Math.round(sampleRate * 0.064));
+    this.buffer = new Float32Array(this.frameSamples * 2);
     this.write = 0;
   }
 
