@@ -23,27 +23,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Check Voice Core v9
-        run: node --check public/voice-core-v9.js
-      - name: Check Voice Core v8 fallback
-        run: node --check public/voice-core-v8.js
+      - name: Check Voice Core v10
+        run: node --check public/voice-core-v10.js
       - name: Check voice loader
         run: node --check public/voice-loader.js
       - name: Check live token endpoint
         run: node --check api/live-token.js
-      - name: Assert Gemini 3.1 automatic VAD mode
+      - name: Assert deterministic Voice Core v10 contract
         run: |
           grep -q "gemini-3.1-flash-live-preview" api/live-token.js
-          grep -q "clientVersion:'v9'" public/voice-core-v9.js
-          grep -q "vadMode:'automatic'" public/voice-core-v9.js
-          if grep -q "audioStreamEnd:true" public/voice-core-v9.js; then
-            echo "v9.2 must not send audioStreamEnd"
-            exit 1
-          fi
+          grep -q "clientVersion:'v10'" public/voice-core-v10.js
+          grep -q "vadMode:'manual'" public/voice-core-v10.js
+          grep -q "activityStart:{}" public/voice-core-v10.js
+          grep -q "activityEnd:{}" public/voice-core-v10.js
+          ! grep -Eq "voice-core-v[5-9]\\.js" public/voice-loader.js
       - name: Check audio resampler
         run: node --check public/audio-resampler.js
-      - name: Test audio resampler quality
-        run: node tests/audio-resampler.test.mjs
+      - name: Test voice contracts and audio quality
+        run: node --test tests/*.test.mjs
       - name: Check SEXTA shell v2
         run: node --check public/sexta-shell-v2.js
       - name: Check audio worklet

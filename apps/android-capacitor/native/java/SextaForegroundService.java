@@ -27,6 +27,7 @@ import android.os.IBinder;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.util.Base64;
+import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
@@ -45,8 +46,8 @@ import org.vosk.android.StorageService;
 import java.io.IOException;
 import java.text.Normalizer;
 import java.util.Locale;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -70,12 +71,18 @@ public class SextaForegroundService extends Service implements RecognitionListen
     private static final String WS_BASE = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained";
     private static final int INPUT_RATE = 16000;
     private static final int OUTPUT_RATE = 24000;
+    private static final String TAG = "SEXTA-Live";
+    private static final long HANDSHAKE_TIMEOUT_MS = 12000L;
+    private static final long RESPONSE_TIMEOUT_MS = 10000L;
 
-    private final ExecutorService io = Executors.newCachedThreadPool();
+    private final ScheduledExecutorService io = Executors.newScheduledThreadPool(4);
     private final OkHttpClient http = new OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
+            .build();
+    private final OkHttpClient toolHttp = http.newBuilder()
+            .callTimeout(12, TimeUnit.SECONDS)
             .build();
 
     private Model wakeModel;
@@ -87,6 +94,10 @@ public class SextaForegroundService extends Service implements RecognitionListen
     private volatile boolean wakeSeen = false;
 
     private WebSocket liveSocket;
+    private volatile boolean liveConnecting = false;
+    private volatile boolean reconnectScheduled = false;
+    private volatile int reconnectAttempts = 0;
+    private volatile long awaitingResponseSinceMs = 0L;
     private final AtomicBoolean liveReady = new AtomicBoolean(false);
     private final AtomicBoolean audioRunning = new AtomicBoolean(false);
     private final AtomicBoolean assistantSpeaking = new AtomicBoolean(false);
@@ -131,6 +142,7 @@ public class SextaForegroundService extends Service implements RecognitionListen
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SEXTA:BackgroundAssistant");
         wakeLock.setReferenceCounted(false);
         LibVosk.setLogLevel(LogLevel.WARNINGS);
+        io.scheduleAtFixedRate(this::runLiveWatchdog, 1, 1, TimeUnit.SECONDS);
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -349,16 +361,53 @@ public class SextaForegroundService extends Service implements RecognitionListen
         return instruction.toString();
     }
 
+    private synchronized void scheduleNativeReconnect(String reason) {
+        if (!nativeConversationActive || reconnectScheduled) return;
+        reconnectScheduled = true;
+        liveReady.set(false);
+        awaitingResponseSinceMs = 0L;
+        stopLiveAudio();
+        WebSocket previous = liveSocket;
+        liveSocket = null;
+        if (previous != null) try { previous.cancel(); } catch (Exception error) { Log.w(TAG, "socket cancel", error); }
+        long delay = Math.min(4000L, 350L * (1L << Math.min(reconnectAttempts, 4)));
+        reconnectAttempts += 1;
+        Log.w(TAG, "reconnecting in " + delay + "ms: " + reason);
+        updateNotification("SEXTA ativa • recuperando conexão...");
+        io.schedule(() -> {
+            synchronized (SextaForegroundService.this) { reconnectScheduled = false; }
+            connectNativeLive();
+        }, delay, TimeUnit.MILLISECONDS);
+    }
+
+    private void runLiveWatchdog() {
+        if (!nativeConversationActive || !liveReady.get()) return;
+        long waitingSince = awaitingResponseSinceMs;
+        if (waitingSince > 0L && SystemClock.elapsedRealtime() - waitingSince >= RESPONSE_TIMEOUT_MS) {
+            scheduleNativeReconnect("response-timeout");
+        }
+    }
+
     private void connectNativeLive() {
+        synchronized (this) {
+            if (!nativeConversationActive || liveConnecting || liveReady.get()) return;
+            liveConnecting = true;
+        }
         String token = ownerToken();
         if (token.isEmpty()) {
+            liveConnecting = false;
             nativeConversationActive = false;
             updateNotification("Abra o app e faça login para usar o Live");
             startWakeListening();
             return;
         }
         try {
-            JSONObject body = new JSONObject().put("systemInstruction", buildSystemInstruction());
+            JSONObject body = new JSONObject()
+                    .put("systemInstruction", buildSystemInstruction())
+                    .put("origin", "android")
+                    .put("clientVersion", "v9")
+                    .put("liveGeneration", "3.1")
+                    .put("vadMode", "automatic");
             Request req = authorized(BASE_URL + "/api/live-token")
                     .post(RequestBody.create(body.toString(), MediaType.parse("application/json; charset=utf-8"))).build();
             String ephemeral;
@@ -375,26 +424,104 @@ public class SextaForegroundService extends Service implements RecognitionListen
             liveSocket = http.newWebSocket(wsRequest, new WebSocketListener() {
                 @Override public void onOpen(WebSocket webSocket, Response response) {
                     try {
+                        liveConnecting = false;
                         JSONObject setup = new JSONObject().put("setup", new JSONObject()
                                 .put("model", "models/" + liveModel)
                                 .put("generationConfig", new JSONObject().put("responseModalities", new JSONArray().put("AUDIO"))));
                         webSocket.send(setup.toString());
-                    } catch (Exception error) { finishNativeConversation(false); }
+                        io.schedule(() -> {
+                            if (nativeConversationActive && webSocket == liveSocket && !liveReady.get()) {
+                                scheduleNativeReconnect("handshake-timeout");
+                            }
+                        }, HANDSHAKE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                    } catch (Exception error) {
+                        Log.e(TAG, "setup failed", error);
+                        scheduleNativeReconnect("setup-failed");
+                    }
                 }
 
-                @Override public void onMessage(WebSocket webSocket, String text) { handleLiveMessage(text); }
+                @Override public void onMessage(WebSocket webSocket, String text) {
+                    if (webSocket == liveSocket) handleLiveMessage(text);
+                }
 
                 @Override public void onFailure(WebSocket webSocket, Throwable t, @Nullable Response response) {
-                    finishNativeConversation(false);
+                    if (webSocket != liveSocket) return;
+                    Log.e(TAG, "websocket failure", t);
+                    liveConnecting = false;
+                    scheduleNativeReconnect("socket-failure");
                 }
 
                 @Override public void onClosed(WebSocket webSocket, int code, String reason) {
-                    if (nativeConversationActive) finishNativeConversation(false);
+                    if (webSocket != liveSocket) return;
+                    liveConnecting = false;
+                    if (nativeConversationActive) scheduleNativeReconnect("socket-closed-" + code);
                 }
             });
         } catch (Exception error) {
-            finishNativeConversation(false);
+            liveConnecting = false;
+            Log.e(TAG, "connect failed", error);
+            scheduleNativeReconnect("connect-failed");
         }
+    }
+
+    private JSONObject executeNativeLiveTool(String name, JSONObject args) throws Exception {
+        JSONObject body = new JSONObject()
+                .put("name", name)
+                .put("args", args == null ? new JSONObject() : args)
+                .put("deviceId", deviceId())
+                .put("preferLocalAndroid", true)
+                .put("origin", "android");
+        Request req = authorized(BASE_URL + "/api/tool-execute")
+                .post(RequestBody.create(body.toString(), MediaType.parse("application/json; charset=utf-8"))).build();
+        JSONObject planned;
+        try (Response res = toolHttp.newCall(req).execute()) {
+            if (!res.isSuccessful() || res.body() == null) throw new IOException("tool-execute " + res.code());
+            planned = new JSONObject(res.body().string());
+        }
+        JSONObject clientAction = planned.optJSONObject("clientAction");
+        if (clientAction == null || clientAction.optString("action", "").isEmpty()) return planned;
+        JSONObject result = AndroidActionExecutor.execute(
+                getApplicationContext(),
+                clientAction.optString("action"),
+                clientAction.optJSONObject("payload") == null ? new JSONObject() : clientAction.optJSONObject("payload")
+        );
+        return new JSONObject()
+                .put("ok", true)
+                .put("handled", true)
+                .put("tool", name)
+                .put("scope", "android-local")
+                .put("state", "completed")
+                .put("result", result);
+    }
+
+    private void handleNativeToolCall(JSONObject toolCall, WebSocket socket) {
+        JSONArray calls = toolCall == null ? null : toolCall.optJSONArray("functionCalls");
+        if (calls == null || calls.length() == 0 || socket == null) return;
+        awaitingResponseSinceMs = 0L;
+        io.execute(() -> {
+            JSONArray responses = new JSONArray();
+            for (int i = 0; i < calls.length(); i++) {
+                JSONObject call = calls.optJSONObject(i);
+                if (call == null) continue;
+                String id = call.optString("id", "");
+                String name = call.optString("name", "");
+                JSONObject result;
+                try {
+                    result = executeNativeLiveTool(name, call.optJSONObject("args"));
+                } catch (Exception error) {
+                    Log.e(TAG, "tool failed: " + name, error);
+                    result = new JSONObject()
+                            .put("ok", false)
+                            .put("handled", true)
+                            .put("state", "failed")
+                            .put("error", String.valueOf(error.getMessage()));
+                }
+                responses.put(new JSONObject().put("id", id).put("name", name).put("response", result));
+            }
+            if (!nativeConversationActive || socket != liveSocket || responses.length() == 0) return;
+            boolean sent = socket.send(new JSONObject().put("toolResponse", new JSONObject().put("functionResponses", responses)).toString());
+            if (!sent) scheduleNativeReconnect("tool-response-send-failed");
+        });
     }
 
     private synchronized void handleLiveMessage(String raw) {
@@ -402,6 +529,8 @@ public class SextaForegroundService extends Service implements RecognitionListen
             JSONObject message = new JSONObject(raw);
             if (message.has("setupComplete")) {
                 liveReady.set(true);
+                liveConnecting = false;
+                reconnectAttempts = 0;
                 updateNotification("SEXTA ativa • ouvindo...");
                 startLiveAudio();
                 ToneGenerator tone = new ToneGenerator(AudioManager.STREAM_MUSIC, 35);
@@ -417,11 +546,17 @@ public class SextaForegroundService extends Service implements RecognitionListen
                 }
                 return;
             }
+            JSONObject toolCall = message.optJSONObject("toolCall");
+            if (toolCall != null) {
+                handleNativeToolCall(toolCall, liveSocket);
+                return;
+            }
             JSONObject content = message.optJSONObject("serverContent");
             if (content == null) return;
             JSONObject inTrans = content.optJSONObject("inputTranscription");
             if (inTrans != null) {
                 inputTranscript = mergeTranscript(inputTranscript, inTrans.optString("text", ""));
+                if (!inputTranscript.isEmpty() && awaitingResponseSinceMs == 0L) awaitingResponseSinceMs = SystemClock.elapsedRealtime();
                 if (isVoiceOffCommand(inputTranscript)) {
                     persistTurn(inputTranscript, outputTranscript);
                     finishNativeConversation(true);
@@ -429,7 +564,10 @@ public class SextaForegroundService extends Service implements RecognitionListen
                 }
             }
             JSONObject outTrans = content.optJSONObject("outputTranscription");
-            if (outTrans != null) outputTranscript = mergeTranscript(outputTranscript, outTrans.optString("text", ""));
+            if (outTrans != null) {
+                outputTranscript = mergeTranscript(outputTranscript, outTrans.optString("text", ""));
+                awaitingResponseSinceMs = 0L;
+            }
 
             if (content.optBoolean("interrupted", false)) {
                 long interruptionLatencyMs = bargeInCandidateAtMs > 0L
@@ -449,11 +587,15 @@ public class SextaForegroundService extends Service implements RecognitionListen
                     JSONObject inline = parts.optJSONObject(i).optJSONObject("inlineData");
                     if (inline == null) continue;
                     String data = inline.optString("data", "");
-                    if (!data.isEmpty()) playPcm(Base64.decode(data, Base64.DEFAULT));
+                    if (!data.isEmpty()) {
+                        awaitingResponseSinceMs = 0L;
+                        playPcm(Base64.decode(data, Base64.DEFAULT));
+                    }
                 }
             }
             if (content.optBoolean("turnComplete", false)) {
                 assistantSpeaking.set(false);
+                awaitingResponseSinceMs = 0L;
                 bargeInCandidateAtMs = 0L;
                 bargeInCandidateRms = 0.0;
                 String user = inputTranscript;
@@ -463,7 +605,9 @@ public class SextaForegroundService extends Service implements RecognitionListen
                 persistTurn(user, assistant);
                 updateNotification("SEXTA ativa • ouvindo...");
             }
-        } catch (Exception ignored) {}
+        } catch (Exception error) {
+            Log.e(TAG, "invalid Live message", error);
+        }
     }
 
     private String mergeTranscript(String current, String incoming) {
@@ -653,8 +797,11 @@ public class SextaForegroundService extends Service implements RecognitionListen
                 try {
                     String b64 = Base64.encodeToString(buffer, 0, read, Base64.NO_WRAP);
                     JSONObject audio = new JSONObject().put("realtimeInput", new JSONObject().put("audio", new JSONObject().put("data", b64).put("mimeType", "audio/pcm;rate=" + INPUT_RATE)));
-                    liveSocket.send(audio.toString());
-                } catch (Exception ignored) {}
+                    if (!liveSocket.send(audio.toString())) scheduleNativeReconnect("audio-send-failed");
+                } catch (Exception error) {
+                    Log.e(TAG, "audio send failed", error);
+                    scheduleNativeReconnect("audio-send-exception");
+                }
             }
         }, "sexta-live-capture");
         captureThread.start();
@@ -667,7 +814,11 @@ public class SextaForegroundService extends Service implements RecognitionListen
             bargeInCandidateRms = 0.0;
         }
         updateNotification("SEXTA ativa • falando...");
-        audioTrack.write(pcm, 0, pcm.length, AudioTrack.WRITE_BLOCKING);
+        int written = audioTrack.write(pcm, 0, pcm.length, AudioTrack.WRITE_BLOCKING);
+        if (written < 0) {
+            Log.e(TAG, "AudioTrack write failed: " + written);
+            scheduleNativeReconnect("audio-output-failed");
+        }
     }
 
     private void persistTurn(String userText, String assistantText) {
@@ -709,6 +860,10 @@ public class SextaForegroundService extends Service implements RecognitionListen
     private synchronized void finishNativeConversation(boolean byVoice) {
         if (!nativeConversationActive && liveSocket == null) return;
         nativeConversationActive = false;
+        liveConnecting = false;
+        reconnectScheduled = false;
+        reconnectAttempts = 0;
+        awaitingResponseSinceMs = 0L;
         stopLiveAudio();
         if (liveSocket != null) {
             try { liveSocket.close(1000, byVoice ? "voice mode off" : "live ended"); } catch (Exception ignored) {}
@@ -724,6 +879,9 @@ public class SextaForegroundService extends Service implements RecognitionListen
     private synchronized void stopEverything() {
         stopWakeListening();
         nativeConversationActive = false;
+        liveConnecting = false;
+        reconnectScheduled = false;
+        awaitingResponseSinceMs = 0L;
         stopLiveAudio();
         if (liveSocket != null) { try { liveSocket.close(1000, "service stopped"); } catch (Exception ignored) {} liveSocket = null; }
         if (wakeModel != null) { try { wakeModel.close(); } catch (Exception ignored) {} wakeModel = null; }

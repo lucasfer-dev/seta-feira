@@ -126,65 +126,16 @@
   });
   hintObserver.observe(voiceHint, { childList: true, subtree: true, characterData: true });
 
-  // Watchdog baseado no estado real do Voice Core, não na legenda da interface.
-  // Uma fala humana real que termina arma um prazo; qualquer resposta/ação cancela.
-  let previousSpeech = false;
-  let speechStartedAt = 0;
-  let responseDeadline = 0;
-  let recovering = false;
-
-  async function recoverVoice() {
-    if (recovering) return;
-    const live = window.__sextaGeminiLive;
-    const state = live?.debug?.();
-    if (!live || !state?.sessionActive || !state?.setupComplete || state.assistantSpeaking || state.localVoiceActive || state.pendingToolCalls > 0) return;
-    recovering = true;
-    responseDeadline = 0;
-    voiceHint.textContent = 'SEXTA • recuperando voz...';
-    try {
-      live.stop?.();
-      await new Promise(resolve => setTimeout(resolve, 220));
-      await live.start?.();
-    } catch (error) {
-      console.warn('SEXTA voice watchdog:', error);
-    } finally {
-      recovering = false;
-    }
-  }
-
   window.setInterval(() => {
     const live = window.__sextaGeminiLive;
     const state = live?.debug?.();
     if (!state?.sessionActive) {
-      previousSpeech = false;
-      speechStartedAt = 0;
-      responseDeadline = 0;
       document.body.classList.remove('sexta-user-speaking');
       return;
     }
 
     const speaking = Boolean(state.localVoiceActive);
     document.body.classList.toggle('sexta-user-speaking', speaking);
-
-    if (speaking && !previousSpeech) {
-      speechStartedAt = performance.now();
-      responseDeadline = 0;
-    }
-
-    if (!speaking && previousSpeech) {
-      const duration = Math.max(0, performance.now() - speechStartedAt);
-      if (duration >= 240 && state.setupComplete) responseDeadline = Date.now() + 8000;
-    }
-
-    if (state.assistantSpeaking || state.pendingToolCalls > 0 || /falando|a[cç][aã]o em andamento|conectando|retomando|entrando na conversa|recuperando/i.test(String(voiceHint.textContent || ''))) {
-      responseDeadline = 0;
-    }
-
-    if (responseDeadline && Date.now() >= responseDeadline && !speaking && !state.assistantSpeaking && state.pendingToolCalls === 0) {
-      void recoverVoice();
-    }
-
-    previousSpeech = speaking;
   }, 180);
 
   if (wakeBtn) wakeBtn.setAttribute('aria-hidden', 'true');

@@ -259,6 +259,9 @@ service = service.replace(
         nativeConversationActive = true;
         inputTranscript = "";
         outputTranscript = "";
+        reconnectAttempts = 0;
+        reconnectScheduled = false;
+        awaitingResponseSinceMs = 0L;
         updateNotification("SEXTA ativa • conectando Gemini Live...");
         io.execute(this::connectNativeLive);
     }`

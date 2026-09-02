@@ -27,7 +27,7 @@ export default async function handler(req, res) {
 
   const body = await parseJson(req).catch(() => ({}));
   const clientVersion = String(body.clientVersion || '').toLowerCase();
-  const useModernLive = clientVersion === 'v9' || String(body.liveGeneration || '') === '3.1';
+  const useModernLive = ['v9', 'v10'].includes(clientVersion) || String(body.liveGeneration || '') === '3.1';
   const LIVE_MODEL = useModernLive ? MODERN_LIVE_MODEL : LEGACY_LIVE_MODEL;
   const IS_GEMINI_31_LIVE = /gemini-3\.1-flash-live/i.test(LIVE_MODEL);
   const SUPPORTS_25_NON_BLOCKING = /gemini-2\.5/i.test(LIVE_MODEL);

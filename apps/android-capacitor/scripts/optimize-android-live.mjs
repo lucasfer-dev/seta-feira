@@ -31,8 +31,11 @@ service = service.replace(
   '        instruction.append(baseSystemInstruction());'
 );
 
-const buildEnd = `        } catch (Exception ignored) {}\n        return instruction.toString();\n    }\n\n    private void connectNativeLive()`;
-const buildEndReplacement = `        } catch (Exception ignored) {}\n        return instruction.toString();\n    }\n\n    private void refreshSystemInstructionAsync(boolean force) {\n        if (!force && cachedSystemInstruction != null && !cachedSystemInstruction.isEmpty()\n                && System.currentTimeMillis() - cachedSystemInstructionAt < CONTEXT_CACHE_TTL_MS) return;\n        if (!contextRefreshRunning.compareAndSet(false, true)) return;\n        io.execute(() -> {\n            try {\n                String fresh = fetchSystemInstruction();\n                if (fresh != null && !fresh.isEmpty()) {\n                    cachedSystemInstruction = fresh;\n                    cachedSystemInstructionAt = System.currentTimeMillis();\n                }\n            } finally {\n                contextRefreshRunning.set(false);\n            }\n        });\n    }\n\n    private void connectNativeLive()`;
+const liveConnectionMarker = service.includes('    private synchronized void scheduleNativeReconnect(String reason)')
+  ? '    private synchronized void scheduleNativeReconnect(String reason)'
+  : '    private void connectNativeLive()';
+const buildEnd = `        } catch (Exception ignored) {}\n        return instruction.toString();\n    }\n\n${liveConnectionMarker}`;
+const buildEndReplacement = `        } catch (Exception ignored) {}\n        return instruction.toString();\n    }\n\n    private void refreshSystemInstructionAsync(boolean force) {\n        if (!force && cachedSystemInstruction != null && !cachedSystemInstruction.isEmpty()\n                && System.currentTimeMillis() - cachedSystemInstructionAt < CONTEXT_CACHE_TTL_MS) return;\n        if (!contextRefreshRunning.compareAndSet(false, true)) return;\n        io.execute(() -> {\n            try {\n                String fresh = fetchSystemInstruction();\n                if (fresh != null && !fresh.isEmpty()) {\n                    cachedSystemInstruction = fresh;\n                    cachedSystemInstructionAt = System.currentTimeMillis();\n                }\n            } finally {\n                contextRefreshRunning.set(false);\n            }\n        });\n    }\n\n${liveConnectionMarker}`;
 if (service.includes(buildEnd)) service = service.replace(buildEnd, buildEndReplacement);
 
 // Mantém ~100 ms de PCM a 16 kHz/16-bit mono. O Live API recomenda chunks
