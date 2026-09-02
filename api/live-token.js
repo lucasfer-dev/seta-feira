@@ -81,8 +81,11 @@ export default async function handler(req, res) {
   const outputAudioTranscription = { languageCodes: ['pt-BR'], mode: 'SMART' };
   const contextWindowCompression = { slidingWindow: {} };
   const sessionResumption = resumptionHandle ? { handle: resumptionHandle } : {};
-  const proactivity = SUPPORTS_25_LIVE_FEATURES ? { proactiveAudio: true } : null;
 
+  // O endpoint de tokens efêmeros atualmente rejeita enableAffectiveDialog e
+  // proactivity dentro do BidiGenerateContentSetup travado, embora esses recursos
+  // existam no setup da Live API. Mantemos o setup compatível para não derrubar a
+  // sessão inteira; eles serão reativados depois via configuração parcial/unlocked.
   const setup = {
     model: `models/${LIVE_MODEL}`,
     generationConfig: {
@@ -102,8 +105,7 @@ export default async function handler(req, res) {
     inputAudioTranscription,
     outputAudioTranscription,
     sessionResumption,
-    contextWindowCompression,
-    ...(SUPPORTS_25_LIVE_FEATURES ? { enableAffectiveDialog: true, proactivity } : {})
+    contextWindowCompression
   };
 
   try {
@@ -142,8 +144,8 @@ export default async function handler(req, res) {
       outputAudioTranscription,
       contextWindowCompression,
       sessionResumption,
-      enableAffectiveDialog: SUPPORTS_25_LIVE_FEATURES,
-      proactivity,
+      enableAffectiveDialog: false,
+      proactivity: null,
       supportsNonBlocking: SUPPORTS_25_LIVE_FEATURES,
       thinkingBudget: 0,
       tools
