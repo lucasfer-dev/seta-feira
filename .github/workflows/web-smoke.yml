@@ -31,11 +31,15 @@ jobs:
         run: node --check public/voice-loader.js
       - name: Check live token endpoint
         run: node --check api/live-token.js
-      - name: Assert Gemini 3.1 Live migration
+      - name: Assert Gemini 3.1 automatic VAD mode
         run: |
           grep -q "gemini-3.1-flash-live-preview" api/live-token.js
           grep -q "clientVersion:'v9'" public/voice-core-v9.js
-          grep -q "audioStreamEnd:true" public/voice-core-v9.js
+          grep -q "vadMode:'automatic'" public/voice-core-v9.js
+          if grep -q "audioStreamEnd:true" public/voice-core-v9.js; then
+            echo "v9.2 must not send audioStreamEnd"
+            exit 1
+          fi
       - name: Check audio resampler
         run: node --check public/audio-resampler.js
       - name: Test audio resampler quality
