@@ -31,6 +31,7 @@ export default async function handler(req, res) {
     'Você é SEXTA-feira, uma assistente pessoal de voz. Fale em português brasileiro de forma natural, curta e conversacional.'
   ).slice(0, 9000);
   const resumptionHandle = String(body.resumptionHandle || '').trim().slice(0, 4096);
+  const manualVad = String(body.vadMode || '').toLowerCase() === 'manual';
 
   const origin = String(body.origin || '').toLowerCase();
   const deviceRule = origin === 'android'
@@ -55,17 +56,23 @@ export default async function handler(req, res) {
   const expireTime = new Date(now + 15 * 60 * 1000).toISOString();
   const newSessionExpireTime = new Date(now + 60 * 1000).toISOString();
 
-  const realtimeInputConfig = {
-    automaticActivityDetection: {
-      disabled: false,
-      startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
-      endOfSpeechSensitivity: 'END_SENSITIVITY_HIGH',
-      prefixPaddingMs: 40,
-      silenceDurationMs: 500
-    },
-    activityHandling: 'START_OF_ACTIVITY_INTERRUPTS',
-    turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY'
-  };
+  const realtimeInputConfig = manualVad
+    ? {
+        automaticActivityDetection: { disabled: true },
+        activityHandling: 'START_OF_ACTIVITY_INTERRUPTS',
+        turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY'
+      }
+    : {
+        automaticActivityDetection: {
+          disabled: false,
+          startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
+          endOfSpeechSensitivity: 'END_SENSITIVITY_HIGH',
+          prefixPaddingMs: 40,
+          silenceDurationMs: 500
+        },
+        activityHandling: 'START_OF_ACTIVITY_INTERRUPTS',
+        turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY'
+      };
 
   const functionDeclarations = LIVE_TOOL_DECLARATIONS.map(declaration => (
     SUPPORTS_25_LIVE_FEATURES && NON_BLOCKING_LIVE_TOOLS.has(declaration.name)
@@ -74,12 +81,10 @@ export default async function handler(req, res) {
   ));
   const tools = [{ functionDeclarations }];
 
-  // VERBATIM is deliberately used on the live path: the UI can normalize names,
-  // while the recognizer stays as close as possible to the low-latency raw speech.
   const inputAudioTranscription = {
     languageCodes: ['pt-BR'],
     mode: 'VERBATIM',
-    customVocabulary: ['Sexta-feira', 'Codex', 'Envista', 'Lucas']
+    customVocabulary: ['Sexta-feira', 'Sexta feira', 'Sexta', 'Codex', 'Envista', 'Lucas']
   };
   const outputAudioTranscription = { languageCodes: ['pt-BR'], mode: 'VERBATIM' };
   const contextWindowCompression = { slidingWindow: {} };
@@ -91,11 +96,7 @@ export default async function handler(req, res) {
       responseModalities: ['AUDIO'],
       thinkingConfig: { thinkingBudget: 0 },
       speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: {
-            voiceName: LIVE_VOICE
-          }
-        }
+        voiceConfig: { prebuiltVoiceConfig: { voiceName: LIVE_VOICE } }
       }
     },
     systemInstruction: { parts: [{ text: systemInstruction }] },
@@ -137,6 +138,7 @@ export default async function handler(req, res) {
       newSessionExpireTime,
       setupLocked: true,
       actionRouter: 'gemini-live-tool-calling',
+      vadMode: manualVad ? 'manual' : 'automatic',
       activityHandling: realtimeInputConfig.activityHandling,
       realtimeInputConfig,
       inputAudioTranscription,
