@@ -23,12 +23,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Check Voice Core v7
+      - name: Check Voice Core v8
+        run: node --check public/voice-core-v8.js
+      - name: Check Voice Core v7 fallback
         run: node --check public/voice-core-v7.js
-      - name: Check Voice Core v6 fallback
-        run: node --check public/voice-core-v6.js
       - name: Check voice loader
         run: node --check public/voice-loader.js
+      - name: Check live token endpoint
+        run: node --check api/live-token.js
       - name: Check audio resampler
         run: node --check public/audio-resampler.js
       - name: Test audio resampler quality
