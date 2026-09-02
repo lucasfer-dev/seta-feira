@@ -1,4 +1,5 @@
 import { isOwner, parseJson, send } from '../lib/core.mjs';
+import { buildSpeechDirection } from '../public/sexta-personality.js';
 
 const TTS_MODEL = process.env.GEMINI_TTS_MODEL || 'gemini-3.1-flash-tts-preview';
 const TTS_VOICE = process.env.GEMINI_TTS_VOICE || 'Sulafat';
@@ -24,19 +25,19 @@ function pcmToWav(pcm, sampleRate = SAMPLE_RATE, channels = 1, bitsPerSample = 1
   return Buffer.concat([header, pcm]);
 }
 
-function buildPrompt(text) {
+function buildPrompt(text, personality = {}) {
   return [
     'Synthesize speech only. Do not read the directions aloud.',
-    'Audio profile: voz feminina brasileira, natural, calorosa, confiante e elegante; assistente pessoal conversando de perto, nunca locutora.',
+    `Audio profile: ${buildSpeechDirection(personality)}`,
     'Director notes: português do Brasil; ritmo conversacional; pausas naturais; entonação humana e sutil; dicção clara sem exagero; preserve exatamente o sentido do texto.',
     'TRANSCRIPT TO SPEAK:',
     text
   ].join('\n');
 }
 
-function geminiRequestBody(text) {
+function geminiRequestBody(text, personality = {}) {
   return {
-    contents: [{ parts: [{ text: buildPrompt(text) }] }],
+    contents: [{ parts: [{ text: buildPrompt(text, personality) }] }],
     generationConfig: {
       responseModalities: ['AUDIO'],
       speechConfig: {
@@ -54,14 +55,14 @@ function geminiKey() {
   return key;
 }
 
-async function generatePcm(text) {
+async function generatePcm(text, personality = {}) {
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(TTS_MODEL)}:generateContent`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'x-goog-api-key': geminiKey()
     },
-    body: JSON.stringify(geminiRequestBody(text))
+    body: JSON.stringify(geminiRequestBody(text, personality))
   });
 
   const data = await response.json().catch(() => ({}));
@@ -85,7 +86,7 @@ function extractSseData(eventText) {
     .join('\n');
 }
 
-async function streamPcm(text, req, res) {
+async function streamPcm(text, personality, req, res) {
   const upstreamController = new AbortController();
   const abort = () => upstreamController.abort();
   req.once?.('aborted', abort);
@@ -99,7 +100,7 @@ async function streamPcm(text, req, res) {
         'Content-Type': 'application/json',
         'x-goog-api-key': geminiKey()
       },
-      body: JSON.stringify(geminiRequestBody(text)),
+      body: JSON.stringify(geminiRequestBody(text, personality)),
       signal: upstreamController.signal
     }
   );
@@ -176,18 +177,19 @@ export default async function handler(req, res) {
 
   const body = await parseJson(req);
   const text = String(body.text || '').replace(/\s+/g, ' ').trim().slice(0, 3500);
+  const personality = body.personality && typeof body.personality === 'object' ? body.personality : {};
   if (!text) return send(res, 400, { error: 'text_required' });
 
   try {
-    if (body.stream === true) return await streamPcm(text, req, res);
+    if (body.stream === true) return await streamPcm(text, personality, req, res);
 
     let pcm;
     try {
-      pcm = await generatePcm(text);
+      pcm = await generatePcm(text, personality);
     } catch (firstError) {
       // Never retry a 429 immediately: that only burns another request in the same quota window.
       if (![500, 502, 503].includes(Number(firstError?.status))) throw firstError;
-      pcm = await generatePcm(text);
+      pcm = await generatePcm(text, personality);
     }
 
     const wav = pcmToWav(pcm);

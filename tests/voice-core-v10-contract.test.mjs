@@ -20,6 +20,7 @@ test('Voice Core v10 is the only loader target', () => {
 });
 
 test('health identifies the active voice architecture', () => {
-  assert.match(health, /3\.0\.0-voice-core-v10/);
+  assert.match(health, /3\.1\.0-voice-core-v10-personality-v2/);
   assert.match(health, /manual-local/);
+  assert.match(health, /2\.0\.0-canonical-operational/);
 });

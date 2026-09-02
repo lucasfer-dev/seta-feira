@@ -1,5 +1,6 @@
 import { isOwner, parseJson, send } from '../lib/core.mjs';
 import { LIVE_TOOL_DECLARATIONS } from '../lib/tool-bus.mjs';
+import { buildPersonalityContract } from '../public/sexta-personality.js';
 
 const LEGACY_LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-2.5-flash-native-audio-preview-12-2025';
 const MODERN_LIVE_MODEL = process.env.GEMINI_LIVE_MODEL_31 || 'gemini-3.1-flash-live-preview';
@@ -32,16 +33,19 @@ export default async function handler(req, res) {
   const IS_GEMINI_31_LIVE = /gemini-3\.1-flash-live/i.test(LIVE_MODEL);
   const SUPPORTS_25_NON_BLOCKING = /gemini-2\.5/i.test(LIVE_MODEL);
 
-  const baseInstruction = String(
-    body.systemInstruction ||
-    'Você é SEXTA-feira, uma assistente pessoal de voz. Fale em português brasileiro de forma natural, curta e conversacional.'
-  ).slice(0, 9000);
+  const suppliedInstruction = String(body.systemInstruction || '').slice(0, 9000);
   const resumptionHandle = String(body.resumptionHandle || '').trim().slice(0, 4096);
   const requestedVad = String(body.vadMode || '').toLowerCase();
   const manualVad = requestedVad === 'manual';
   const hybridVad = requestedVad === 'hybrid';
 
   const origin = String(body.origin || '').toLowerCase();
+  const canonicalPersonality = buildPersonalityContract(body.personality || {}, {
+    channel:'voice-live-server', platform:origin || 'browser'
+  });
+  const baseInstruction = suppliedInstruction.includes('IDENTIDADE CANONICA SEXTA')
+    ? suppliedInstruction
+    : `${canonicalPersonality}\n\n${suppliedInstruction}`.trim();
   const deviceRule = origin === 'android'
     ? 'DISPOSITIVO ATUAL: Android. Para ações no aparelho atual, prefira SEMPRE ferramentas android_. Só use pc_ se o usuário disser explicitamente PC, computador, Windows ou notebook. EXCEÇÃO: pc_codex_task e pc_codex_status podem ser usados no Android quando o usuário pedir Codex/programação; eles apenas delegam a tarefa ao agente Windows.'
     : origin === 'desktop'

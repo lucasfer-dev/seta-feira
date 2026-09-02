@@ -1,4 +1,5 @@
 import { StreamingSincResampler } from './audio-resampler.js';
+import { buildPersonalityContract, normalizePersonality } from './sexta-personality.js';
 
 (() => {
   const voiceBtn = document.querySelector('#voiceBtn');
@@ -15,7 +16,9 @@ import { StreamingSincResampler } from './audio-resampler.js';
 
   const OUTPUT_PREBUFFER = IS_ANDROID ? 0.09 : 0.028;
   const START_CONFIRM_MS = 72;
-  const LOCAL_SPEECH_RELEASE_MS = 560;
+  const SHORT_SPEECH_RELEASE_MS = 520;
+  const NORMAL_SPEECH_RELEASE_MS = 650;
+  const DICTATION_SPEECH_RELEASE_MS = 850;
   const PRE_ROLL_MS = 240;
   const RESPONSE_TIMEOUT_MS = 6500;
   const OUTPUT_SETTLE_MS = 80;
@@ -32,6 +35,7 @@ import { StreamingSincResampler } from './audio-resampler.js';
   let reconnectAttempts = 0;
   let reconnectRequested = false;
   let cachedInstruction = '';
+  let cachedPersonality = normalizePersonality({});
   let currentSession = null;
   let pendingToolCalls = 0;
 
@@ -144,6 +148,13 @@ import { StreamingSincResampler } from './audio-resampler.js';
     const base = IS_ANDROID ? 0.012 : 0.0065;
     const echoGuard = assistantSpeaking ? 0.018 : 0;
     return Math.max(base, echoGuard, noiseFloor * (assistantSpeaking ? 4.0 : 2.7));
+  }
+
+  function speechReleaseMs(now) {
+    const duration = Math.max(0, now - (turn.speechStartAt || now));
+    if (duration < 1200) return SHORT_SPEECH_RELEASE_MS;
+    if (duration < 3500) return NORMAL_SPEECH_RELEASE_MS;
+    return DICTATION_SPEECH_RELEASE_MS;
   }
 
   function sendRealtime(payload) {
@@ -280,7 +291,7 @@ import { StreamingSincResampler } from './audio-resampler.js';
       speechEvidenceMs = Math.max(0, speechEvidenceMs - frameMs * 0.6);
     }
 
-    if (localSpeechActive && lastVoicedAt && now - lastVoicedAt >= LOCAL_SPEECH_RELEASE_MS) endLocalSpeech();
+    if (localSpeechActive && lastVoicedAt && now - lastVoicedAt >= speechReleaseMs(now)) endLocalSpeech();
   }
 
   async function ensureOutputContext() {
@@ -405,6 +416,7 @@ import { StreamingSincResampler } from './audio-resampler.js';
     try { sync = await api(`/api/sync?conversationId=${encodeURIComponent(conversationId)}&fresh=1`); } catch {}
     emit('sexta:session-context', { loadedAt:Date.now(), messages:sync.messages?.length || 0, memories:sync.memories?.length || 0 });
     const settings = sync.settings || {};
+    cachedPersonality = normalizePersonality(settings);
     const memories = (sync.memories || []).slice(0, 10).map(item => `- ${item.content}`).join('\n');
     const recent = (sync.messages || []).slice(-12).map(item => `${item.role === 'assistant' ? 'SEXTA' : 'USUÁRIO'}: ${item.content}`).join('\n');
     const platformRule = IS_ANDROID
@@ -412,13 +424,12 @@ import { StreamingSincResampler } from './audio-resampler.js';
       : IS_DESKTOP ? 'DISPOSITIVO ATUAL: PC. Use pc_ para ações no computador.'
         : 'DISPOSITIVO ATUAL: navegador. Escolha o dispositivo pela capacidade e pelo pedido.';
     return [
-      'Você é SEXTA-feira, assistente pessoal de voz. Converse em português brasileiro natural, curta e diretamente.',
+      buildPersonalityContract(cachedPersonality, { channel:'voice-live', platform:ORIGIN }),
       'A sessão é contínua. Depois de iniciada, o usuário não precisa repetir “Sexta-feira”.',
       'Responda assim que um turno terminar e a intenção estiver clara.',
       'Se o usuário falar por cima de você, ceda a vez imediatamente.',
       'Não narre estados internos. Ferramentas rápidas podem acontecer silenciosamente.',
       'Nunca diga que uma ação terminou antes da ferramenta confirmar.', platformRule,
-      `Ajustes: humor ${settings.humor ?? 68}/100, sarcasmo ${settings.sarcasm ?? 42}/100, proatividade ${settings.proactivity ?? 55}/100, verbosidade ${settings.verbosity ?? 32}/100.`,
       memories ? `Memórias relevantes:\n${memories}` : '', recent ? `Contexto recente:\n${recent}` : ''
     ].filter(Boolean).join('\n\n');
   }
@@ -573,7 +584,7 @@ import { StreamingSincResampler } from './audio-resampler.js';
       if (!sessionActive) return;
       const session = await api('/api/live-token', {
         method:'POST', body:JSON.stringify({
-          systemInstruction:cachedInstruction, origin:ORIGIN, resumptionHandle:'',
+          systemInstruction:cachedInstruction, personality:cachedPersonality, origin:ORIGIN, resumptionHandle:'',
           clientVersion:'v10', liveGeneration:'3.1', vadMode:'manual'
         })
       });

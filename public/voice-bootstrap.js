@@ -84,11 +84,13 @@
     if (!(await waitForQuota(generation))) throw Object.assign(new Error('cancelled'), { cancelled: true });
     if (generation !== playbackGeneration) throw Object.assign(new Error('cancelled'), { cancelled: true });
 
+    let personality = {};
+    try { personality = JSON.parse(localStorage.getItem('sexta_personality') || '{}'); } catch {}
     controller = new AbortController();
     const response = await fetch('/api/tts', {
       method: 'POST',
       headers: authHeaders(),
-      body: JSON.stringify({ text, stream }),
+      body: JSON.stringify({ text, stream, personality }),
       signal: controller.signal
     });
 

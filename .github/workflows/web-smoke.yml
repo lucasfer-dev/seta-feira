@@ -6,12 +6,14 @@ on:
     paths:
       - 'public/**'
       - 'api/**'
+      - 'lib/**'
       - 'tests/**'
       - '.github/workflows/web-smoke.yml'
   pull_request:
     paths:
       - 'public/**'
       - 'api/**'
+      - 'lib/**'
       - 'tests/**'
       - '.github/workflows/web-smoke.yml'
 
@@ -25,6 +27,8 @@ jobs:
           node-version: 22
       - name: Check Voice Core v10
         run: node --check public/voice-core-v10.js
+      - name: Check canonical personality
+        run: node --check public/sexta-personality.js
       - name: Check voice loader
         run: node --check public/voice-loader.js
       - name: Check live token endpoint

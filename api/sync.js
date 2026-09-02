@@ -1,4 +1,5 @@
 import { getDevices, getEvents, getMemories, getMessages, getNotifications, getSettings, isOwner, send } from '../lib/core.mjs';
+import { buildPersonalityContract } from '../public/sexta-personality.js';
 
 const SHARED_CONVERSATION_ID = 'main';
 const CACHE_MS = Math.max(3000, Math.min(30000, Number(process.env.SEXTA_SYNC_CACHE_MS || 12000)));
@@ -23,6 +24,7 @@ async function loadSnapshot() {
     events,
     notifications,
     settings,
+    personalityInstruction: buildPersonalityContract(settings, { channel:'voice-live', platform:'connected-device' }),
     generatedAt: new Date().toISOString()
   };
 }

@@ -1,7 +1,9 @@
+import { normalizePersonality, SEXTA_PERSONALITY_DEFAULTS } from './sexta-personality.js';
+
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 
-const defaults = { humor: 68, sarcasm: 42, proactivity: 55, verbosity: 32, voice: true, autoSpeak: true, speakNotifications: true, notificationThreshold: 62, whatsappNotifyAll: true, name: 'Sexta-feira' };
+const defaults = { ...SEXTA_PERSONALITY_DEFAULTS, personalityVersion:'2.0.0', voice:true, autoSpeak:true, speakNotifications:true, notificationThreshold:62, whatsappNotifyAll:true };
 const state = {
   token: localStorage.getItem('sexta_token') || '',
   conversationId: localStorage.getItem('sexta_conversation') || crypto.randomUUID(),
@@ -259,19 +261,21 @@ function surfaceNewNotifications(previousIds=new Set()){
 }
 
 function applySettingsUI() {
-  const s = { ...defaults, ...state.settings };
+  const s = { ...defaults, ...state.settings, ...normalizePersonality(state.settings) };
+  state.settings = s;
+  localStorage.setItem('sexta_personality', JSON.stringify(normalizePersonality(s)));
   $('#settingName').value = s.name; $('#settingHumor').value = s.humor; $('#settingSarcasm').value = s.sarcasm;
-  $('#settingProactivity').value = s.proactivity; $('#settingVerbosity').value = s.verbosity;
+  $('#settingProactivity').value = s.proactivity; $('#settingVerbosity').value = s.verbosity; $('#settingConfidence').value = s.confidence; $('#settingFormality').value = s.formality; $('#settingWarmth').value = s.warmth;
   $('#settingVoice').checked = s.voice !== false; $('#settingAutoSpeak').checked = Boolean(s.autoSpeak); $('#settingSpeakNotifications').checked = s.speakNotifications !== false; $('#settingNotificationThreshold').value = s.notificationThreshold ?? 62; $('#settingNotificationThreshold').nextElementSibling.textContent = $('#settingNotificationThreshold').value; $('#settingWhatsappNotifyAll').checked = s.whatsappNotifyAll !== false;
-  ['Humor','Sarcasm','Proactivity','Verbosity','NotificationThreshold'].forEach(key => { const input = $(`#setting${key}`); input.nextElementSibling.textContent = input.value; });
+  ['Humor','Sarcasm','Proactivity','Verbosity','Confidence','Formality','Warmth','NotificationThreshold'].forEach(key => { const input = $(`#setting${key}`); input.nextElementSibling.textContent = input.value; });
   updatePersonalityPreview();
 }
-function readSettingsUI() { return { name: $('#settingName').value || 'Sexta', humor:+$('#settingHumor').value, sarcasm:+$('#settingSarcasm').value, proactivity:+$('#settingProactivity').value, verbosity:+$('#settingVerbosity').value, voice:$('#settingVoice').checked, autoSpeak:$('#settingAutoSpeak').checked, speakNotifications:$('#settingSpeakNotifications').checked, notificationThreshold:+$('#settingNotificationThreshold').value, whatsappNotifyAll:$('#settingWhatsappNotifyAll').checked }; }
+function readSettingsUI() { return { ...normalizePersonality({ name:$('#settingName').value || 'Sexta-feira', humor:+$('#settingHumor').value, sarcasm:+$('#settingSarcasm').value, proactivity:+$('#settingProactivity').value, verbosity:+$('#settingVerbosity').value, confidence:+$('#settingConfidence').value, formality:+$('#settingFormality').value, warmth:+$('#settingWarmth').value, personalityVersion:'2.0.0' }), voice:$('#settingVoice').checked, autoSpeak:$('#settingAutoSpeak').checked, speakNotifications:$('#settingSpeakNotifications').checked, notificationThreshold:+$('#settingNotificationThreshold').value, whatsappNotifyAll:$('#settingWhatsappNotifyAll').checked }; }
 function updatePersonalityPreview(){
   const s = readSettingsUI();
   let line = 'Estou aqui. O que você precisa?';
-  if (s.humor > 55 && s.sarcasm > 55) line = 'Estou aqui. Qual sistema nós vamos traumatizar hoje?';
-  else if (s.humor > 55) line = 'Estou aqui. O que você aprontou?';
+  if (s.humor > 70 && s.sarcasm > 60) line = 'Estou aqui. Vamos descobrir o que decidiu parar de funcionar.';
+  else if (s.humor > 60) line = 'Estou aqui. Qual é o plano?';
   else if (s.verbosity < 20) line = 'Estou aqui. Manda.';
   $('#personalityPreview').textContent = `“${line}”`;
 }
@@ -562,7 +566,7 @@ function bind() {
   $('#evolutionWebhookBtn').onclick=configureEvolution; $('#evolutionTestBtn').onclick=testEvolution;
   $('#notificationPermissionBtn').onclick=enableDeviceNotifications; $('#enableNotificationsBtn').onclick=enableDeviceNotifications; $('#notificationMonitorBtn').onclick=runNotificationMonitor; $('#runMonitorBtn').onclick=runNotificationMonitor;
   $('#chatgptOpenBtn').onclick=()=>{window.open('https://chatgpt.com/','_blank','noopener,noreferrer');toast('ChatGPT','Aberto em uma nova aba.','success')}; $('#chatgptImportBtn').onclick=importChatGPTResponse;
-  ['Humor','Sarcasm','Proactivity','Verbosity','NotificationThreshold'].forEach(k=>{$(`#setting${k}`).addEventListener('input',e=>{e.target.nextElementSibling.textContent=e.target.value;updatePersonalityPreview()})});
+  ['Humor','Sarcasm','Proactivity','Verbosity','Confidence','Formality','Warmth','NotificationThreshold'].forEach(k=>{$(`#setting${k}`).addEventListener('input',e=>{e.target.nextElementSibling.textContent=e.target.value;updatePersonalityPreview()})});
   $('#settingName').addEventListener('input',updatePersonalityPreview);$('#settingVoice').addEventListener('change',updatePersonalityPreview);$('#settingAutoSpeak').addEventListener('change',updatePersonalityPreview);$('#settingSpeakNotifications').addEventListener('change',updatePersonalityPreview);$('#settingWhatsappNotifyAll').addEventListener('change',updatePersonalityPreview);
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){heartbeat();sync({silent:true})}});
 }

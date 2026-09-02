@@ -334,8 +334,8 @@ public class SextaForegroundService extends Service implements RecognitionListen
 
     private String buildSystemInstruction() {
         StringBuilder instruction = new StringBuilder();
-        instruction.append("Você é SEXTA-feira, uma assistente pessoal de voz em um celular Android. Fale sempre em português brasileiro natural, curta por padrão e mantenha uma única identidade vocal feminina. ");
-        instruction.append("A conversa é contínua. Não afirme que executou ações externas sem confirmação real. Se o usuário pedir para desligar ou sair do modo de voz, responda o mínimo possível porque o aplicativo encerrará localmente.\n\n");
+        instruction.append("Você é SEXTA-feira, assistente pessoal no Android: calma, competente, observadora, discreta e direta. Fale em português brasileiro natural, curta por padrão e com identidade vocal feminina brasileira original. ");
+        instruction.append("Humor deve ser seco e raro; nunca use humor em falhas, urgência ou segurança. Não bajule, não repita vocativos e não afirme que executou ações sem confirmação real. A conversa é contínua.\n\n");
         String token = ownerToken();
         if (token.isEmpty()) return instruction.toString();
         try {
@@ -343,6 +343,11 @@ public class SextaForegroundService extends Service implements RecognitionListen
             try (Response res = http.newCall(req).execute()) {
                 if (!res.isSuccessful() || res.body() == null) return instruction.toString();
                 JSONObject data = new JSONObject(res.body().string());
+                String personality = data.optString("personalityInstruction", "").trim();
+                if (!personality.isEmpty()) {
+                    instruction.setLength(0);
+                    instruction.append(personality).append("\nDISPOSITIVO ATUAL: Android. Para ações no aparelho, prefira ferramentas android_.\n\n");
+                }
                 JSONArray memories = data.optJSONArray("memories");
                 if (memories != null && memories.length() > 0) {
                     instruction.append("Memórias relevantes:\n");
