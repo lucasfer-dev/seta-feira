@@ -25,14 +25,21 @@ service = service.replace(
   'ContextCompat.registerReceiver(this, conversationReceiver, new IntentFilter(ACTION_CONVERSATION_STATE), ContextCompat.RECEIVER_NOT_EXPORTED);'
 );
 
-// Native Live stability: receive Gemini websocket chunks without blocking the
-// websocket callback on AudioTrack writes. Playback happens on a dedicated queue.
-service = service.replace(
-  'private final AtomicBoolean assistantSpeaking = new AtomicBoolean(false);',
-  `private final AtomicBoolean assistantSpeaking = new AtomicBoolean(false);\n    private final AtomicBoolean nativeTurnFinishing = new AtomicBoolean(false);\n    private final AtomicBoolean nativePlaybackRunning = new AtomicBoolean(false);\n    private final java.util.concurrent.LinkedBlockingQueue<byte[]> nativePlaybackQueue = new java.util.concurrent.LinkedBlockingQueue<>(256);\n    private volatile Thread nativePlaybackThread;\n    private volatile long outputFramesWritten = 0L;\n    private volatile long lastOutputWriteAtMs = 0L;`
-);
+const isFullDuplexCore = service.includes('createLiveAudioRecord(')
+  && service.includes('reportDuplexMetric(')
+  && service.includes('AcousticEchoCanceler');
 
-service = service.replace(
+// Legacy native services used a dedicated playback queue injected at build time.
+// The full-duplex core owns its playback/interruption path in source so that
+// generated Android code cannot end up half-patched (calls without methods).
+// Keep the legacy transform only for pre-full-duplex sources.
+if (!isFullDuplexCore) {
+  service = service.replace(
+    'private final AtomicBoolean assistantSpeaking = new AtomicBoolean(false);',
+    `private final AtomicBoolean assistantSpeaking = new AtomicBoolean(false);\n    private final AtomicBoolean nativeTurnFinishing = new AtomicBoolean(false);\n    private final AtomicBoolean nativePlaybackRunning = new AtomicBoolean(false);\n    private final java.util.concurrent.LinkedBlockingQueue<byte[]> nativePlaybackQueue = new java.util.concurrent.LinkedBlockingQueue<>(256);\n    private volatile Thread nativePlaybackThread;\n    private volatile long outputFramesWritten = 0L;\n    private volatile long lastOutputWriteAtMs = 0L;`
+  );
+
+  service = service.replace(
 `            if (content.optBoolean("interrupted", false)) {
                 assistantSpeaking.set(false);
                 if (audioTrack != null) { try { audioTrack.pause(); audioTrack.flush(); audioTrack.play(); } catch (Exception ignored) {} }
@@ -42,9 +49,9 @@ service = service.replace(
 `            boolean interrupted = content.optBoolean("interrupted", false);
 
             JSONObject modelTurn = content.optJSONObject("modelTurn");`
-);
+  );
 
-service = service.replace(
+  service = service.replace(
 `            if (content.optBoolean("turnComplete", false)) {
                 assistantSpeaking.set(false);
                 String user = inputTranscript;
@@ -98,14 +105,14 @@ service = service.replace(
     }
 
     private String mergeTranscript`
-);
+  );
 
-service = service.replace(
-  '.setBufferSizeInBytes(Math.max(minOut * 2, 8192))',
-  '.setBufferSizeInBytes(Math.max(minOut * 4, 32768))'
-);
+  service = service.replace(
+    '.setBufferSizeInBytes(Math.max(minOut * 2, 8192))',
+    '.setBufferSizeInBytes(Math.max(minOut * 4, 32768))'
+  );
 
-service = service.replace(
+  service = service.replace(
 `        audioTrack.play();
         audioRecord.startRecording();`,
 `        outputFramesWritten = 0L;
@@ -115,9 +122,9 @@ service = service.replace(
         audioTrack.play();
         startNativePlaybackWorker();
         audioRecord.startRecording();`
-);
+  );
 
-service = service.replace(
+  service = service.replace(
 `    private synchronized void playPcm(byte[] pcm) {
         if (audioTrack == null || pcm == null || pcm.length == 0) return;
         assistantSpeaking.set(true);
@@ -130,11 +137,7 @@ service = service.replace(
         if (audioTrack == null || pcm == null || pcm.length == 0 || !nativePlaybackRunning.get()) return;
         if (assistantSpeaking.compareAndSet(false, true)) updateNotification("SEXTA ativa • falando...");
         byte[] copy = java.util.Arrays.copyOf(pcm, pcm.length);
-        if (!nativePlaybackQueue.offer(copy)) {
-            // Never block the websocket callback. A full queue means playback is
-            // unhealthy; keep the oldest contiguous audio and reject this chunk.
-            return;
-        }
+        if (!nativePlaybackQueue.offer(copy)) return;
     }
 
     private void startNativePlaybackWorker() {
@@ -171,17 +174,17 @@ service = service.replace(
     }
 
     private void persistTurn`
-);
+  );
 
-service = service.replace(
+  service = service.replace(
 `        if (audioTrack != null) {
             try { audioTrack.stop(); } catch (Exception ignored) {}`,
 `        stopNativePlaybackWorker();
         if (audioTrack != null) {
             try { audioTrack.stop(); } catch (Exception ignored) {}`
-);
+  );
 
-service = service.replace(
+  service = service.replace(
 `        assistantSpeaking.set(false);
     }
 
@@ -193,7 +196,15 @@ service = service.replace(
     }
 
     private synchronized void finishNativeConversation`
-);
+  );
+} else {
+  // The full-duplex source deliberately keeps the websocket/audio path explicit
+  // and testable. Only increase the output buffer; do not inject stale workers.
+  service = service.replace(
+    '.setBufferSizeInBytes(Math.max(minOut * 2, 8192))',
+    '.setBufferSizeInBytes(Math.max(minOut * 4, 32768))'
+  );
+}
 
 fs.writeFileSync(servicePath, service);
 
@@ -260,4 +271,6 @@ for (const dependency of dependencies) {
 }
 fs.writeFileSync(gradlePath, gradle);
 
-console.log('SEXTA Android preparado: foreground service, wake word local, Gemini Live nativo, playback em fila dedicada e permissões opt-in.');
+console.log(isFullDuplexCore
+  ? 'SEXTA Android preparado: full-duplex nativo preservado, permissões opt-in e build idempotente.'
+  : 'SEXTA Android preparado: foreground service, wake word local, Gemini Live nativo, playback em fila dedicada e permissões opt-in.');
