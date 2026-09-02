@@ -23,10 +23,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Check Voice Core v6
+      - name: Check Voice Core v7
+        run: node --check public/voice-core-v7.js
+      - name: Check Voice Core v6 fallback
         run: node --check public/voice-core-v6.js
-      - name: Check Voice Core v5 fallback
-        run: node --check public/voice-core-v5.js
       - name: Check voice loader
         run: node --check public/voice-loader.js
       - name: Check audio resampler
