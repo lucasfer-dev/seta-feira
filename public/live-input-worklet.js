@@ -1,9 +1,9 @@
 class SextaMicProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    // ~64 ms: after resampling to 16 kHz this is ~1024 samples, reducing
-    // cross-thread/WebSocket overhead without making speech feel buffered.
-    this.frameSamples = Math.max(512, Math.round(sampleRate * 0.064));
+    // Gemini Live recommends ~100 ms PCM chunks for live transcription.
+    // With the browser input context tuned to 16 kHz this produces ~1600 samples.
+    this.frameSamples = Math.max(512, Math.round(sampleRate * 0.10));
     this.buffer = new Float32Array(this.frameSamples * 2);
     this.write = 0;
   }
