@@ -1,0 +1,99 @@
+/* SEXTA 2 — voice-first shell. Keeps legacy panels available behind the Panel button. */
+body.sexta-v2 {
+  --v2-bg: #05070d;
+  --v2-panel: rgba(10, 14, 25, .72);
+  --v2-line: rgba(255,255,255,.10);
+  --v2-text: #f4f7fb;
+  --v2-muted: rgba(231,238,248,.58);
+  --v2-cyan: #62ddff;
+  --v2-blue: #4e7cff;
+  --v2-violet: #a56eff;
+  --v2-amber: #ffad4d;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(40,76,145,.18), transparent 32%),
+    radial-gradient(circle at 78% 42%, rgba(99,48,148,.10), transparent 25%),
+    linear-gradient(180deg, #05070d 0%, #070b14 100%);
+  color: var(--v2-text);
+  min-height: 100dvh;
+}
+body.sexta-v2 > .noise { opacity: .18; }
+body.sexta-v2:not(.sexta-panel-open) .sidebar,
+body.sexta-v2:not(.sexta-panel-open) .topbar { display: none !important; }
+body.sexta-v2:not(.sexta-panel-open) .app-shell { display:block; min-height:100dvh; }
+body.sexta-v2:not(.sexta-panel-open) .main-panel { width:100%; min-height:100dvh; margin:0; }
+body.sexta-v2:not(.sexta-panel-open) #view-chat { display:block !important; min-height:100dvh; }
+body.sexta-v2:not(.sexta-panel-open) #view-chat .chat-stage {
+  min-height:100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  padding:28px 20px 34px; max-width:none; margin:0;
+}
+body.sexta-v2:not(.sexta-panel-open) #view-chat > .chat-stage > .ambient-orb,
+body.sexta-v2:not(.sexta-panel-open) #view-chat > .chat-stage > .handoff-banner,
+body.sexta-v2:not(.sexta-panel-open) #view-chat > .chat-stage > .thinking { display:none !important; }
+body.sexta-v2:not(.sexta-panel-open) #messages,
+body.sexta-v2:not(.sexta-panel-open) .composer-wrap { display:none; }
+body.sexta-v2:not(.sexta-panel-open).sexta-manual-chat #messages {
+  display:block; width:min(760px, 94vw); max-height:34vh; margin:18px auto 10px;
+  border:1px solid var(--v2-line); border-radius:18px; background:rgba(5,9,17,.66); padding:10px;
+}
+body.sexta-v2:not(.sexta-panel-open).sexta-manual-chat .composer-wrap {
+  display:block; width:min(760px, 94vw); margin:0 auto;
+}
+body.sexta-v2:not(.sexta-panel-open).sexta-manual-chat .quick-actions,
+body.sexta-v2:not(.sexta-panel-open).sexta-manual-chat #voiceBtn,
+body.sexta-v2:not(.sexta-panel-open).sexta-manual-chat #wakeBtn { display:none !important; }
+body.sexta-v2:not(.sexta-panel-open).sexta-manual-chat .composer { width:100%; }
+
+.sexta-v2-home { width:min(820px, 94vw); text-align:center; position:relative; z-index:3; }
+.sexta-v2-top { position:fixed; top:max(18px, env(safe-area-inset-top)); left:20px; right:20px; display:flex; justify-content:space-between; align-items:center; z-index:10; pointer-events:none; }
+.sexta-v2-brand { pointer-events:auto; letter-spacing:.52em; text-indent:.52em; font-size:12px; font-weight:700; color:rgba(255,255,255,.82); }
+.sexta-v2-panel-btn { pointer-events:auto; border:1px solid var(--v2-line); background:rgba(8,12,21,.55); color:var(--v2-muted); border-radius:999px; padding:8px 12px; font:inherit; font-size:12px; cursor:pointer; backdrop-filter:blur(14px); }
+.sexta-v2-panel-btn:hover { color:#fff; border-color:rgba(255,255,255,.2); }
+
+.sexta-v2-orb-wrap { position:relative; width:300px; height:300px; margin:0 auto 20px; display:grid; place-items:center; }
+.sexta-v2-orb-halo { position:absolute; inset:18px; border-radius:50%; filter:blur(28px); opacity:.45; background:radial-gradient(circle, rgba(92,167,255,.36), rgba(74,55,180,.14) 45%, transparent 72%); transition:.35s ease; }
+.sexta-v2-orb { width:214px; height:214px; border-radius:45% 55% 51% 49% / 54% 43% 57% 46%; position:relative; cursor:pointer; border:0; background:#070912; isolation:isolate; box-shadow:inset 0 0 32px rgba(0,0,0,.86), 0 25px 80px rgba(0,0,0,.44); transition:transform .22s ease, filter .22s ease; }
+.sexta-v2-orb::before { content:""; position:absolute; inset:-5px; z-index:-2; border-radius:inherit; background:conic-gradient(from 40deg, #f2a446, #d97a35 11%, #6b66ec 31%, #47caff 48%, #7d6aff 63%, #a8d84f 80%, #f2a446); filter:blur(1px); animation:sexta-v2-spin 9s linear infinite; }
+.sexta-v2-orb::after { content:""; position:absolute; inset:6px; z-index:-1; border-radius:inherit; background:radial-gradient(circle at 50% 55%, #10172b 0%, #070911 58%, #03040a 100%); box-shadow:inset 0 0 30px rgba(0,0,0,.85); }
+.sexta-v2-orb-core { position:absolute; left:50%; top:50%; width:88px; height:34px; transform:translate(-50%,-50%); border-radius:50%; background:radial-gradient(ellipse, #fff 0 7%, #d9f9ff 11%, #77dcff 29%, #6078ff 48%, rgba(104,79,255,.18) 68%, transparent 73%); filter:drop-shadow(0 0 12px rgba(94,214,255,.82)) drop-shadow(0 0 28px rgba(111,85,255,.5)); transition:.18s ease; }
+.sexta-v2-orb-core::before,.sexta-v2-orb-core::after { content:""; position:absolute; top:50%; width:42px; height:2px; background:linear-gradient(90deg,transparent,#dff8ff); opacity:.9; }
+.sexta-v2-orb-core::before { right:58%; transform:rotate(-7deg); }
+.sexta-v2-orb-core::after { left:58%; transform:rotate(7deg); background:linear-gradient(90deg,#dff8ff,transparent); }
+.sexta-v2-orb:hover { transform:scale(1.018); }
+
+.sexta-v2[data-voice-state="user_speaking"] .sexta-v2-orb { transform:scale(1.045); }
+.sexta-v2[data-voice-state="user_speaking"] .sexta-v2-orb-core { width:110px; filter:drop-shadow(0 0 18px rgba(94,214,255,.95)) drop-shadow(0 0 38px rgba(111,85,255,.7)); }
+.sexta-v2[data-voice-state="thinking"] .sexta-v2-orb::before,
+.sexta-v2[data-voice-state="connecting"] .sexta-v2-orb::before,
+.sexta-v2[data-voice-state="recovering"] .sexta-v2-orb::before { animation-duration:2.2s; }
+.sexta-v2[data-voice-state="speaking"] .sexta-v2-orb { animation:sexta-v2-breathe .8s ease-in-out infinite alternate; }
+.sexta-v2[data-voice-state="speaking"] .sexta-v2-orb-core { width:122px; height:38px; }
+.sexta-v2[data-voice-state="error"] .sexta-v2-orb::before { background:conic-gradient(#ff806f,#ffb15d,#ff806f); }
+
+.sexta-v2-greeting { margin:2px 0 5px; font-size:clamp(24px,4vw,38px); font-weight:520; letter-spacing:-.025em; }
+.sexta-v2-status { min-height:24px; margin:0 auto; color:var(--v2-muted); font-size:14px; }
+.sexta-v2-transcript { width:min(660px, 92vw); min-height:62px; margin:20px auto 12px; padding:14px 18px; border:1px solid transparent; border-radius:16px; color:rgba(240,247,255,.86); font-size:15px; line-height:1.5; transition:.2s ease; }
+.sexta-v2-transcript.has-text { border-color:rgba(113,202,255,.12); background:rgba(8,14,26,.36); backdrop-filter:blur(14px); }
+.sexta-v2-transcript .ghost { color:rgba(226,236,248,.42); }
+.sexta-v2-actions { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:10px; margin-top:8px; }
+.sexta-v2-primary,.sexta-v2-secondary { border-radius:999px; font:inherit; cursor:pointer; transition:.18s ease; }
+.sexta-v2-primary { border:1px solid rgba(108,213,255,.28); color:#f8fcff; background:linear-gradient(180deg,rgba(72,143,220,.25),rgba(34,60,109,.22)); padding:11px 18px; min-width:168px; box-shadow:0 10px 30px rgba(0,0,0,.2); }
+.sexta-v2-primary:hover { transform:translateY(-1px); border-color:rgba(108,213,255,.5); }
+.sexta-v2-secondary { border:1px solid var(--v2-line); color:var(--v2-muted); background:rgba(8,12,21,.45); padding:10px 14px; }
+.sexta-v2-secondary:hover { color:#fff; border-color:rgba(255,255,255,.2); }
+.sexta-v2-meta { display:flex; justify-content:center; gap:14px; flex-wrap:wrap; margin-top:16px; color:rgba(225,234,247,.34); font-size:11px; }
+.sexta-v2-meta span { display:inline-flex; align-items:center; gap:6px; }
+.sexta-v2-meta i { width:6px; height:6px; border-radius:50%; background:rgba(134,231,255,.7); box-shadow:0 0 10px rgba(134,231,255,.5); }
+
+body.sexta-panel-open .sexta-v2-home { display:none; }
+body.sexta-panel-open .sidebar, body.sexta-panel-open .topbar { display:flex; }
+body.sexta-panel-open .main-panel { display:block; }
+
+@keyframes sexta-v2-spin { to { transform:rotate(360deg); } }
+@keyframes sexta-v2-breathe { from{transform:scale(1)} to{transform:scale(1.035)} }
+@media (max-width:700px) {
+  .sexta-v2-top{left:14px;right:14px}
+  .sexta-v2-orb-wrap{width:250px;height:250px;margin-bottom:8px}
+  .sexta-v2-orb{width:182px;height:182px}
+  .sexta-v2-greeting{font-size:27px}
+  .sexta-v2-transcript{margin-top:14px;min-height:54px;padding:12px 14px}
+}
