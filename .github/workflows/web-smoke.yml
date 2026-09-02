@@ -6,11 +6,13 @@ on:
     paths:
       - 'public/**'
       - 'api/**'
+      - 'tests/**'
       - '.github/workflows/web-smoke.yml'
   pull_request:
     paths:
       - 'public/**'
       - 'api/**'
+      - 'tests/**'
       - '.github/workflows/web-smoke.yml'
 
 jobs:
@@ -21,8 +23,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Check Voice Core v5
+      - name: Check Voice Core v6
+        run: node --check public/voice-core-v6.js
+      - name: Check Voice Core v5 fallback
         run: node --check public/voice-core-v5.js
+      - name: Check voice loader
+        run: node --check public/voice-loader.js
+      - name: Check audio resampler
+        run: node --check public/audio-resampler.js
+      - name: Test audio resampler quality
+        run: node tests/audio-resampler.test.mjs
       - name: Check SEXTA shell v2
         run: node --check public/sexta-shell-v2.js
       - name: Check audio worklet
