@@ -63,8 +63,12 @@
     error: ['A voz encontrou um problema.', 'Tentar novamente']
   };
 
-  function renderState(detail = {}) {
+  let thinkingTimer = null;
+  let lastDetail = { state: 'off' };
+
+  function paintState(detail = {}) {
     const state = detail.state || 'off';
+    lastDetail = detail;
     document.body.dataset.voiceState = state;
     const [text, button] = labels[state] || labels.off;
     if (stateLabel) stateLabel.textContent = detail.label || text;
@@ -73,6 +77,28 @@
       connectionMeta.textContent = detail.connection || (state === 'off' ? 'core pronto' : state === 'error' ? 'falha na sessão' : 'sessão ativa');
     }
     if (voiceHint) voiceHint.textContent = `SEXTA • ${text.toLowerCase()}`;
+  }
+
+  function renderState(detail = {}) {
+    const state = detail.state || 'off';
+    if (thinkingTimer && state !== 'thinking') {
+      clearTimeout(thinkingTimer);
+      thinkingTimer = null;
+    }
+
+    // Short model gaps are normal in Live. Avoid flashing "Entendendo..." for
+    // a few hundred milliseconds; keep the conversation visually continuous.
+    if (state === 'thinking') {
+      lastDetail = detail;
+      if (thinkingTimer) return;
+      thinkingTimer = setTimeout(() => {
+        thinkingTimer = null;
+        if ((lastDetail.state || 'off') === 'thinking') paintState(lastDetail);
+      }, 260);
+      return;
+    }
+
+    paintState(detail);
   }
 
   function renderTranscript(detail = {}) {
@@ -123,7 +149,6 @@
     if (syncHint) syncHint.textContent = syncMeta?.textContent || 'contexto carregado';
   });
 
-  // If the old shell left a polling-oriented label behind, make the new policy explicit.
   if (syncHint) syncHint.textContent = 'contexto ao iniciar sessão';
   renderState({ state: 'off' });
 })();
