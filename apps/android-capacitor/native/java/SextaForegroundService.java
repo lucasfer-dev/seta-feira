@@ -46,10 +46,12 @@ import org.vosk.android.StorageService;
 import java.io.IOException;
 import java.text.Normalizer;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -77,6 +79,7 @@ public class SextaForegroundService extends Service implements RecognitionListen
     private static final long RESPONSE_ARM_AFTER_INPUT_IDLE_MS = 1800L;
 
     private final ScheduledExecutorService io = Executors.newScheduledThreadPool(4);
+    private final ExecutorService playback = Executors.newSingleThreadExecutor();
     private final OkHttpClient http = new OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
@@ -103,6 +106,7 @@ public class SextaForegroundService extends Service implements RecognitionListen
     private final AtomicBoolean liveReady = new AtomicBoolean(false);
     private final AtomicBoolean audioRunning = new AtomicBoolean(false);
     private final AtomicBoolean assistantSpeaking = new AtomicBoolean(false);
+    private final AtomicLong playbackEpoch = new AtomicLong(0L);
     private AudioRecord audioRecord;
     private AudioTrack audioTrack;
     private Thread captureThread;
@@ -602,6 +606,7 @@ public class SextaForegroundService extends Service implements RecognitionListen
                 long interruptionLatencyMs = bargeInCandidateAtMs > 0L
                         ? Math.max(0L, SystemClock.elapsedRealtime() - bargeInCandidateAtMs)
                         : -1L;
+                playbackEpoch.incrementAndGet();
                 assistantSpeaking.set(false);
                 if (audioTrack != null) { try { audioTrack.pause(); audioTrack.flush(); audioTrack.play(); } catch (Exception ignored) {} }
                 reportDuplexMetric("interrupted", interruptionLatencyMs);
@@ -626,7 +631,6 @@ public class SextaForegroundService extends Service implements RecognitionListen
                 }
             }
             if (content.optBoolean("turnComplete", false)) {
-                assistantSpeaking.set(false);
                 awaitingResponseSinceMs = 0L;
                 lastInputTranscriptAtMs = 0L;
                 bargeInCandidateAtMs = 0L;
@@ -636,7 +640,7 @@ public class SextaForegroundService extends Service implements RecognitionListen
                 inputTranscript = "";
                 outputTranscript = "";
                 persistTurn(user, assistant);
-                updateNotification("SEXTA ativa • ouvindo...");
+                markPlaybackTurnComplete(playbackEpoch.get());
             }
         } catch (Exception error) {
             Log.e(TAG, "invalid Live message", error);
@@ -840,18 +844,39 @@ public class SextaForegroundService extends Service implements RecognitionListen
         captureThread.start();
     }
 
-    private synchronized void playPcm(byte[] pcm) {
-        if (audioTrack == null || pcm == null || pcm.length == 0) return;
-        if (!assistantSpeaking.getAndSet(true)) {
-            bargeInCandidateAtMs = 0L;
-            bargeInCandidateRms = 0.0;
-        }
-        updateNotification("SEXTA ativa • falando...");
-        int written = audioTrack.write(pcm, 0, pcm.length, AudioTrack.WRITE_BLOCKING);
-        if (written < 0) {
-            Log.e(TAG, "AudioTrack write failed: " + written);
-            scheduleNativeReconnect("audio-output-failed");
-        }
+    private void playPcm(byte[] pcm) {
+        if (pcm == null || pcm.length == 0) return;
+        final long epoch = playbackEpoch.get();
+        playback.execute(() -> {
+            if (epoch != playbackEpoch.get() || !nativeConversationActive || !audioRunning.get()) return;
+            AudioTrack track = audioTrack;
+            if (track == null) return;
+            if (!assistantSpeaking.getAndSet(true)) {
+                bargeInCandidateAtMs = 0L;
+                bargeInCandidateRms = 0.0;
+            }
+            updateNotification("SEXTA ativa • falando...");
+            try {
+                int written = track.write(pcm, 0, pcm.length, AudioTrack.WRITE_BLOCKING);
+                if (written < 0 && epoch == playbackEpoch.get()) {
+                    Log.e(TAG, "AudioTrack write failed: " + written);
+                    scheduleNativeReconnect("audio-output-failed");
+                }
+            } catch (Exception error) {
+                if (epoch == playbackEpoch.get() && nativeConversationActive) {
+                    Log.e(TAG, "AudioTrack write exception", error);
+                    scheduleNativeReconnect("audio-output-exception");
+                }
+            }
+        });
+    }
+
+    private void markPlaybackTurnComplete(long epoch) {
+        playback.execute(() -> {
+            if (epoch != playbackEpoch.get()) return;
+            assistantSpeaking.set(false);
+            updateNotification("SEXTA ativa • ouvindo...");
+        });
     }
 
     private void persistTurn(String userText, String assistantText) {
@@ -871,6 +896,7 @@ public class SextaForegroundService extends Service implements RecognitionListen
     }
 
     private synchronized void stopLiveAudio() {
+        playbackEpoch.incrementAndGet();
         audioRunning.set(false);
         liveReady.set(false);
         bargeInCandidateAtMs = 0L;
@@ -882,6 +908,8 @@ public class SextaForegroundService extends Service implements RecognitionListen
             audioRecord = null;
         }
         if (audioTrack != null) {
+            try { audioTrack.pause(); } catch (Exception ignored) {}
+            try { audioTrack.flush(); } catch (Exception ignored) {}
             try { audioTrack.stop(); } catch (Exception ignored) {}
             try { audioTrack.release(); } catch (Exception ignored) {}
             audioTrack = null;
@@ -927,6 +955,7 @@ public class SextaForegroundService extends Service implements RecognitionListen
         stopEverything();
         try { unregisterReceiver(conversationReceiver); } catch (Exception ignored) {}
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        playback.shutdownNow();
         io.shutdownNow();
         super.onDestroy();
     }
