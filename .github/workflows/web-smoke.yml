@@ -27,6 +27,8 @@ jobs:
           node-version: 22
       - name: Check Voice Core v10
         run: node --check public/voice-core-v10.js
+      - name: Check smart barge-in guard
+        run: node --check public/voice-barge-in-guard.js
       - name: Check canonical personality
         run: node --check public/sexta-personality.js
       - name: Check voice loader
@@ -40,6 +42,8 @@ jobs:
           grep -q "vadMode:'manual'" public/voice-core-v10.js
           grep -q "activityStart:{}" public/voice-core-v10.js
           grep -q "activityEnd:{}" public/voice-core-v10.js
+          grep -q "voice-barge-in-guard.js" public/voice-loader.js
+          grep -q "START_SENSITIVITY_LOW" api/live-token.js
           ! grep -Eq "voice-core-v[5-9]\\.js" public/voice-loader.js
       - name: Check audio resampler
         run: node --check public/audio-resampler.js
