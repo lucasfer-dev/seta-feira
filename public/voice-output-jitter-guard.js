@@ -44,9 +44,10 @@
 
     return new Proxy(context, {
       get(target, prop) {
-        if (prop === 'currentTime') {
-          return Math.max(0, target.currentTime - EXTRA_BUFFER_SECONDS);
-        }
+        // Voice Core schedules against this clock. Advancing it makes the core keep
+        // EXTRA_BUFFER_SECONDS of audio queued ahead of the hardware playback clock.
+        // BufferSource.start() remains on the real AudioContext timeline.
+        if (prop === 'currentTime') return target.currentTime + EXTRA_BUFFER_SECONDS;
 
         if (prop === 'createBufferSource') {
           return () => {
@@ -58,10 +59,7 @@
               get(sourceTarget, sourceProp) {
                 if (sourceProp === 'start') {
                   return (when = 0, ...rest) => {
-                    const requestedWhen = Number(when) || 0;
-                    const actualWhen = requestedWhen > 0
-                      ? requestedWhen + EXTRA_BUFFER_SECONDS
-                      : requestedWhen;
+                    const actualWhen = Number(when) || 0;
                     const duration = Number(sourceTarget.buffer?.duration || 0);
 
                     if (lastActualEnd > 0 && target.currentTime < lastActualEnd + 0.35) {
@@ -116,14 +114,15 @@
   });
 
   // browser-audio-tuning.js intentionally exposes the constructor used by Voice Core.
-  // Patch only that private constructor so unrelated page audio stays untouched.
+  // Patch only that private constructor so microphone capture and unrelated page audio stay untouched.
   window.__sextaNativeAudioContext = GuardedAudioContext;
 
   window.__sextaOutputJitterGuard = {
     installed: true,
-    version: '1.1.0',
+    version: '1.2.0',
     debug: () => ({
       extraBufferMs: Math.round(EXTRA_BUFFER_SECONDS * 1000),
+      effectiveTargetMs: Math.round(EXTRA_BUFFER_SECONDS * 1000) + (IS_ANDROID ? 90 : 28),
       outputContexts,
       scheduledChunks,
       detectedUnderruns,
