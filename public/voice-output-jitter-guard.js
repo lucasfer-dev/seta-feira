@@ -54,37 +54,49 @@
             const nativeStart = source.start.bind(source);
             const nativeStop = source.stop.bind(source);
 
-            source.start = (when = 0, ...rest) => {
-              const requestedWhen = Number(when) || 0;
-              const actualWhen = requestedWhen > 0
-                ? requestedWhen + EXTRA_BUFFER_SECONDS
-                : requestedWhen;
-              const duration = Number(source.buffer?.duration || 0);
+            return new Proxy(source, {
+              get(sourceTarget, sourceProp) {
+                if (sourceProp === 'start') {
+                  return (when = 0, ...rest) => {
+                    const requestedWhen = Number(when) || 0;
+                    const actualWhen = requestedWhen > 0
+                      ? requestedWhen + EXTRA_BUFFER_SECONDS
+                      : requestedWhen;
+                    const duration = Number(sourceTarget.buffer?.duration || 0);
 
-              if (lastActualEnd > 0 && target.currentTime < lastActualEnd + 0.35) {
-                const gap = actualWhen - lastActualEnd;
-                if (gap > UNDERRUN_GAP_SECONDS) {
-                  detectedUnderruns += 1;
-                  lastGapMs = Math.round(gap * 1000);
-                  reportUnderrun(lastGapMs);
+                    if (lastActualEnd > 0 && target.currentTime < lastActualEnd + 0.35) {
+                      const gap = actualWhen - lastActualEnd;
+                      if (gap > UNDERRUN_GAP_SECONDS) {
+                        detectedUnderruns += 1;
+                        lastGapMs = Math.round(gap * 1000);
+                        reportUnderrun(lastGapMs);
+                      }
+                    } else if (target.currentTime >= lastActualEnd + 0.35) {
+                      lastActualEnd = 0;
+                    }
+
+                    scheduledChunks += 1;
+                    nativeStart(actualWhen, ...rest);
+                    lastActualEnd = Math.max(lastActualEnd, actualWhen + duration);
+                  };
                 }
-              } else if (target.currentTime >= lastActualEnd + 0.35) {
-                lastActualEnd = 0;
+
+                if (sourceProp === 'stop') {
+                  return (...args) => {
+                    try { return nativeStop(...args); }
+                    finally {
+                      if (target.currentTime >= lastActualEnd - 0.02) lastActualEnd = 0;
+                    }
+                  };
+                }
+
+                const value = Reflect.get(sourceTarget, sourceProp, sourceTarget);
+                return typeof value === 'function' ? value.bind(sourceTarget) : value;
+              },
+              set(sourceTarget, sourceProp, value) {
+                return Reflect.set(sourceTarget, sourceProp, value, sourceTarget);
               }
-
-              scheduledChunks += 1;
-              nativeStart(actualWhen, ...rest);
-              lastActualEnd = Math.max(lastActualEnd, actualWhen + duration);
-            };
-
-            source.stop = (...args) => {
-              try { return nativeStop(...args); }
-              finally {
-                if (target.currentTime >= lastActualEnd - 0.02) lastActualEnd = 0;
-              }
-            };
-
-            return source;
+            });
           };
         }
 
@@ -94,26 +106,22 @@
     });
   }
 
-  function guardedConstructor(Target) {
-    return new Proxy(Target, {
-      construct(RealTarget, args) {
-        const context = Reflect.construct(RealTarget, args, RealTarget);
-        const requestedRate = Number(args?.[0]?.sampleRate || 0);
-        if (Math.abs(requestedRate - OUTPUT_RATE) <= 1) return wrapOutputContext(context);
-        return context;
-      }
-    });
-  }
+  const GuardedAudioContext = new Proxy(OriginalAudioContext, {
+    construct(RealTarget, args) {
+      const context = Reflect.construct(RealTarget, args, RealTarget);
+      const requestedRate = Number(args?.[0]?.sampleRate || 0);
+      if (Math.abs(requestedRate - OUTPUT_RATE) <= 1) return wrapOutputContext(context);
+      return context;
+    }
+  });
 
-  const GuardedAudioContext = guardedConstructor(OriginalAudioContext);
+  // browser-audio-tuning.js intentionally exposes the constructor used by Voice Core.
+  // Patch only that private constructor so unrelated page audio stays untouched.
   window.__sextaNativeAudioContext = GuardedAudioContext;
-
-  if (window.AudioContext === OriginalAudioContext) window.AudioContext = GuardedAudioContext;
-  if (window.webkitAudioContext === OriginalAudioContext) window.webkitAudioContext = GuardedAudioContext;
 
   window.__sextaOutputJitterGuard = {
     installed: true,
-    version: '1.0.0',
+    version: '1.1.0',
     debug: () => ({
       extraBufferMs: Math.round(EXTRA_BUFFER_SECONDS * 1000),
       outputContexts,
