@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 const core = fs.readFileSync(new URL('../public/voice-core-v10.js', import.meta.url), 'utf8');
+const guard = fs.readFileSync(new URL('../public/voice-barge-in-guard.js', import.meta.url), 'utf8');
 const loader = fs.readFileSync(new URL('../public/voice-loader.js', import.meta.url), 'utf8');
+const liveToken = fs.readFileSync(new URL('../api/live-token.js', import.meta.url), 'utf8');
 const health = fs.readFileSync(new URL('../api/health.js', import.meta.url), 'utf8');
 
 test('Voice Core v10 owns manual turn boundaries', () => {
@@ -13,7 +15,24 @@ test('Voice Core v10 owns manual turn boundaries', () => {
   assert.doesNotMatch(core, /audioStreamEnd/);
 });
 
-test('Voice Core v10 is the only loader target', () => {
+test('smart barge-in guard loads before Voice Core v10', () => {
+  const guardIndex = loader.indexOf("voice-barge-in-guard.js");
+  const coreIndex = loader.indexOf("voice-core-v10.js");
+  assert.ok(guardIndex >= 0);
+  assert.ok(coreIndex > guardIndex);
+  assert.match(guard, /NORMAL_CONFIRM_MS/);
+  assert.match(guard, /FAST_CONFIRM_MS/);
+  assert.match(guard, /autoGainControl: false/);
+  assert.match(guard, /stopImmediatePropagation\(\)/);
+});
+
+test('automatic VAD uses conservative speech start detection', () => {
+  assert.match(liveToken, /START_SENSITIVITY_LOW/);
+  assert.match(liveToken, /origin === 'android' \? 220 : 180/);
+  assert.match(liveToken, /START_OF_ACTIVITY_INTERRUPTS/);
+});
+
+test('Voice Core v10 remains the only core loader target', () => {
   assert.match(loader, /voice-core-v10\.js/);
   assert.doesNotMatch(loader, /voice-core-v[5-9]\.js/);
   assert.doesNotMatch(loader, /fallback/i);
