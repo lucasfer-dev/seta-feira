@@ -72,9 +72,9 @@ export default async function handler(req, res) {
     ? { disabled: true }
     : {
         disabled: false,
-        startOfSpeechSensitivity: 'START_SENSITIVITY_HIGH',
+        startOfSpeechSensitivity: 'START_SENSITIVITY_LOW',
         endOfSpeechSensitivity: 'END_SENSITIVITY_HIGH',
-        prefixPaddingMs: hybridVad ? 40 : 80,
+        prefixPaddingMs: hybridVad ? 120 : origin === 'android' ? 220 : 180,
         silenceDurationMs: hybridVad ? 450 : 600
       };
 
