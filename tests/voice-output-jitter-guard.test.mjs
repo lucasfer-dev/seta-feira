@@ -54,28 +54,31 @@ function loadGuard(userAgent = 'Mozilla/5.0 Firefox/154.0') {
   return window;
 }
 
-test('browser output context uses a delayed virtual clock while input stays untouched', () => {
+test('browser output clock keeps ~113ms target headroom while input stays untouched', () => {
   const window = loadGuard();
   const GuardedAudioContext = window.__sextaNativeAudioContext;
 
   const output = new GuardedAudioContext({ sampleRate: 24000, latencyHint: 'interactive' });
-  assert.equal(Math.round(output.currentTime * 1000), 915);
+  assert.equal(Math.round(output.currentTime * 1000), 1085);
 
   const nativeOutput = FakeAudioContext.instances[0];
   const source = output.createBufferSource();
   source.buffer = { duration: 0.1 };
-  source.start(1.1);
-  assert.equal(Math.round(nativeOutput.sources[0].starts[0][0] * 1000), 1185);
+  const coreScheduledStart = output.currentTime + 0.028;
+  source.start(coreScheduledStart);
+  assert.equal(Math.round(nativeOutput.sources[0].starts[0][0] * 1000), 1113);
 
   const input = new GuardedAudioContext({ latencyHint: 'interactive' });
   assert.equal(input.currentTime, 1);
   assert.equal(window.__sextaOutputJitterGuard.debug().extraBufferMs, 85);
+  assert.equal(window.__sextaOutputJitterGuard.debug().effectiveTargetMs, 113);
 });
 
-test('android keeps the extra output buffer smaller because v10 already prebuffers more', () => {
+test('android targets ~125ms because v10 already has a larger native prebuffer', () => {
   const window = loadGuard('Mozilla/5.0 (Linux; Android 15)');
   const GuardedAudioContext = window.__sextaNativeAudioContext;
   const output = new GuardedAudioContext({ sampleRate: 24000 });
-  assert.equal(Math.round(output.currentTime * 1000), 965);
+  assert.equal(Math.round(output.currentTime * 1000), 1035);
   assert.equal(window.__sextaOutputJitterGuard.debug().extraBufferMs, 35);
+  assert.equal(window.__sextaOutputJitterGuard.debug().effectiveTargetMs, 125);
 });
