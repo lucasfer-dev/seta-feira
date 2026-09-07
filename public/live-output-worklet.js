@@ -6,8 +6,6 @@ class SextaOutputRingBufferProcessor extends AudioWorkletProcessor {
     const clampMs = (value, fallback, min, max) => Math.max(min, Math.min(max, Number(value) || fallback));
 
     this.rate = rate;
-    // Browser telemetry can show packet gaps well above 400 ms. Keep a hard ceiling
-    // for safety, but allow the guard to request enough headroom to actually absorb them.
     this.baseTargetMs = clampMs(cfg.targetMs, 160, 80, 800);
     this.maxTargetMs = clampMs(cfg.maxTargetMs, 600, this.baseTargetMs, 1200);
     this.stepMs = clampMs(cfg.stepMs, 35, 10, 160);
@@ -54,7 +52,7 @@ class SextaOutputRingBufferProcessor extends AudioWorkletProcessor {
       if (this.starvedFrame != null) {
         const gapFrames = Math.max(0, this.renderedFrames - this.starvedFrame);
         const gapMs = Math.round(gapFrames / this.rate * 1000);
-        if (gapMs <= 900) {
+        if (gapMs <= 700) {
           this.underruns += 1;
           this.rebuffers += 1;
           this.updateTarget(Math.min(this.maxTargetMs, this.targetMs + this.stepMs));
@@ -65,7 +63,6 @@ class SextaOutputRingBufferProcessor extends AudioWorkletProcessor {
             targetMs: Math.round(this.targetMs)
           });
         } else {
-          // Long silence is a turn boundary, not jitter. Recover latency slowly.
           this.updateTarget(Math.max(this.baseTargetMs, this.targetMs - this.stepMs));
         }
         this.starvedFrame = null;
