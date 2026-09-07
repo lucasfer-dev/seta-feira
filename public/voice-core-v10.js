@@ -20,7 +20,7 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
   const NORMAL_SPEECH_RELEASE_MS = 650;
   const DICTATION_SPEECH_RELEASE_MS = 850;
   const PRE_ROLL_MS = 240;
-  const RESPONSE_TIMEOUT_MS = 6500;
+  const RESPONSE_TIMEOUT_MS = 8500;
   const OUTPUT_SETTLE_MS = 80;
   const OUTPUT_DRAIN_POLL_MS = 30;
   const TOOL_TIMEOUT_MS = 12000;
@@ -55,6 +55,8 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
   let preRollFrames = [];
   let responseDeadline = 0;
   let responseWatchdog = null;
+  let responsePending = false;
+  let responseTimeoutStreak = 0;
 
   let outputContext = null;
   let nextOutputTime = 0;
@@ -80,7 +82,7 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
     state = next;
     emit('sexta:voice-state', {
       state, sessionActive, setupComplete, assistantSpeaking,
-      pendingToolCalls, localSpeechActive, ...extra
+      pendingToolCalls, localSpeechActive, responsePending, ...extra
     });
   }
 
@@ -213,13 +215,36 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
     }
   }
 
+  function resetUnfinishedTurn(reason = 'reset') {
+    const hadText = Boolean(turn.interimInput || turn.finalInput || turn.outputText);
+    turn = freshTurn();
+    responsePending = false;
+    serverTurnComplete = false;
+    preRollFrames = [];
+    speechEvidenceMs = 0;
+    lastVoicedAt = 0;
+    emitTranscript();
+    if (hadText) reportMetric('turn_reset', { reason });
+  }
+
   function armResponseWatchdog() {
+    responsePending = true;
     responseDeadline = Date.now() + RESPONSE_TIMEOUT_MS;
     if (responseWatchdog) clearTimeout(responseWatchdog);
     responseWatchdog = setTimeout(() => {
       responseWatchdog = null;
       if (!sessionActive || !setupComplete || assistantSpeaking || pendingToolCalls > 0 || activityOpen) return;
-      reportMetric('response_timeout', { timeoutMs:RESPONSE_TIMEOUT_MS });
+      responseTimeoutStreak += 1;
+      reportMetric('response_timeout', {
+        timeoutMs:RESPONSE_TIMEOUT_MS,
+        streak:responseTimeoutStreak,
+        hadTranscript:Boolean(turn.interimInput || turn.finalInput)
+      });
+      // Never carry a half-finished turn into a brand new Live session. That was
+      // merging old transcriptions across reconnects and making responses arrive
+      // tens of seconds late with stale context.
+      resetUnfinishedTurn('response-timeout');
+      transition('recovering', { label:'Reconectando o canal de voz…' });
       try { websocket?.close(4001, 'response-timeout'); } catch {}
     }, RESPONSE_TIMEOUT_MS + 50);
   }
@@ -242,6 +267,7 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
   function beginLocalSpeech(now) {
     if (localSpeechActive) return;
     localSpeechActive = true;
+    responsePending = false;
     activityOpen = true;
     clearResponseWatchdog();
     turn.speechStartAt ||= now;
@@ -262,7 +288,9 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
     activityOpen = false;
     preRollFrames = [];
     armResponseWatchdog();
-    if (!assistantSpeaking && pendingToolCalls === 0) transition('listening');
+    // The user already finished. Visually and semantically this is thinking,
+    // not listening. A strong continuation can still reopen speech through the gate.
+    if (!assistantSpeaking && pendingToolCalls === 0) transition('thinking');
     reportMetric('local_speech_end');
   }
 
@@ -335,6 +363,8 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
         await new Promise(resolve => setTimeout(resolve, OUTPUT_SETTLE_MS));
         if (!sessionActive || generation !== settlementGeneration) return;
         assistantSpeaking = false;
+        responsePending = false;
+        responseTimeoutStreak = 0;
         const snapshot = { ...turn };
         serverTurnComplete = false;
         turn = freshTurn();
@@ -361,7 +391,7 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
     }
 
     mediaStream = await navigator.mediaDevices.getUserMedia({
-      audio:{ channelCount:{ideal:1}, echoCancellation:true, noiseSuppression:true, autoGainControl:true, latency:{ideal:0.01} }
+      audio:{ channelCount:{ideal:1}, echoCancellation:true, noiseSuppression:true, autoGainControl:false, latency:{ideal:0.01} }
     });
     const track = mediaStream.getAudioTracks?.()[0];
     const settings = track?.getSettings?.() || {};
@@ -497,6 +527,8 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
 
   function markModelActivity() {
     clearResponseWatchdog();
+    responsePending = false;
+    responseTimeoutStreak = 0;
     const now = performance.now();
     if (!turn.firstModelAt) turn.firstModelAt = now;
   }
@@ -544,11 +576,13 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
 
     if (content.waitingForInput) {
       clearResponseWatchdog();
+      responsePending = false;
       assistantSpeaking = false;
       if (pendingToolCalls === 0) transition(localSpeechActive ? 'user_speaking' : 'listening');
     }
 
     if (content.interrupted) {
+      responsePending = false;
       stopOutput(false);
       transition(localSpeechActive ? 'user_speaking' : 'listening');
     }
@@ -565,7 +599,12 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
       await scheduleOutput(part.inlineData.data, part.inlineData.mimeType || 'audio/pcm;rate=24000');
     }
 
-    if (content.turnComplete) { clearResponseWatchdog(); serverTurnComplete = true; void settleCompletedTurn(); }
+    if (content.turnComplete) {
+      clearResponseWatchdog();
+      responsePending = false;
+      serverTurnComplete = true;
+      void settleCompletedTurn();
+    }
   }
 
   function scheduleReconnect(reason = 'reconnect') {
@@ -624,7 +663,11 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
         setupComplete = false;
         if (handshakeTimer) clearTimeout(handshakeTimer); handshakeTimer = null;
         clearResponseWatchdog(); activityOpen = false; preRollFrames = [];
+        responsePending = false;
         stopOutput(); localSpeechActive = false; speechEvidenceMs = 0; lastVoicedAt = 0;
+        // A new socket is a new Live session in v10. Never merge partial transcript
+        // state from the dead socket into the next one.
+        resetUnfinishedTurn(`socket-close-${event.code || 0}`);
         if (!sessionActive) return;
         scheduleReconnect(reconnectRequested ? 'goaway' : 'socket-close');
       };
@@ -639,6 +682,7 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
     if (handshakeTimer) clearTimeout(handshakeTimer);
     reconnectTimer = handshakeTimer = null; setupComplete = false; pendingToolCalls = 0;
     clearResponseWatchdog(); activityOpen = false; preRollFrames = [];
+    responsePending = false; responseTimeoutStreak = 0;
     reconnectAttempts = 0; reconnectRequested = false; cachedInstruction = ''; currentSession = null;
     settlementGeneration += 1; stopMicrophone(); stopOutput();
     if (closeSocket) {
@@ -673,8 +717,9 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
     debug:() => ({
       version:'voice-core-v10', model:currentSession?.model || null,
       liveGeneration:currentSession?.liveGeneration || null, platform:ORIGIN,
-      vadMode:'manual-local', state, sessionActive, setupComplete, captureEnabled,
+      vadMode:'manual-local-gated', state, sessionActive, setupComplete, captureEnabled,
       localSpeechActive, localVoiceActive:localSpeechActive, assistantSpeaking, pendingToolCalls,
+      responsePending, responseTimeoutStreak,
       interimTranscript:turn.interimInput, finalTranscript:turn.finalInput,
       outputTranscript:turn.outputText, noiseFloor, threshold:speechThreshold(),
       inputSampleRate:inputContext?.sampleRate || null, activityOpen, responseDeadline
