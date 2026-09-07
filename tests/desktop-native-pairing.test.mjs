@@ -9,7 +9,6 @@ test('Desktop 2.1.1 faz pairing nativo sem PowerShell', () => {
   const main = read('apps/desktop-electron/main.cjs');
   const preload = read('apps/desktop-electron/preload.cjs');
   const web = read('public/desktop-pairing-auth-fix.js');
-
   assert.equal(pkg.version, '2.1.1');
   assert.equal(pkg.main, 'secure-main.cjs');
   assert.match(main, /system:pair-agent/);
@@ -21,6 +20,7 @@ test('Desktop 2.1.1 faz pairing nativo sem PowerShell', () => {
   assert.match(preload, /pairAgent/);
   assert.match(web, /system\.pairAgent/);
   assert.match(web, /PAREAR ESTE PC/);
+  assert.doesNotThrow(() => new Function(web));
 });
 
 test('Desktop trava navegacao externa antes de carregar bridge nativa', () => {
@@ -52,4 +52,5 @@ test('identidade de produto nao regride para 1.x', () => {
   assert.equal(manifest.name, 'SEXTA');
   assert.match(product, /4\.1\.1/);
   assert.match(serviceWorker, /sexta-4\.1\.1-operational/);
+  assert.doesNotThrow(() => new Function(product));
 });
