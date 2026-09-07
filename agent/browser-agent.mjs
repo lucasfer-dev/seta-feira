@@ -130,7 +130,7 @@ async function evaluate(port, expression, returnByValue = true) {
   return cdpCall(port, 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue, userGesture: true });
 }
 
-const SENSITIVE = /\b(?:send|submit|pay|purchase|buy|checkout|confirm|delete|remove|publish|post|transfer|wire|enviar|pagar|comprar|finalizar|confirmar|excluir|remover|publicar|transferir|assinar|subscribe)\b/i;
+const SENSITIVE = /\b(?:send|submit|pay|purchase|buy|checkout|confirm|delete|remove|publish|post|transfer|wire|enviar|pagar|comprar|finalizar|confirmar|excluir|remover|publicar|transferir|assinar|subscribe|ok|yes|sim|accept|aceitar|allow|permitir)\b/i;
 
 export async function browserOpen(cfg, rawUrl) {
   const url = new URL(String(rawUrl || ''));
@@ -170,6 +170,7 @@ export async function browserClick(cfg, index) {
   const meta = await browserElementMeta(port, index);
   if (!meta?.found) throw new Error('PC_BROWSER_ELEMENT_NOT_FOUND');
   if (meta.disabled) throw new Error('PC_BROWSER_ELEMENT_DISABLED');
+  if (!String(meta.text || '').trim()) throw new Error('PC_BROWSER_UNLABELED_CONTROL_BLOCKED');
   if (SENSITIVE.test(String(meta.text || ''))) throw new Error('PC_BROWSER_SENSITIVE_CONTROL_BLOCKED');
   const i = Math.max(0, Math.floor(Number(index) || 0));
   const expression = `(() => { const nodes=${interactiveExpression}; const el=nodes[${i}]; if(!el) return false; el.scrollIntoView({block:'center',inline:'center'}); el.focus(); el.click(); return true; })()`;
