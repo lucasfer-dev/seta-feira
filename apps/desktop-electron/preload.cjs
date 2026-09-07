@@ -1,4 +1,14 @@
 const { contextBridge, ipcRenderer } = require('electron');
+
+async function safeSystemStatus() {
+  const status = await ipcRenderer.invoke('system:status');
+  if (status?.agent?.diagnostics) {
+    const { lastLog, ...safeDiagnostics } = status.agent.diagnostics;
+    status.agent.diagnostics = safeDiagnostics;
+  }
+  return status;
+}
+
 contextBridge.exposeInMainWorld('sextaDesktop', {
   platform: process.platform,
   desktop: true,
@@ -19,11 +29,9 @@ contextBridge.exposeInMainWorld('sextaDesktop', {
       return () => ipcRenderer.removeListener('presence:state', listener);
     }
   },
-  overlay: {
-    open: () => ipcRenderer.send('overlay:open')
-  },
+  overlay: { open: () => ipcRenderer.send('overlay:open') },
   system: {
-    status: () => ipcRenderer.invoke('system:status'),
+    status: safeSystemStatus,
     retryCloud: () => ipcRenderer.invoke('system:retry-cloud'),
     restartAgent: () => ipcRenderer.invoke('system:restart-agent'),
     setupAgent: () => ipcRenderer.invoke('system:setup-agent'),
