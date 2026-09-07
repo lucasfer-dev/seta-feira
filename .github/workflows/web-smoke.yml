@@ -31,10 +31,22 @@ jobs:
         run: node --check public/voice-barge-in-guard.js
       - name: Check output jitter guard
         run: node --check public/voice-output-jitter-guard.js
+      - name: Check presence and tool context
+        run: |
+          node --check public/presence-engine.js
+          node --check public/voice-tool-context.js
       - name: Check canonical personality
         run: node --check public/sexta-personality.js
       - name: Check voice loader
         run: node --check public/voice-loader.js
+      - name: Check Tool Core
+        run: |
+          node --check lib/tool-policy.mjs
+          node --check lib/mcp-client.mjs
+          node --check lib/tool-core.mjs
+          node --check api/tool-execute.js
+          node --check api/tool-registry.js
+          node --check api/chat.js
       - name: Check live token endpoint
         run: node --check api/live-token.js
       - name: Assert deterministic Voice Core v10 contract
@@ -46,11 +58,14 @@ jobs:
           grep -q "activityEnd:{}" public/voice-core-v10.js
           grep -q "voice-barge-in-guard.js" public/voice-loader.js
           grep -q "voice-output-jitter-guard.js" public/voice-loader.js
+          grep -q "presence-engine.js" public/voice-loader.js
+          grep -q "voice-tool-context.js" public/voice-loader.js
           grep -q "START_SENSITIVITY_LOW" api/live-token.js
+          grep -q "getLiveToolDeclarations" api/live-token.js
           ! grep -Eq "voice-core-v[5-9]\\.js" public/voice-loader.js
       - name: Check audio resampler
         run: node --check public/audio-resampler.js
-      - name: Test voice contracts and audio quality
+      - name: Test voice contracts and tool safety
         run: node --test tests/*.test.mjs
       - name: Check SEXTA shell v2
         run: node --check public/sexta-shell-v2.js
