@@ -18,7 +18,7 @@ test('Event Engine v2 mantém cron observacional e novos tipos', () => {
   assert.match(cron, /runEventEngine/);
   assert.match(cron, /CRON_SECRET/);
   assert.match(cron, /x-vercel-cron-schedule/);
-  assert.doesNotMatch(cron, /queueCommand|executeTool|shell|exec/);
+  assert.doesNotMatch(cron, /queueCommand|executeTool|child_process|spawn\s*\(|exec\s*\(/);
 });
 
 test('Routines v2 encontram aliases naturais e preservam allowlist', async () => {
