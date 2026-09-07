@@ -8,16 +8,22 @@ on:
       - 'api/**'
       - 'lib/**'
       - 'tests/**'
+      - 'agent/**'
       - 'apps/android-capacitor/**'
+      - 'apps/desktop-electron/**'
       - '.github/workflows/web-smoke.yml'
+      - '.github/workflows/desktop-smoke.yml'
   pull_request:
     paths:
       - 'public/**'
       - 'api/**'
       - 'lib/**'
       - 'tests/**'
+      - 'agent/**'
       - 'apps/android-capacitor/**'
+      - 'apps/desktop-electron/**'
       - '.github/workflows/web-smoke.yml'
+      - '.github/workflows/desktop-smoke.yml'
 
 jobs:
   syntax:
@@ -47,10 +53,19 @@ jobs:
           node --check lib/tool-policy.mjs
           node --check lib/mcp-client.mjs
           node --check lib/android-hands-tools.mjs
+          node --check lib/pc-desktop-tools.mjs
           node --check lib/tool-core.mjs
           node --check api/tool-execute.js
           node --check api/tool-registry.js
           node --check api/chat.js
+          node --check api/pc-vision-analyze.js
+      - name: Check PC Agent modules
+        run: |
+          node --check agent/agent.mjs
+          node --check agent/windows-ui.mjs
+          node --check agent/browser-agent.mjs
+          node --check apps/desktop-electron/main.cjs
+          node --check apps/desktop-electron/preload.cjs
       - name: Check Android Hands preparation
         run: node --check apps/android-capacitor/scripts/prepare-hands.mjs
       - name: Check live token endpoint
@@ -70,6 +85,8 @@ jobs:
           grep -q "START_SENSITIVITY_LOW" api/live-token.js
           grep -q "getLiveToolDeclarations" api/live-token.js
           grep -q "ANDROID_HANDS_TOOL_DECLARATIONS" lib/tool-core.mjs
+          grep -q "PC_DESKTOP_TOOL_DECLARATIONS" lib/tool-core.mjs
+          grep -q "pc_agent_task" lib/tool-core.mjs
           ! grep -Eq "voice-core-v[5-9]\\.js" public/voice-loader.js
       - name: Check audio resampler
         run: node --check public/audio-resampler.js
