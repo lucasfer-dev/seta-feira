@@ -1,5 +1,6 @@
 import { pollCommands, send, updateCommand } from '../lib/core.mjs';
 import { isAgentRequest } from '../lib/agent-auth.mjs';
+import { decodeDesktopCommand } from '../lib/pc-command-protocol.mjs';
 
 const STALE_MS = 2 * 60 * 1000;
 
@@ -22,7 +23,8 @@ export default async function handler(req, res) {
         continue;
       }
       await updateCommand(command.id, 'running', null);
-      commands.push(command);
+      const decoded = decodeDesktopCommand(command.action, command.payload || {});
+      commands.push(decoded ? { ...command, action: decoded.action, payload: decoded.payload } : command);
     }
 
     return send(res, 200, { commands });
