@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-export const WAKE_WORD_VERSION = '1.0.0-system-speech';
+export const WAKE_WORD_VERSION = '1.0.1-system-speech';
 export function probeWakeWord() {
   if (process.platform !== 'win32') return { available: false, reason: 'windows_required' };
   const script = `Add-Type -AssemblyName System.Speech; $r=[System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers(); if($r.Count -gt 0){$r | ForEach-Object {$_.Culture.Name}} else {exit 2}`;
@@ -22,22 +22,15 @@ if(-not $info){$info=$installed | Select-Object -First 1}
 $rec=New-Object System.Speech.Recognition.SpeechRecognitionEngine($info)
 $choices=New-Object System.Speech.Recognition.Choices
 $choices.Add([string[]]$phrases)
-$builder=New-Object System.Speech.Recognition.GrammarBuilder($choices)
+$builder=New-Object System.Speech.Recognition.GrammarBuilder
+$builder.Append($choices)
 $grammar=New-Object System.Speech.Recognition.Grammar($builder)
 $rec.LoadGrammar($grammar); $rec.SetInputToDefaultAudioDevice()
 while($true){$r=$rec.Recognize([TimeSpan]::FromSeconds(2)); if($r -and $r.Confidence -ge ${Number(minConfidence).toFixed(2)}){Write-Output ('WAKE`t'+$r.Text+'`t'+$r.Confidence); [Console]::Out.Flush()}}
 `;
   const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true });
   let buffer = '';
-  child.stdout.on('data', chunk => {
-    buffer += chunk;
-    const lines = buffer.split(/\r?\n/); buffer = lines.pop() || '';
-    for (const line of lines) {
-      if (!line.startsWith('WAKE\t')) continue;
-      const [, phrase, confidence] = line.split('\t');
-      onWake({ phrase, confidence: Number(confidence) || 0, at: new Date().toISOString() });
-    }
-  });
+  child.stdout.on('data', chunk => { buffer += chunk; const lines = buffer.split(/\r?\n/); buffer = lines.pop() || ''; for (const line of lines) { if (!line.startsWith('WAKE\t')) continue; const [, phrase, confidence] = line.split('\t'); onWake({ phrase, confidence: Number(confidence) || 0, at: new Date().toISOString() }); } });
   return { started: true, child, cultures: probe.cultures, version: WAKE_WORD_VERSION };
 }
 
