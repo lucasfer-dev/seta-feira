@@ -6,9 +6,11 @@ class SextaOutputRingBufferProcessor extends AudioWorkletProcessor {
     const clampMs = (value, fallback, min, max) => Math.max(min, Math.min(max, Number(value) || fallback));
 
     this.rate = rate;
-    this.baseTargetMs = clampMs(cfg.targetMs, 160, 80, 320);
-    this.maxTargetMs = clampMs(cfg.maxTargetMs, 280, this.baseTargetMs, 420);
-    this.stepMs = clampMs(cfg.stepMs, 35, 10, 80);
+    // Browser telemetry can show packet gaps well above 400 ms. Keep a hard ceiling
+    // for safety, but allow the guard to request enough headroom to actually absorb them.
+    this.baseTargetMs = clampMs(cfg.targetMs, 160, 80, 800);
+    this.maxTargetMs = clampMs(cfg.maxTargetMs, 600, this.baseTargetMs, 1200);
+    this.stepMs = clampMs(cfg.stepMs, 35, 10, 160);
     this.targetMs = this.baseTargetMs;
     this.targetFrames = this.framesForMs(this.targetMs);
 
@@ -52,7 +54,7 @@ class SextaOutputRingBufferProcessor extends AudioWorkletProcessor {
       if (this.starvedFrame != null) {
         const gapFrames = Math.max(0, this.renderedFrames - this.starvedFrame);
         const gapMs = Math.round(gapFrames / this.rate * 1000);
-        if (gapMs <= 700) {
+        if (gapMs <= 900) {
           this.underruns += 1;
           this.rebuffers += 1;
           this.updateTarget(Math.min(this.maxTargetMs, this.targetMs + this.stepMs));
@@ -63,8 +65,7 @@ class SextaOutputRingBufferProcessor extends AudioWorkletProcessor {
             targetMs: Math.round(this.targetMs)
           });
         } else {
-          // A long silence is almost certainly the boundary between two user turns,
-          // not network jitter. Slowly recover latency toward the base target.
+          // Long silence is a turn boundary, not jitter. Recover latency slowly.
           this.updateTarget(Math.max(this.baseTargetMs, this.targetMs - this.stepMs));
         }
         this.starvedFrame = null;
@@ -168,9 +169,6 @@ class SextaOutputRingBufferProcessor extends AudioWorkletProcessor {
     }
 
     if (written < output.length) {
-      // Do not crackle on starvation. Fade to silence and wait for a healthy amount
-      // of audio before resuming. If another chunk arrives quickly this is counted
-      // as a real underrun; long gaps are treated as normal turn boundaries.
       this.fadeOutTail(output, written);
       this.playing = false;
       if (this.starvedFrame == null) this.starvedFrame = this.renderedFrames + written;
