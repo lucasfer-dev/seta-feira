@@ -8,9 +8,12 @@
   const IS_FIREFOX = /Firefox/i.test(navigator.userAgent);
   const OUTPUT_RATE = 24000;
   const LEGACY_EXTRA_BUFFER_SECONDS = IS_ANDROID ? 0.035 : 0.085;
-  const RING_TARGET_MS = IS_ANDROID ? 135 : IS_FIREFOX ? 190 : 160;
-  const RING_MAX_TARGET_MS = IS_ANDROID ? 240 : 280;
-  const RING_STEP_MS = 35;
+  // Production telemetry on Firefox showed real packet starvation gaps up to ~680 ms.
+  // A sub-300 ms ring target could never hide those gaps. Prefer a smooth voice with
+  // ~0.6 s output headroom over repeated crackle/rebuffer while keeping Android lean.
+  const RING_TARGET_MS = IS_ANDROID ? 150 : IS_FIREFOX ? 620 : 300;
+  const RING_MAX_TARGET_MS = IS_ANDROID ? 320 : IS_FIREFOX ? 950 : 600;
+  const RING_STEP_MS = IS_ANDROID ? 40 : IS_FIREFOX ? 110 : 70;
 
   let outputContexts = 0;
   let workletContexts = 0;
@@ -210,8 +213,6 @@
 
     return new Proxy(context, {
       get(target, prop) {
-        // Keep the legacy-biased clock because Voice Core uses it only to estimate
-        // drain timing. Actual playback continuity is owned by the AudioWorklet when available.
         if (prop === 'currentTime') return target.currentTime + LEGACY_EXTRA_BUFFER_SECONDS;
         if (prop === 'createBufferSource') return makeVirtualSource;
         const value = Reflect.get(target, prop, target);
@@ -229,14 +230,12 @@
     }
   });
 
-  // Voice Core asks for a 24 kHz context only on model output. Microphone capture,
-  // page sounds and unrelated AudioContexts remain native and untouched.
   window.__sextaNativeAudioContext = GuardedAudioContext;
   window.__sextaOutputOriginalAudioContext = OriginalAudioContext;
 
   window.__sextaOutputJitterGuard = {
     installed: true,
-    version: '2.0.0-ring-buffer',
+    version: '2.1.0-firefox-headroom',
     debug: () => ({
       mode: lastMode,
       extraBufferMs: Math.round(LEGACY_EXTRA_BUFFER_SECONDS * 1000),
