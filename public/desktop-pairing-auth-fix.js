@@ -13,6 +13,22 @@
     setTimeout(() => input?.focus(), 50);
   }
 
+  async function refreshNativeStatus() {
+    if (!window.sextaDesktop?.system?.status) return;
+    try {
+      const local = await window.sextaDesktop.system.status();
+      const target = document.querySelector('#s3ModalStatus');
+      if (!target || document.querySelector('#s3AgentChip')?.textContent?.includes('ONLINE')) return;
+      const diag = local?.agent?.diagnostics || {};
+      const parts = [`Desktop ${local?.version || window.sextaDesktop.version || '?'}`];
+      parts.push(local?.agent?.configured ? 'pareado localmente' : 'ainda não pareado');
+      parts.push(local?.agent?.running ? 'Agent rodando' : 'Agent parado');
+      if (diag.lastExitCode !== null && diag.lastExitCode !== undefined) parts.push(`último exit ${diag.lastExitCode}`);
+      if (diag.lastError) parts.push(`erro: ${String(diag.lastError).slice(0, 180)}`);
+      target.textContent = parts.join(' • ');
+    } catch {}
+  }
+
   async function pairInstalledDesktop(code) {
     const pairCode = document.querySelector('#s3PairCode');
     const pairExpiry = document.querySelector('#s3PairExpiry');
@@ -28,6 +44,7 @@
     }
     setTimeout(() => document.querySelector('#s3RefreshBtn')?.click(), 1200);
     setTimeout(() => document.querySelector('#s3RefreshBtn')?.click(), 3500);
+    setTimeout(refreshNativeStatus, 1800);
     return result;
   }
 
@@ -55,14 +72,11 @@
       const data = await response.json().catch(() => ({}));
       if (response.status === 401) {
         localStorage.removeItem('sexta_token');
-        return openOwnerLogin('Sua sessão expirou. Entre novamente e clique em GERAR CÓDIGO.');
+        return openOwnerLogin('Sua sessão expirou. Entre novamente e clique em PAREAR ESTE PC.');
       }
       if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
 
-      if (isDesktop()) {
-        await pairInstalledDesktop(data.code);
-        return;
-      }
+      if (isDesktop()) return await pairInstalledDesktop(data.code);
 
       if (pairCode) pairCode.textContent = data.code || 'ERRO';
       if (pairExpiry) {
@@ -74,6 +88,7 @@
     } catch (error) {
       if (pairCode) pairCode.textContent = 'ERRO';
       if (pairExpiry) pairExpiry.textContent = String(error?.message || error);
+      void refreshNativeStatus();
     } finally {
       button.disabled = false;
     }
@@ -84,17 +99,20 @@
     const card = document.querySelector('#s3PairCode')?.closest('.s3-control-card');
     const intro = card?.querySelector('h3 + p');
     const button = document.querySelector('#s3PairReveal');
-    if (intro) intro.innerHTML = 'Clique em <strong>PAREAR ESTE PC</strong>. A SEXTA cria um código temporário, registra este Windows localmente e inicia o PC Agent sem terminal ou npm.';
+    if (intro) intro.innerHTML = 'Clique em <strong>PAREAR ESTE PC</strong>. A SEXTA registra este Windows localmente e inicia o PC Agent sem terminal, npm ou PowerShell.';
     if (button) button.textContent = 'PAREAR ESTE PC';
+    void refreshNativeStatus();
   }
 
   function openAgentControlFromDesktop() {
     const modal = document.querySelector('.s3-agent-modal');
     if (modal && !modal.open) modal.showModal();
+    void refreshNativeStatus();
   }
 
   document.addEventListener('click', generatePairingCode, true);
   window.addEventListener('sexta:open-agent-control', openAgentControlFromDesktop);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', improveDesktopInstructions, { once: true });
   else queueMicrotask(improveDesktopInstructions);
+  setInterval(refreshNativeStatus, 12000);
 })();
