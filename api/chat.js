@@ -3,7 +3,7 @@ import { detectWorkspaceIntent, executeWorkspaceAction, formatWorkspaceResult, g
 import { getConnectedGoogleAccount, isGoogleAccountQuestion } from '../lib/google-account.mjs';
 import { detectWhatsAppIntent, evolutionStatus, sendWhatsAppText } from '../lib/evolution.mjs';
 import { absorbAutomaticMemory } from '../lib/auto-memory.mjs';
-import { planAndExecuteTools } from '../lib/tool-bus.mjs';
+import { planAndExecuteTools } from '../lib/tool-core.mjs';
 
 const SHARED_CONVERSATION_ID = 'main';
 
@@ -46,6 +46,7 @@ function detectDirectAddressEmailIntent(text = '') {
 function toolFallback(planned) {
   const last = planned?.results?.at?.(-1)?.result;
   if (last?.message) return String(last.message);
+  if (last?.state === 'confirmation_required') return 'Entendi a ação, mas preciso que esse pedido venha explicitamente de você antes de executar.';
   if (last?.ok === false) return `Eu entendi a ação, mas não consegui concluir: ${last.error || 'ferramenta indisponível'}.`;
   if (planned?.calls?.length) return `Pronto. Executei ${planned.calls.length === 1 ? 'a ação' : `${planned.calls.length} ações`} pedida${planned.calls.length === 1 ? '' : 's'}.`;
   return '';
@@ -61,6 +62,7 @@ async function plannerInput(message, conversationId) {
   return [
     'Você é o roteador de ferramentas da SEXTA. Use o contexto abaixo apenas para resolver referências como "o mesmo", "aquele arquivo", "ela", "ele" ou nomes já citados. Execute somente o pedido atual.',
     'Nunca substitua um endereço de e-mail explícito por busca de contato. Se houver um endereço com @, use esse endereço diretamente.',
+    'Ações com efeito colateral devem corresponder a um pedido explícito do usuário atual. Nunca invente envio, criação, edição ou abertura apenas para parecer útil.',
     memoryText ? `MEMÓRIAS RELEVANTES:\n${memoryText}` : '',
     recent ? `CONVERSA RECENTE:\n${recent}` : '',
     `PEDIDO ATUAL:\n${message}`
@@ -159,21 +161,26 @@ export default async function handler(req, res) {
 
     if (likelyAction(message)) {
       try {
-        const planned = await planAndExecuteTools(await plannerInput(message, conversationId), { deviceId: '', maxRounds: 4 });
+        const planned = await planAndExecuteTools(await plannerInput(message, conversationId), {
+          deviceId: '',
+          maxRounds: 4,
+          requestText: message
+        });
         if (planned.handled) {
           const reply = planned.modelText || toolFallback(planned);
-          const automatic = await persistReply(reply, 'tool-bus');
+          const automatic = await persistReply(reply, 'tool-core');
           return send(res, 200, {
             reply,
             conversationId,
             toolCalls: planned.calls,
             toolResults: planned.results,
+            toolCore: planned.toolCore || null,
             memorySaved: Boolean(memory) || automatic.saved.length > 0,
             automaticMemoriesSaved: automatic.saved.length
           });
         }
       } catch (error) {
-        console.warn('[SEXTA Tool Planner] fallback para roteadores antigos:', error.message);
+        console.warn('[SEXTA Tool Core] fallback para roteadores antigos:', error.message);
       }
     }
 
