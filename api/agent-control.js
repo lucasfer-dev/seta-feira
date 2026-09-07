@@ -1,4 +1,5 @@
 import { getDevices, isOwner, parseJson, queueCommand, send } from '../lib/core.mjs';
+import { encodeDesktopCommand } from '../lib/pc-command-protocol.mjs';
 
 const AUTONOMY = new Set(['observer', 'assistant', 'autonomous']);
 const CONTROL_OPS = new Set(['pause', 'resume', 'cancel', 'set_autonomy', 'set_privacy']);
@@ -33,8 +34,9 @@ export default async function handler(req, res) {
   }
 
   try {
-    const command = await queueCommand(targetDeviceId, 'agent_control', payload);
-    return send(res, 200, { ok: true, command });
+    const transport = encodeDesktopCommand('agent_control', payload);
+    const command = await queueCommand(targetDeviceId, transport.action, transport.payload);
+    return send(res, 200, { ok: true, command: { ...command, action: 'agent_control' } });
   } catch (error) {
     return send(res, 500, { error: 'agent_control_failed', message: String(error?.message || error) });
   }
