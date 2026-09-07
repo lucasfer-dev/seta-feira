@@ -13,9 +13,6 @@
   const MAX_BUFFER_MS = 360;
   const PASS_THROUGH_MS = 1200;
 
-  // While the assistant is idle/listening we use a second, lighter gate before
-  // Voice Core sees a frame. This prevents room noise from repeatedly opening a
-  // manual activityStart/activityEnd turn and trapping Gemini in timeout loops.
   const LISTEN_BASE_THRESHOLD = IS_ANDROID ? 0.014 : IS_FIREFOX ? 0.0115 : 0.0105;
   const LISTEN_FLOOR_MULTIPLIER = IS_ANDROID ? 4.5 : IS_FIREFOX ? 4.2 : 3.8;
   const LISTEN_CONFIRM_MS = IS_ANDROID ? 150 : 125;
@@ -72,6 +69,10 @@
     return Math.max(LISTEN_BASE_THRESHOLD, ambientFloor * LISTEN_FLOOR_MULTIPLIER);
   }
 
+  function shouldGateIdleSpeech() {
+    return !assistantSpeaking && (voiceState === 'listening' || voiceState === 'thinking' || voiceState === 'recovering');
+  }
+
   window.addEventListener('sexta:voice-state', event => {
     const detail = event?.detail || {};
     const nextSpeaking = Boolean(detail.assistantSpeaking || detail.state === 'speaking');
@@ -84,7 +85,6 @@
     }
     if (!nextSpeaking && assistantSpeaking) resetCandidate();
     if (nextState === 'user_speaking') {
-      // Once Voice Core has accepted the real utterance, stop gating its frames.
       listenPassThroughUntil = Number.POSITIVE_INFINITY;
       listenCandidateMs = 0;
       listenCandidatePeak = 0;
@@ -197,9 +197,7 @@
         ambientFloor = ambientFloor * 0.994 + level * 0.006;
       }
 
-      // Idle/listening gate. It only suppresses frames before Voice Core has accepted
-      // a real utterance; once state becomes user_speaking all frames pass normally.
-      if (!assistantSpeaking && voiceState === 'listening') {
+      if (shouldGateIdleSpeech()) {
         if (now < listenPassThroughUntil) return;
 
         event.stopImmediatePropagation();
@@ -229,7 +227,7 @@
           listenCandidatePeak = 0;
           replayListenBuffered();
           window.dispatchEvent(new CustomEvent('sexta:listen-gate', {
-            detail: { phase: 'accepted', level, threshold: gate, fast }
+            detail: { phase: 'accepted', level, threshold: gate, fast, voiceState }
           }));
         }
         return;
@@ -297,7 +295,7 @@
   window.AudioWorkletNode = GuardedAudioWorkletNode;
   window.__sextaBargeInGuard = {
     installed: true,
-    version: '1.2.0-listen-gate',
+    version: '1.2.1-listen-thinking-gate',
     debug: () => ({
       assistantSpeaking,
       voiceState,
