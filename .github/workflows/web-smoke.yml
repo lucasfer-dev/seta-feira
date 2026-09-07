@@ -104,6 +104,8 @@ jobs:
           grep -q "vadMode:'manual'" public/voice-core-v10.js
           grep -q "activityStart:{}" public/voice-core-v10.js
           grep -q "activityEnd:{}" public/voice-core-v10.js
+          grep -q "responsePending" public/voice-core-v10.js
+          grep -q "resetUnfinishedTurn" public/voice-core-v10.js
           grep -q "voice-barge-in-guard.js" public/voice-loader.js
           grep -q "voice-output-jitter-guard.js" public/voice-loader.js
           grep -q "presence-engine.js" public/voice-loader.js
@@ -114,7 +116,8 @@ jobs:
           grep -q "ANDROID_HANDS_TOOL_DECLARATIONS" lib/tool-core.mjs
           grep -q "PC_DESKTOP_TOOL_DECLARATIONS" lib/tool-core.mjs
           grep -q "pc_agent_task" lib/tool-core.mjs
-          grep -q "2.0.0-ring-buffer" public/voice-output-jitter-guard.js
+          grep -q "2.1.0-firefox-headroom" public/voice-output-jitter-guard.js
+          grep -q "1.2.1-listen-thinking-gate" public/voice-barge-in-guard.js
           grep -q "sexta-output-ring-buffer" public/live-output-worklet.js
           ! grep -Eq "voice-core-v[5-9]\\.js" public/voice-loader.js
       - name: Check audio resampler
