@@ -81,7 +81,7 @@ jobs:
           node --check api/cron-event-engine.js
           node --check api/handoff.js
           node --check api/model-router.js
-      - name: Check cloud router and 24/7 cron
+      - name: Check cloud router and Hobby-safe cron
         run: |
           node --check server.mjs
           grep -q "'/api/tool-registry', toolRegistry" server.mjs
@@ -95,7 +95,7 @@ jobs:
           grep -q "'/api/handoff', handoff" server.mjs
           grep -q "'/api/model-router', modelRouter" server.mjs
           grep -Fq '"/api/cron-event-engine"' vercel.json
-          grep -Fq '"*/5 * * * *"' vercel.json
+          grep -Fq '"0 11 * * *"' vercel.json
       - name: Check PC Agent v4.1 modules
         run: |
           node --check agent/agent-v3.mjs
