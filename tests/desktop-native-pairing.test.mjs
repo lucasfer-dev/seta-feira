@@ -35,7 +35,8 @@ test('Desktop trava navegacao externa antes de carregar bridge nativa', () => {
 test('Desktop continua sem primitive shell/exec exposta ao renderer', () => {
   const preload = read('apps/desktop-electron/preload.cjs');
   assert.doesNotMatch(preload, /shell|exec|spawn|powershell/i);
-  assert.doesNotMatch(preload, /lastLog/);
+  assert.match(preload, /const \{ lastLog, \.\.\.safeDiagnostics \}/);
+  assert.match(preload, /status\.agent\.diagnostics = safeDiagnostics/);
 });
 
 test('sync tolera falhas parciais de backend', () => {
