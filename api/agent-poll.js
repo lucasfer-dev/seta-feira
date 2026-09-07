@@ -1,13 +1,14 @@
-import { isAgent, pollCommands, send, updateCommand } from '../lib/core.mjs';
+import { pollCommands, send, updateCommand } from '../lib/core.mjs';
+import { isAgentRequest } from '../lib/agent-auth.mjs';
 
 const STALE_MS = 2 * 60 * 1000;
 
 export default async function handler(req, res) {
   if (req.method !== 'GET') return send(res, 405, { error: 'method_not_allowed' });
-  if (!isAgent(req)) return send(res, 401, { error: 'unauthorized' });
   const url = new URL(req.url, 'http://localhost');
   const deviceId = url.searchParams.get('deviceId');
   if (!deviceId) return send(res, 400, { error: 'device_id_required' });
+  if (!isAgentRequest(req, deviceId)) return send(res, 401, { error: 'unauthorized' });
 
   try {
     const queued = await pollCommands(deviceId);
