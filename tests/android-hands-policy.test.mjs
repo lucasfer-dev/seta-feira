@@ -47,7 +47,7 @@ test('native accessibility layer blocks generic sensitive final controls', () =>
 });
 
 test('Hands v1 enables tree retrieval only in the explicit build preparation step', () => {
-  assert.match(prepareHands, /canRetrieveWindowContent=\\"true\\"/);
+  assert.match(prepareHands, /canRetrieveWindowContent="true"/);
   assert.match(prepareHands, /flagReportViewIds\|flagRetrieveInteractiveWindows/);
   assert.match(prepareHands, /ui_snapshot/);
   assert.match(prepareHands, /AndroidHandsExecutor/);
