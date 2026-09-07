@@ -55,9 +55,12 @@
     let sequence = 0;
     let workletNode = null;
     let workletReady = false;
-    let workletFailed = false;
+    const canUseWorklet = Boolean(context.audioWorklet && typeof window.AudioWorkletNode === 'function');
+    let workletFailed = !canUseWorklet;
     const pendingStarts = [];
     const finishers = new Map();
+
+    if (!canUseWorklet) lastMode = 'legacy-buffer-source';
 
     const finishById = (id, detail = {}) => {
       const finish = finishers.get(id);
@@ -74,54 +77,55 @@
       }
     };
 
-    const readyPromise = (async () => {
-      if (!context.audioWorklet || typeof window.AudioWorkletNode !== 'function') throw new Error('AUDIO_WORKLET_UNAVAILABLE');
-      await context.audioWorklet.addModule('/live-output-worklet.js');
-      workletNode = new window.AudioWorkletNode(context, 'sexta-output-ring-buffer', {
-        numberOfInputs: 0,
-        numberOfOutputs: 1,
-        outputChannelCount: [1],
-        processorOptions: {
-          targetMs: RING_TARGET_MS,
-          maxTargetMs: RING_MAX_TARGET_MS,
-          stepMs: RING_STEP_MS
-        }
-      });
-      workletNode.connect(context.destination);
-      workletNode.port.onmessage = event => {
-        const message = event.data || {};
-        if (message.type === 'ready') {
-          adaptiveTargetMs = Number(message.targetMs || RING_TARGET_MS);
+    const readyPromise = canUseWorklet
+      ? (async () => {
+          await context.audioWorklet.addModule('/live-output-worklet.js');
+          workletNode = new window.AudioWorkletNode(context, 'sexta-output-ring-buffer', {
+            numberOfInputs: 0,
+            numberOfOutputs: 1,
+            outputChannelCount: [1],
+            processorOptions: {
+              targetMs: RING_TARGET_MS,
+              maxTargetMs: RING_MAX_TARGET_MS,
+              stepMs: RING_STEP_MS
+            }
+          });
+          workletNode.connect(context.destination);
+          workletNode.port.onmessage = event => {
+            const message = event.data || {};
+            if (message.type === 'ready') {
+              adaptiveTargetMs = Number(message.targetMs || RING_TARGET_MS);
+              lastMode = 'audio-worklet-ring';
+              return;
+            }
+            if (message.type === 'chunk_end') {
+              finishById(message.id, message);
+              return;
+            }
+            if (message.type === 'underrun') {
+              detectedUnderruns = Math.max(detectedUnderruns + 1, Number(message.underruns || 0));
+              lastGapMs = Math.max(0, Math.round(Number(message.gapMs || 0)));
+              adaptiveTargetMs = Math.round(Number(message.targetMs || adaptiveTargetMs || RING_TARGET_MS));
+              reportUnderrun(lastGapMs, adaptiveTargetMs);
+              return;
+            }
+            if (message.type === 'stats' || message.type === 'playing' || message.type === 'starved') {
+              if (Number.isFinite(Number(message.queueMs))) lastQueuedMs = Math.max(0, Math.round(Number(message.queueMs)));
+              if (Number.isFinite(Number(message.targetMs))) adaptiveTargetMs = Math.max(RING_TARGET_MS, Math.round(Number(message.targetMs)));
+            }
+          };
+          workletReady = true;
+          workletContexts += 1;
           lastMode = 'audio-worklet-ring';
-          return;
-        }
-        if (message.type === 'chunk_end') {
-          finishById(message.id, message);
-          return;
-        }
-        if (message.type === 'underrun') {
-          detectedUnderruns = Math.max(detectedUnderruns + 1, Number(message.underruns || 0));
-          lastGapMs = Math.max(0, Math.round(Number(message.gapMs || 0)));
-          adaptiveTargetMs = Math.round(Number(message.targetMs || adaptiveTargetMs || RING_TARGET_MS));
-          reportUnderrun(lastGapMs, adaptiveTargetMs);
-          return;
-        }
-        if (message.type === 'stats' || message.type === 'playing' || message.type === 'starved') {
-          if (Number.isFinite(Number(message.queueMs))) lastQueuedMs = Math.max(0, Math.round(Number(message.queueMs)));
-          if (Number.isFinite(Number(message.targetMs))) adaptiveTargetMs = Math.max(RING_TARGET_MS, Math.round(Number(message.targetMs)));
-        }
-      };
-      workletReady = true;
-      workletContexts += 1;
-      lastMode = 'audio-worklet-ring';
-      flushPending();
-    })().catch(error => {
-      workletFailed = true;
-      workletFailures += 1;
-      lastMode = 'legacy-buffer-source';
-      console.warn('[SEXTA Output] AudioWorklet indisponível; usando scheduler legado.', error);
-      flushPending();
-    });
+          flushPending();
+        })().catch(error => {
+          workletFailed = true;
+          workletFailures += 1;
+          lastMode = 'legacy-buffer-source';
+          console.warn('[SEXTA Output] AudioWorklet falhou; usando scheduler legado.', error);
+          flushPending();
+        })
+      : Promise.resolve();
 
     function makeVirtualSource() {
       const id = `ctx${contextId}-chunk${++sequence}`;
@@ -207,7 +211,7 @@
     return new Proxy(context, {
       get(target, prop) {
         // Keep the legacy-biased clock because Voice Core uses it only to estimate
-        // drain timing. Actual playback continuity is now owned by the AudioWorklet.
+        // drain timing. Actual playback continuity is owned by the AudioWorklet when available.
         if (prop === 'currentTime') return target.currentTime + LEGACY_EXTRA_BUFFER_SECONDS;
         if (prop === 'createBufferSource') return makeVirtualSource;
         const value = Reflect.get(target, prop, target);
@@ -235,6 +239,8 @@
     version: '2.0.0-ring-buffer',
     debug: () => ({
       mode: lastMode,
+      extraBufferMs: Math.round(LEGACY_EXTRA_BUFFER_SECONDS * 1000),
+      effectiveTargetMs: Math.round(LEGACY_EXTRA_BUFFER_SECONDS * 1000) + (IS_ANDROID ? 90 : 28),
       baseTargetMs: RING_TARGET_MS,
       adaptiveTargetMs,
       maxTargetMs: RING_MAX_TARGET_MS,
