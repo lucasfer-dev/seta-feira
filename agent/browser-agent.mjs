@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let browserProcess = null;
+let selectedTargetId = null;
 
 function browserPort(cfg = {}) {
   return Math.max(1025, Math.min(65534, Number(cfg.browser?.debugPort) || 9223));
@@ -72,13 +73,29 @@ async function ensureBrowser(cfg = {}) {
   throw new Error('PC_BROWSER_DEBUG_NOT_READY');
 }
 
-async function pageTarget(port) {
+async function pageTargets(port) {
   const response = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(1500) });
   if (!response.ok) throw new Error(`PC_BROWSER_TARGETS_${response.status}`);
   const targets = await response.json();
-  const pages = (Array.isArray(targets) ? targets : []).filter(item => item?.type === 'page' && item?.webSocketDebuggerUrl);
+  return (Array.isArray(targets) ? targets : []).filter(item => item?.type === 'page' && item?.webSocketDebuggerUrl && !String(item.url || '').startsWith('devtools://'));
+}
+
+async function pageTarget(port) {
+  const pages = await pageTargets(port);
   if (!pages.length) throw new Error('PC_BROWSER_NO_PAGE');
-  return pages.find(item => !String(item.url || '').startsWith('devtools://')) || pages[0];
+  const selected = selectedTargetId ? pages.find(item => item.id === selectedTargetId) : null;
+  const target = selected || pages[0];
+  selectedTargetId = target.id;
+  return target;
+}
+
+async function activateTarget(port, id) {
+  const targetId = String(id || '');
+  if (!targetId) throw new Error('PC_BROWSER_TAB_ID_REQUIRED');
+  const response = await fetch(`http://127.0.0.1:${port}/json/activate/${encodeURIComponent(targetId)}`, { signal: AbortSignal.timeout(1500) });
+  if (!response.ok) throw new Error(`PC_BROWSER_TAB_ACTIVATE_${response.status}`);
+  selectedTargetId = targetId;
+  return true;
 }
 
 async function cdpCall(port, method, params = {}) {
@@ -130,6 +147,18 @@ async function evaluate(port, expression, returnByValue = true) {
   return cdpCall(port, 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue, userGesture: true });
 }
 
+async function waitForReady(port, timeoutMs = 4500) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const state = parseEval(await evaluate(port, 'document.readyState'));
+      if (state === 'complete' || state === 'interactive') return state;
+    } catch {}
+    await sleep(120);
+  }
+  return 'timeout';
+}
+
 const SENSITIVE = /\b(?:send|submit|pay|purchase|buy|checkout|confirm|delete|remove|publish|post|transfer|wire|enviar|pagar|comprar|finalizar|confirmar|excluir|remover|publicar|transferir|assinar|subscribe|ok|yes|sim|accept|aceitar|allow|permitir)\b/i;
 
 export async function browserOpen(cfg, rawUrl) {
@@ -138,12 +167,35 @@ export async function browserOpen(cfg, rawUrl) {
   const port = await ensureBrowser(cfg);
   await cdpCall(port, 'Page.enable').catch(() => {});
   const result = await cdpCall(port, 'Page.navigate', { url: url.toString() });
-  await sleep(500);
-  return { opened: url.toString(), frameId: result.frameId || null, port, profile: browserProfile(cfg) };
+  await waitForReady(port, 5000);
+  const target = await pageTarget(port);
+  return { opened: url.toString(), frameId: result.frameId || null, tabId: target.id, port, profile: browserProfile(cfg) };
+}
+
+export async function browserTabs(cfg) {
+  const port = await ensureBrowser(cfg);
+  const pages = await pageTargets(port);
+  if (!pages.length) throw new Error('PC_BROWSER_NO_PAGE');
+  if (!selectedTargetId || !pages.some(page => page.id === selectedTargetId)) selectedTargetId = pages[0].id;
+  return {
+    selectedTargetId,
+    tabs: pages.slice(0, 24).map((page, index) => ({ index, id: page.id, title: String(page.title || '').slice(0, 240), url: String(page.url || '').slice(0, 1000), selected: page.id === selectedTargetId }))
+  };
+}
+
+export async function browserSelectTab(cfg, index) {
+  const port = await ensureBrowser(cfg);
+  const pages = await pageTargets(port);
+  const i = Math.max(0, Math.floor(Number(index) || 0));
+  const target = pages[i];
+  if (!target) throw new Error('PC_BROWSER_TAB_NOT_FOUND');
+  await activateTarget(port, target.id);
+  return { selected: true, index: i, id: target.id, title: String(target.title || '').slice(0, 240), url: String(target.url || '').slice(0, 1000) };
 }
 
 export async function browserSnapshot(cfg) {
   const port = await ensureBrowser(cfg);
+  const target = await pageTarget(port);
   const expression = `(() => {
     const visible = el => { const s=getComputedStyle(el), r=el.getBoundingClientRect(); return s.display!=='none'&&s.visibility!=='hidden'&&Number(s.opacity||1)>0&&r.width>0&&r.height>0; };
     const nodes=[...document.querySelectorAll('a,button,input,textarea,select,[role="button"],[role="link"],[role="checkbox"],[role="tab"],[contenteditable="true"]')].filter(visible).slice(0,140);
@@ -156,7 +208,7 @@ export async function browserSnapshot(cfg) {
     return JSON.stringify({title:document.title,url:location.href,text:String(document.body?.innerText||'').replace(/\\n{3,}/g,'\\n\\n').slice(0,14000),elements});
   })()`;
   const raw = await evaluate(port, expression);
-  return parseEval(raw) || {};
+  return { ...(parseEval(raw) || {}), tabId: target.id };
 }
 
 async function browserElementMeta(port, index) {
@@ -200,6 +252,20 @@ export async function browserBack(cfg) {
   return { back: true };
 }
 
+export async function browserForward(cfg) {
+  const port = await ensureBrowser(cfg);
+  parseEval(await evaluate(port, `(() => { history.forward(); return true; })()`));
+  await sleep(350);
+  return { forward: true };
+}
+
+export async function browserReload(cfg) {
+  const port = await ensureBrowser(cfg);
+  await cdpCall(port, 'Page.reload', { ignoreCache: false });
+  await waitForReady(port, 5000);
+  return { reloaded: true };
+}
+
 export function browserStatus(cfg = {}) {
-  return { configured: true, port: browserPort(cfg), profile: browserProfile(cfg), processStarted: Boolean(browserProcess) };
+  return { configured: true, port: browserPort(cfg), profile: browserProfile(cfg), processStarted: Boolean(browserProcess), selectedTargetId };
 }
