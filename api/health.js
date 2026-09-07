@@ -4,7 +4,7 @@ export default async function handler(req, res) {
   send(res, 200, {
     ok: true,
     version: '3.1.0-voice-core-v10-personality-v2',
-    operationalVersion: '4.1.0',
+    operationalVersion: '4.1.0-operational',
     voiceCore: 'v10',
     liveModel: 'gemini-3.1-flash-live-preview',
     vadMode: 'manual-local',
