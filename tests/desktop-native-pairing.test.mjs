@@ -11,6 +11,7 @@ test('Desktop 2.1.1 faz pairing nativo sem PowerShell', () => {
   const web = read('public/desktop-pairing-auth-fix.js');
 
   assert.equal(pkg.version, '2.1.1');
+  assert.equal(pkg.main, 'secure-main.cjs');
   assert.match(main, /system:pair-agent/);
   assert.match(main, /pairAgent\(payload/);
   assert.match(main, /SEXTA_AGENT_STATE/);
@@ -22,9 +23,19 @@ test('Desktop 2.1.1 faz pairing nativo sem PowerShell', () => {
   assert.match(web, /PAREAR ESTE PC/);
 });
 
+test('Desktop trava navegacao externa antes de carregar bridge nativa', () => {
+  const secure = read('apps/desktop-electron/secure-main.cjs');
+  assert.match(secure, /TRUSTED_ORIGIN/);
+  assert.match(secure, /will-navigate/);
+  assert.match(secure, /will-redirect/);
+  assert.match(secure, /setPermissionRequestHandler/);
+  assert.match(secure, /\['media', 'notifications'\]/);
+});
+
 test('Desktop continua sem primitive shell/exec exposta ao renderer', () => {
   const preload = read('apps/desktop-electron/preload.cjs');
   assert.doesNotMatch(preload, /shell|exec|spawn|powershell/i);
+  assert.doesNotMatch(preload, /lastLog/);
 });
 
 test('sync tolera falhas parciais de backend', () => {
