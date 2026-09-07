@@ -1,9 +1,12 @@
-import { addEvent, isAgent, parseJson, send, updateCommand } from '../lib/core.mjs';
+import { addEvent, parseJson, send, updateCommand } from '../lib/core.mjs';
+import { isAgentRequest } from '../lib/agent-auth.mjs';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
-  if (!isAgent(req)) return send(res, 401, { error: 'unauthorized' });
   const body = await parseJson(req);
+  const deviceId = String(body.deviceId || '').trim();
+  if (!deviceId) return send(res, 400, { error: 'device_id_required' });
+  if (!isAgentRequest(req, deviceId)) return send(res, 401, { error: 'unauthorized' });
   try {
     const requestedStatus = String(body.status || '').toLowerCase();
     const status = ['running', 'done', 'failed'].includes(requestedStatus)
