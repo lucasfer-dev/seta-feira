@@ -35,7 +35,7 @@ jobs:
             apps/desktop-electron/dist/*.blockmap
             apps/desktop-electron/dist/latest.yml
           if-no-files-found: error
-      - name: Publish desktop release for auto-update
+      - name: Publish tagged desktop release for auto-update
         if: startsWith(github.ref, 'refs/tags/desktop-v')
         uses: softprops/action-gh-release@v2
         with:
@@ -44,3 +44,27 @@ jobs:
             apps/desktop-electron/dist/*.exe
             apps/desktop-electron/dist/*.blockmap
             apps/desktop-electron/dist/latest.yml
+      - name: Publish current desktop version from main when missing
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = node -p "require('./apps/desktop-electron/package.json').version"
+          $tag = "desktop-v$version"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists; leaving it immutable."
+            exit 0
+          }
+
+          $assets = Get-ChildItem 'apps/desktop-electron/dist' -File | Where-Object {
+            $_.Extension -eq '.exe' -or $_.Extension -eq '.blockmap' -or $_.Name -eq 'latest.yml'
+          } | ForEach-Object { $_.FullName }
+          if (-not $assets -or $assets.Count -lt 3) { throw 'Desktop update assets are incomplete.' }
+
+          gh release create $tag @assets `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
+            --title "SEXTA Desktop v$version" `
+            --generate-notes
