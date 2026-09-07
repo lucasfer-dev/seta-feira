@@ -5,14 +5,22 @@
   if (typeof OriginalAudioContext !== 'function') return;
 
   const IS_ANDROID = /Android/i.test(navigator.userAgent);
+  const IS_FIREFOX = /Firefox/i.test(navigator.userAgent);
   const OUTPUT_RATE = 24000;
-  const EXTRA_BUFFER_SECONDS = IS_ANDROID ? 0.035 : 0.085;
-  const UNDERRUN_GAP_SECONDS = 0.018;
+  const LEGACY_EXTRA_BUFFER_SECONDS = IS_ANDROID ? 0.035 : 0.085;
+  const RING_TARGET_MS = IS_ANDROID ? 135 : IS_FIREFOX ? 190 : 160;
+  const RING_MAX_TARGET_MS = IS_ANDROID ? 240 : 280;
+  const RING_STEP_MS = 35;
 
   let outputContexts = 0;
+  let workletContexts = 0;
+  let workletFailures = 0;
   let scheduledChunks = 0;
   let detectedUnderruns = 0;
   let lastGapMs = 0;
+  let lastQueuedMs = 0;
+  let adaptiveTargetMs = RING_TARGET_MS;
+  let lastMode = 'initializing';
 
   function authHeaders() {
     const token = localStorage.getItem('sexta_token') || '';
@@ -22,17 +30,20 @@
     };
   }
 
-  function reportUnderrun(gapMs) {
+  function reportUnderrun(gapMs, targetMs) {
     void fetch('/api/live-metrics', {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({
         kind: 'voice_core_v10:output_underrun',
         platform: IS_ANDROID ? 'android' : 'browser',
-        phase: 'playback',
+        phase: 'playback-ring-buffer',
         outputUnderruns: detectedUnderruns,
-        prebufferMs: Math.round(EXTRA_BUFFER_SECONDS * 1000),
-        gapMs
+        prebufferMs: Math.round(targetMs || adaptiveTargetMs || RING_TARGET_MS),
+        gapMs,
+        outputQueueMs: lastQueuedMs,
+        outputBufferTargetMs: Math.round(targetMs || adaptiveTargetMs || RING_TARGET_MS),
+        outputMode: 'audio-worklet-ring'
       })
     }).catch(() => {});
   }
@@ -40,64 +51,169 @@
   function wrapOutputContext(context) {
     outputContexts += 1;
     const nativeCreateBufferSource = context.createBufferSource.bind(context);
-    let lastActualEnd = 0;
+    const contextId = outputContexts;
+    let sequence = 0;
+    let workletNode = null;
+    let workletReady = false;
+    const canUseWorklet = Boolean(context.audioWorklet && typeof window.AudioWorkletNode === 'function');
+    let workletFailed = !canUseWorklet;
+    const pendingStarts = [];
+    const finishers = new Map();
+
+    if (!canUseWorklet) lastMode = 'legacy-buffer-source';
+
+    const finishById = (id, detail = {}) => {
+      const finish = finishers.get(id);
+      if (!finish) return;
+      finishers.delete(id);
+      finish(detail);
+    };
+
+    const flushPending = () => {
+      const items = pendingStarts.splice(0);
+      for (const item of items) {
+        if (workletReady) item.pushToWorklet();
+        else item.startLegacy();
+      }
+    };
+
+    const readyPromise = canUseWorklet
+      ? (async () => {
+          await context.audioWorklet.addModule('/live-output-worklet.js');
+          workletNode = new window.AudioWorkletNode(context, 'sexta-output-ring-buffer', {
+            numberOfInputs: 0,
+            numberOfOutputs: 1,
+            outputChannelCount: [1],
+            processorOptions: {
+              targetMs: RING_TARGET_MS,
+              maxTargetMs: RING_MAX_TARGET_MS,
+              stepMs: RING_STEP_MS
+            }
+          });
+          workletNode.connect(context.destination);
+          workletNode.port.onmessage = event => {
+            const message = event.data || {};
+            if (message.type === 'ready') {
+              adaptiveTargetMs = Number(message.targetMs || RING_TARGET_MS);
+              lastMode = 'audio-worklet-ring';
+              return;
+            }
+            if (message.type === 'chunk_end') {
+              finishById(message.id, message);
+              return;
+            }
+            if (message.type === 'underrun') {
+              detectedUnderruns = Math.max(detectedUnderruns + 1, Number(message.underruns || 0));
+              lastGapMs = Math.max(0, Math.round(Number(message.gapMs || 0)));
+              adaptiveTargetMs = Math.round(Number(message.targetMs || adaptiveTargetMs || RING_TARGET_MS));
+              reportUnderrun(lastGapMs, adaptiveTargetMs);
+              return;
+            }
+            if (message.type === 'stats' || message.type === 'playing' || message.type === 'starved') {
+              if (Number.isFinite(Number(message.queueMs))) lastQueuedMs = Math.max(0, Math.round(Number(message.queueMs)));
+              if (Number.isFinite(Number(message.targetMs))) adaptiveTargetMs = Math.max(RING_TARGET_MS, Math.round(Number(message.targetMs)));
+            }
+          };
+          workletReady = true;
+          workletContexts += 1;
+          lastMode = 'audio-worklet-ring';
+          flushPending();
+        })().catch(error => {
+          workletFailed = true;
+          workletFailures += 1;
+          lastMode = 'legacy-buffer-source';
+          console.warn('[SEXTA Output] AudioWorklet falhou; usando scheduler legado.', error);
+          flushPending();
+        })
+      : Promise.resolve();
+
+    function makeVirtualSource() {
+      const id = `ctx${contextId}-chunk${++sequence}`;
+      let buffer = null;
+      let destination = context.destination;
+      let onended = null;
+      let started = false;
+      let stopped = false;
+      let ended = false;
+      let legacySource = null;
+
+      const finish = () => {
+        if (ended) return;
+        ended = true;
+        queueMicrotask(() => {
+          try { onended?.(); } catch {}
+        });
+      };
+
+      const source = {
+        get buffer() { return buffer; },
+        set buffer(value) { buffer = value; },
+        get onended() { return onended; },
+        set onended(value) { onended = typeof value === 'function' ? value : null; },
+        connect(nextDestination) {
+          destination = nextDestination || context.destination;
+          return source;
+        },
+        disconnect() {
+          try { legacySource?.disconnect(); } catch {}
+        },
+        start(when = 0, ...rest) {
+          if (started) return;
+          started = true;
+          scheduledChunks += 1;
+          finishers.set(id, finish);
+
+          const pushToWorklet = () => {
+            if (stopped || !workletNode) { finishById(id, { cancelled: true }); return; }
+            const channel = buffer?.getChannelData?.(0);
+            if (!channel?.length) { finishById(id, { empty: true }); return; }
+            const samples = new Float32Array(channel.length);
+            samples.set(channel);
+            workletNode.port.postMessage({ type: 'push', id, samples }, [samples.buffer]);
+          };
+
+          const startLegacy = () => {
+            if (stopped) { finishById(id, { cancelled: true }); return; }
+            try {
+              legacySource = nativeCreateBufferSource();
+              legacySource.buffer = buffer;
+              legacySource.connect(destination || context.destination);
+              legacySource.onended = () => finishById(id);
+              const requested = Number(when) || 0;
+              const safeWhen = Math.max(context.currentTime + 0.012, requested);
+              legacySource.start(safeWhen, ...rest);
+            } catch {
+              finishById(id, { failed: true });
+            }
+          };
+
+          if (workletReady) pushToWorklet();
+          else if (workletFailed) startLegacy();
+          else {
+            pendingStarts.push({ pushToWorklet, startLegacy });
+            void readyPromise;
+          }
+        },
+        stop(...args) {
+          if (stopped) return;
+          stopped = true;
+          if (workletReady && workletNode) {
+            try { workletNode.port.postMessage({ type: 'drop', id }); } catch {}
+          }
+          try { legacySource?.stop(...args); } catch {}
+          finishById(id, { cancelled: true });
+        }
+      };
+
+      return source;
+    }
 
     return new Proxy(context, {
       get(target, prop) {
-        // Voice Core schedules against this clock. Advancing it makes the core keep
-        // EXTRA_BUFFER_SECONDS of audio queued ahead of the hardware playback clock.
-        // BufferSource.start() remains on the real AudioContext timeline.
-        if (prop === 'currentTime') return target.currentTime + EXTRA_BUFFER_SECONDS;
-
-        if (prop === 'createBufferSource') {
-          return () => {
-            const source = nativeCreateBufferSource();
-            const nativeStart = source.start.bind(source);
-            const nativeStop = source.stop.bind(source);
-
-            return new Proxy(source, {
-              get(sourceTarget, sourceProp) {
-                if (sourceProp === 'start') {
-                  return (when = 0, ...rest) => {
-                    const actualWhen = Number(when) || 0;
-                    const duration = Number(sourceTarget.buffer?.duration || 0);
-
-                    if (lastActualEnd > 0 && target.currentTime < lastActualEnd + 0.35) {
-                      const gap = actualWhen - lastActualEnd;
-                      if (gap > UNDERRUN_GAP_SECONDS) {
-                        detectedUnderruns += 1;
-                        lastGapMs = Math.round(gap * 1000);
-                        reportUnderrun(lastGapMs);
-                      }
-                    } else if (target.currentTime >= lastActualEnd + 0.35) {
-                      lastActualEnd = 0;
-                    }
-
-                    scheduledChunks += 1;
-                    nativeStart(actualWhen, ...rest);
-                    lastActualEnd = Math.max(lastActualEnd, actualWhen + duration);
-                  };
-                }
-
-                if (sourceProp === 'stop') {
-                  return (...args) => {
-                    try { return nativeStop(...args); }
-                    finally {
-                      if (target.currentTime >= lastActualEnd - 0.02) lastActualEnd = 0;
-                    }
-                  };
-                }
-
-                const value = Reflect.get(sourceTarget, sourceProp, sourceTarget);
-                return typeof value === 'function' ? value.bind(sourceTarget) : value;
-              },
-              set(sourceTarget, sourceProp, value) {
-                return Reflect.set(sourceTarget, sourceProp, value, sourceTarget);
-              }
-            });
-          };
-        }
-
+        // Keep the legacy-biased clock because Voice Core uses it only to estimate
+        // drain timing. Actual playback continuity is owned by the AudioWorklet when available.
+        if (prop === 'currentTime') return target.currentTime + LEGACY_EXTRA_BUFFER_SECONDS;
+        if (prop === 'createBufferSource') return makeVirtualSource;
         const value = Reflect.get(target, prop, target);
         return typeof value === 'function' ? value.bind(target) : value;
       }
@@ -113,20 +229,29 @@
     }
   });
 
-  // browser-audio-tuning.js intentionally exposes the constructor used by Voice Core.
-  // Patch only that private constructor so microphone capture and unrelated page audio stay untouched.
+  // Voice Core asks for a 24 kHz context only on model output. Microphone capture,
+  // page sounds and unrelated AudioContexts remain native and untouched.
   window.__sextaNativeAudioContext = GuardedAudioContext;
+  window.__sextaOutputOriginalAudioContext = OriginalAudioContext;
 
   window.__sextaOutputJitterGuard = {
     installed: true,
-    version: '1.2.0',
+    version: '2.0.0-ring-buffer',
     debug: () => ({
-      extraBufferMs: Math.round(EXTRA_BUFFER_SECONDS * 1000),
-      effectiveTargetMs: Math.round(EXTRA_BUFFER_SECONDS * 1000) + (IS_ANDROID ? 90 : 28),
+      mode: lastMode,
+      extraBufferMs: Math.round(LEGACY_EXTRA_BUFFER_SECONDS * 1000),
+      effectiveTargetMs: Math.round(LEGACY_EXTRA_BUFFER_SECONDS * 1000) + (IS_ANDROID ? 90 : 28),
+      baseTargetMs: RING_TARGET_MS,
+      adaptiveTargetMs,
+      maxTargetMs: RING_MAX_TARGET_MS,
+      queuedMs: lastQueuedMs,
       outputContexts,
+      workletContexts,
+      workletFailures,
       scheduledChunks,
       detectedUnderruns,
-      lastGapMs
+      lastGapMs,
+      browser: IS_FIREFOX ? 'firefox' : 'other'
     })
   };
 })();
