@@ -80,7 +80,7 @@ $items = New-Object System.Collections.ArrayList
 function Walk-Sexta([System.Windows.Automation.AutomationElement]$node, [int]$depth) {
   if ($null -eq $node -or $items.Count -ge ${max} -or $depth -gt 12) { return }
   try {
-    $isPassword = [bool]$node.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsPasswordProperty, $true)
+    $isPassword = [bool]$node.Current.IsPassword
     $rect = $node.Current.BoundingRectangle
     $name = if ($isPassword) { '[password]' } else { [string]$node.Current.Name }
     [void]$items.Add([pscustomobject]@{
@@ -102,7 +102,7 @@ Walk-Sexta $root 0
   return parseJson(await runPowerShell(script, 10000), {});
 }
 
-const SENSITIVE = /\b(?:send|submit|pay|purchase|buy|checkout|confirm|delete|remove|publish|post|transfer|wire|enviar|pagar|comprar|finalizar|confirmar|excluir|remover|publicar|transferir|assinar)\b/i;
+const SENSITIVE = /\b(?:send|submit|pay|purchase|buy|checkout|confirm|delete|remove|publish|post|transfer|wire|enviar|pagar|comprar|finalizar|confirmar|excluir|remover|publicar|transferir|assinar|ok|yes|sim|accept|aceitar|allow|permitir)\b/i;
 
 export async function uiClickText(text) {
   const needle = String(text || '').trim().slice(0, 240);
@@ -162,7 +162,7 @@ if ($null -eq $match -or -not [string]::IsNullOrWhiteSpace($needle)) {
   }
 }
 if ($null -eq $match) { throw 'PC_UI_EDIT_NOT_FOUND' }
-$isPassword=[bool]$match.GetCurrentPropertyValue([System.Windows.Automation.AutomationElement]::IsPasswordProperty,$true)
+$isPassword=[bool]$match.Current.IsPassword
 if ($isPassword) { throw 'PC_UI_PASSWORD_FIELD_BLOCKED' }
 try { $p=$match.GetCurrentPattern([System.Windows.Automation.ValuePatternIdentifiers]::Pattern); if ($null -eq $p) { throw 'PC_UI_VALUE_PATTERN_UNAVAILABLE' }; $p.SetValue($value) } catch { throw $_ }
 [pscustomobject]@{ typed=$true; name=[string]$match.Current.Name; length=$value.Length } | ConvertTo-Json -Compress
@@ -193,9 +193,9 @@ $pattern.Scroll([System.Windows.Automation.ScrollAmount]::NoAmount,$v)
 }
 
 const HOTKEYS = new Map([
-  ['ctrl+f', '^f'], ['ctrl+l', '^l'], ['ctrl+c', '^c'], ['ctrl+v', '^v'], ['ctrl+a', '^a'], ['ctrl+z', '^z'],
+  ['ctrl+f', '^f'], ['ctrl+l', '^l'], ['ctrl+c', '^c'], ['ctrl+a', '^a'], ['ctrl+z', '^z'],
   ['ctrl+tab', '^{TAB}'], ['ctrl+shift+tab', '^+{TAB}'], ['alt+left', '%{LEFT}'], ['alt+right', '%{RIGHT}'],
-  ['esc', '{ESC}'], ['escape', '{ESC}'], ['enter', '{ENTER}'], ['tab', '{TAB}'], ['shift+tab', '+{TAB}'], ['f5', '{F5}']
+  ['esc', '{ESC}'], ['escape', '{ESC}'], ['tab', '{TAB}'], ['shift+tab', '+{TAB}'], ['f5', '{F5}']
 ]);
 
 export async function uiHotkey(shortcut) {
