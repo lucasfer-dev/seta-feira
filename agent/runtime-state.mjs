@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const AGENT_PROTOCOL_VERSION = '4.0.0';
+export const AGENT_PROTOCOL_VERSION = '4.1.0';
 const STATE_PATH = process.env.SEXTA_AGENT_STATE || fileURLToPath(new URL('./runtime-state.json', import.meta.url));
 
 const DEFAULTS = Object.freeze({
@@ -23,7 +23,7 @@ const DEFAULTS = Object.freeze({
 const CONTROL_ACTIONS = new Set(['agent_control']);
 const OBSERVER_ACTIONS = new Set([
   'git_status', 'get_system_info', 'hardware_status', 'read_clipboard', 'window_list', 'ui_tree',
-  'screen_analyze', 'browser_snapshot'
+  'screen_analyze', 'browser_tabs', 'browser_snapshot'
 ]);
 
 function cleanState(raw = {}) {

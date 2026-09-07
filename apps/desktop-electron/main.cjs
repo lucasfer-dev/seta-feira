@@ -1,4 +1,5 @@
 const { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, dialog, screen } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -6,6 +7,8 @@ const fsp = fs.promises;
 
 const WEB_URL = process.env.SEXTA_WEB_URL || 'https://seta-feira.vercel.app';
 let win; let overlay; let tray; let agent; let wakeProcess; let lastPresence = { state: 'standby' };
+let agentRestartTimer = null; let wakeRestartTimer = null; let agentRestartDelay = 1500; let wakeRestartDelay = 1800;
+let updateTimer = null; let updatePromptOpen = false;
 
 function desktopConfigPath() { return path.join(app.getPath('userData'), 'sexta-desktop.json'); }
 function readDesktopConfig() { try { return JSON.parse(fs.readFileSync(desktopConfigPath(), 'utf8')); } catch { return {}; } }
@@ -35,12 +38,24 @@ function registerPresenceIpc() {
   ipcMain.on('presence:update', (_event, detail = {}) => { const state = String(detail.state || 'standby').slice(0, 40); lastPresence = { state, tool: detail.tool ? String(detail.tool).slice(0, 120) : null }; if (overlay && !overlay.isDestroyed()) overlay.webContents.send('presence:state', lastPresence); });
   ipcMain.on('overlay:open', () => { if (!win || win.isDestroyed()) return; win.show(); win.focus(); });
 }
+
+async function loadCloud() {
+  if (!win || win.isDestroyed()) return { ok: false, reason: 'window_unavailable' };
+  try {
+    await win.loadURL(WEB_URL);
+    return { ok: true, url: WEB_URL };
+  } catch (error) {
+    await win.loadFile(path.join(__dirname, 'fallback.html')).catch(() => {});
+    return { ok: false, url: WEB_URL, error: String(error?.message || error) };
+  }
+}
+
 function createWindow() {
   win = new BrowserWindow({ width: 1320, height: 860, minWidth: 980, minHeight: 680, show: false, backgroundColor: '#0b0f14', autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^(https?:|obsidian:)/i.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.once('ready-to-show', () => win.show());
   win.on('close', event => { if (!app.isQuitting) { event.preventDefault(); win.hide(); } });
-  win.loadURL(WEB_URL).catch(() => win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent('<body style="font-family:sans-serif;background:#0b0f14;color:white;padding:32px"><h2>SEXTA</h2><p>O Core não respondeu. Verifique sua conexão com a SEXTA Cloud.</p></body>')));
+  void loadCloud();
 }
 function positionOverlay() { if (!overlay || overlay.isDestroyed()) return; const display = screen.getPrimaryDisplay(); const area = display.workArea; const bounds = overlay.getBounds(); overlay.setPosition(Math.round(area.x + area.width / 2 - bounds.width / 2), area.y + 12, false); }
 function createOverlay() {
@@ -49,34 +64,115 @@ function createOverlay() {
 }
 function setOverlayEnabled(enabled) { writeDesktopConfig({ overlayEnabled: Boolean(enabled) }); if (!overlay || overlay.isDestroyed()) return; if (enabled) { positionOverlay(); overlay.showInactive(); } else overlay.hide(); }
 
+function canStartAgent() {
+  const localEnv = readAgentEnv();
+  return Boolean(localEnv.SEXTA_AGENT_TOKEN || process.env.SEXTA_AGENT_TOKEN);
+}
+function scheduleAgentRestart() {
+  if (app.isQuitting || agentRestartTimer || !canStartAgent()) return;
+  const delay = agentRestartDelay;
+  agentRestartDelay = Math.min(30000, Math.round(agentRestartDelay * 1.8));
+  agentRestartTimer = setTimeout(() => { agentRestartTimer = null; startAgent(); }, delay);
+}
 function startAgent() {
-  const agentPath = agentResource('start-cloud.mjs'); if (!fs.existsSync(agentPath)) return;
-  const localEnv = readAgentEnv(); if (!localEnv.SEXTA_AGENT_TOKEN && !process.env.SEXTA_AGENT_TOKEN) return;
+  if (agent || app.isQuitting) return;
+  const agentPath = agentResource('start-cloud.mjs'); if (!fs.existsSync(agentPath) || !canStartAgent()) return;
+  const localEnv = readAgentEnv();
   fs.mkdirSync(agentHome(), { recursive: true });
-  agent = spawn(process.execPath, [agentPath], { cwd: path.dirname(agentPath), env: { ...process.env, ...localEnv, ELECTRON_RUN_AS_NODE: '1', SEXTA_AGENT_HOME: agentHome(), SEXTA_AGENT_CONFIG: agentConfigPath(), SEXTA_ENV_PATH: agentEnvPath() }, stdio: 'ignore', windowsHide: true });
-  agent.on('exit', () => { agent = null; });
+  const child = spawn(process.execPath, [agentPath], { cwd: path.dirname(agentPath), env: { ...process.env, ...localEnv, ELECTRON_RUN_AS_NODE: '1', SEXTA_AGENT_HOME: agentHome(), SEXTA_AGENT_CONFIG: agentConfigPath(), SEXTA_ENV_PATH: agentEnvPath() }, stdio: 'ignore', windowsHide: true });
+  agent = child;
+  const stableTimer = setTimeout(() => { if (agent === child) agentRestartDelay = 1500; }, 30000);
+  child.on('exit', () => { clearTimeout(stableTimer); if (agent === child) agent = null; scheduleAgentRestart(); });
+  child.on('error', () => { clearTimeout(stableTimer); if (agent === child) agent = null; scheduleAgentRestart(); });
+}
+function restartAgent() {
+  if (agentRestartTimer) { clearTimeout(agentRestartTimer); agentRestartTimer = null; }
+  agentRestartDelay = 1500;
+  const current = agent; agent = null;
+  try { current?.kill(); } catch {}
+  setTimeout(startAgent, 450);
+  return { ok: true, scheduled: true };
 }
 function runAgentSetup() {
-  const setupPath = agentResource('setup.mjs'); if (!fs.existsSync(setupPath)) return;
+  const setupPath = agentResource('setup.mjs'); if (!fs.existsSync(setupPath)) return { ok: false, error: 'setup_missing' };
   fs.mkdirSync(agentHome(), { recursive: true });
   const exe = process.execPath.replace(/'/g, "''"); const script = setupPath.replace(/'/g, "''");
   const child = spawn('powershell.exe', ['-NoExit', '-Command', `& '${exe}' '${script}'`], { detached: true, stdio: 'ignore', windowsHide: false, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', SEXTA_AGENT_HOME: agentHome(), SEXTA_AGENT_CONFIG: agentConfigPath(), SEXTA_ENV_PATH: agentEnvPath() } });
   child.unref();
+  return { ok: true };
 }
-function stopWakeWord() { try { wakeProcess?.kill(); } catch {} wakeProcess = null; }
+
+function stopWakeWord() { const current = wakeProcess; wakeProcess = null; try { current?.kill(); } catch {} }
 function handleWake() {
   if (!win || win.isDestroyed()) return; win.show(); win.focus();
   if (overlay && !overlay.isDestroyed()) overlay.showInactive();
   win.webContents.executeJavaScript("window.dispatchEvent(new CustomEvent('sexta:wake-word',{detail:{source:'windows'}})); window.__sextaGeminiLive?.start?.();").catch(() => {});
 }
-function startWakeWord() {
-  stopWakeWord(); if (!wakeWordEnabled()) return;
-  const wakePath = agentResource('wake-word.mjs'); if (!fs.existsSync(wakePath)) return;
-  wakeProcess = spawn(process.execPath, [wakePath, '--listen'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-  let buffer = ''; wakeProcess.stdout.on('data', chunk => { buffer += chunk; const lines = buffer.split(/\r?\n/); buffer = lines.pop() || ''; for (const line of lines) if (line.startsWith('WAKE\t')) handleWake(); });
-  wakeProcess.on('exit', () => { wakeProcess = null; });
+function scheduleWakeRestart() {
+  if (app.isQuitting || wakeRestartTimer || !wakeWordEnabled()) return;
+  const delay = wakeRestartDelay;
+  wakeRestartDelay = Math.min(30000, Math.round(wakeRestartDelay * 1.8));
+  wakeRestartTimer = setTimeout(() => { wakeRestartTimer = null; startWakeWord(); }, delay);
 }
-function setWakeWordEnabled(enabled) { writeDesktopConfig({ wakeWordEnabled: Boolean(enabled) }); if (enabled) startWakeWord(); else stopWakeWord(); }
+function startWakeWord() {
+  if (wakeProcess || !wakeWordEnabled() || app.isQuitting) return;
+  const wakePath = agentResource('wake-word.mjs'); if (!fs.existsSync(wakePath)) return;
+  const child = spawn(process.execPath, [wakePath, '--listen'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  wakeProcess = child;
+  let buffer = ''; child.stdout.on('data', chunk => { buffer += chunk; const lines = buffer.split(/\r?\n/); buffer = lines.pop() || ''; for (const line of lines) if (line.startsWith('WAKE\t')) handleWake(); });
+  const stableTimer = setTimeout(() => { if (wakeProcess === child) wakeRestartDelay = 1800; }, 30000);
+  child.on('exit', () => { clearTimeout(stableTimer); if (wakeProcess === child) wakeProcess = null; scheduleWakeRestart(); });
+  child.on('error', () => { clearTimeout(stableTimer); if (wakeProcess === child) wakeProcess = null; scheduleWakeRestart(); });
+}
+function setWakeWordEnabled(enabled) { writeDesktopConfig({ wakeWordEnabled: Boolean(enabled) }); if (enabled) { wakeRestartDelay = 1800; startWakeWord(); } else { if (wakeRestartTimer) clearTimeout(wakeRestartTimer); wakeRestartTimer = null; stopWakeWord(); } }
+
+async function checkForUpdates(interactive = false) {
+  if (!app.isPackaged) {
+    if (interactive) await dialog.showMessageBox(win, { type: 'info', title: 'SEXTA Update', message: 'Atualizações automáticas só funcionam no aplicativo instalado.', detail: `Versão de desenvolvimento: ${app.getVersion()}` });
+    return { ok: false, development: true };
+  }
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    if (interactive && result?.updateInfo?.version === app.getVersion()) await dialog.showMessageBox(win, { type: 'info', title: 'SEXTA Update', message: 'Você já está na versão mais recente.', detail: `Versão ${app.getVersion()}` });
+    return { ok: true, version: result?.updateInfo?.version || null };
+  } catch (error) {
+    if (interactive) await dialog.showMessageBox(win, { type: 'warning', title: 'SEXTA Update', message: 'Não foi possível verificar atualizações.', detail: String(error?.message || error).slice(0, 800) });
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+function configureUpdater() {
+  if (!app.isPackaged) return;
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('update-available', async info => {
+    if (updatePromptOpen) return;
+    updatePromptOpen = true;
+    try {
+      const answer = await dialog.showMessageBox(win, { type: 'info', title: 'Atualização da SEXTA', message: `SEXTA ${info.version} disponível.`, detail: 'O download só começa com sua confirmação.', buttons: ['Baixar atualização', 'Depois'], defaultId: 0, cancelId: 1 });
+      if (answer.response === 0) await autoUpdater.downloadUpdate();
+    } finally { updatePromptOpen = false; }
+  });
+  autoUpdater.on('update-downloaded', async info => {
+    const answer = await dialog.showMessageBox(win, { type: 'info', title: 'Atualização pronta', message: `SEXTA ${info.version} foi baixada.`, detail: 'Reinicie para aplicar a atualização.', buttons: ['Reiniciar e instalar', 'Depois'], defaultId: 0, cancelId: 1 });
+    if (answer.response === 0) { app.isQuitting = true; autoUpdater.quitAndInstall(false, true); }
+  });
+  autoUpdater.on('error', error => console.warn('[SEXTA Updater]', error?.message || error));
+  setTimeout(() => void checkForUpdates(false), 20000);
+  updateTimer = setInterval(() => void checkForUpdates(false), 6 * 60 * 60 * 1000);
+}
+
+function registerSystemIpc() {
+  ipcMain.handle('system:status', async () => ({
+    ok: true, version: app.getVersion(), packaged: app.isPackaged, cloudUrl: WEB_URL,
+    agent: { running: Boolean(agent), configured: canStartAgent(), configPath: agentConfigPath() },
+    wakeWord: { enabled: wakeWordEnabled(), running: Boolean(wakeProcess) },
+    overlay: { enabled: overlayEnabled() }
+  }));
+  ipcMain.handle('system:retry-cloud', async () => loadCloud());
+  ipcMain.handle('system:restart-agent', async () => restartAgent());
+  ipcMain.handle('system:setup-agent', async () => runAgentSetup());
+  ipcMain.handle('system:check-updates', async () => checkForUpdates(true));
+}
 
 function createTray() {
   tray = new Tray(nativeImage.createEmpty()); tray.setToolTip('SEXTA');
@@ -84,7 +180,10 @@ function createTray() {
     { label: 'Abrir Sexta', click: () => { win.show(); win.focus(); } },
     { label: 'Mostrar ilha da SEXTA', type: 'checkbox', checked: overlayEnabled(), click: item => setOverlayEnabled(item.checked) },
     { label: 'Wake word “Sexta”', type: 'checkbox', checked: wakeWordEnabled(), click: item => setWakeWordEnabled(item.checked) },
+    { type: 'separator' },
+    { label: 'Reiniciar PC Agent', click: () => restartAgent() },
     { label: 'Configurar PC Agent…', click: runAgentSetup },
+    { label: 'Verificar atualizações…', click: () => void checkForUpdates(true) },
     { label: 'Abrir Vault', click: async () => { const p = selectedVaultPath(); if (p) await shell.openExternal(`obsidian://open?path=${encodeURIComponent(p)}`).catch(() => shell.openPath(p)); } },
     { label: 'Iniciar com o Windows', type: 'checkbox', checked: app.getLoginItemSettings().openAtLogin, click: item => app.setLoginItemSettings({ openAtLogin: item.checked }) },
     { type: 'separator' }, { label: 'Sair', click: () => { app.isQuitting = true; app.quit(); } }
@@ -92,6 +191,6 @@ function createTray() {
   tray.on('double-click', () => { win.show(); win.focus(); });
 }
 
-app.whenReady().then(() => { registerVaultIpc(); registerPresenceIpc(); createWindow(); createOverlay(); createTray(); startAgent(); startWakeWord(); screen.on('display-metrics-changed', positionOverlay); screen.on('display-added', positionOverlay); screen.on('display-removed', positionOverlay); });
+app.whenReady().then(() => { registerVaultIpc(); registerPresenceIpc(); registerSystemIpc(); createWindow(); createOverlay(); createTray(); startAgent(); startWakeWord(); configureUpdater(); screen.on('display-metrics-changed', positionOverlay); screen.on('display-added', positionOverlay); screen.on('display-removed', positionOverlay); });
 app.on('activate', () => { if (win) win.show(); else createWindow(); });
-app.on('before-quit', () => { app.isQuitting = true; if (agent) agent.kill(); stopWakeWord(); });
+app.on('before-quit', () => { app.isQuitting = true; if (agentRestartTimer) clearTimeout(agentRestartTimer); if (wakeRestartTimer) clearTimeout(wakeRestartTimer); if (updateTimer) clearInterval(updateTimer); try { agent?.kill(); } catch {} stopWakeWord(); });

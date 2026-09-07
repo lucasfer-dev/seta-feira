@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('sextaDesktop', {
   platform: process.platform,
   desktop: true,
-  version: '2.0.0',
+  version: '2.1.0',
   vault: {
     choose: () => ipcRenderer.invoke('vault:choose'),
     status: () => ipcRenderer.invoke('vault:status'),
@@ -21,5 +21,12 @@ contextBridge.exposeInMainWorld('sextaDesktop', {
   },
   overlay: {
     open: () => ipcRenderer.send('overlay:open')
+  },
+  system: {
+    status: () => ipcRenderer.invoke('system:status'),
+    retryCloud: () => ipcRenderer.invoke('system:retry-cloud'),
+    restartAgent: () => ipcRenderer.invoke('system:restart-agent'),
+    setupAgent: () => ipcRenderer.invoke('system:setup-agent'),
+    checkUpdates: () => ipcRenderer.invoke('system:check-updates')
   }
 });

@@ -10,10 +10,12 @@ on:
       - 'tests/**'
       - 'agent/**'
       - 'server.mjs'
+      - 'vercel.json'
       - 'apps/android-capacitor/**'
       - 'apps/desktop-electron/**'
       - '.github/workflows/web-smoke.yml'
       - '.github/workflows/desktop-smoke.yml'
+      - '.github/workflows/desktop-release.yml'
   pull_request:
     paths:
       - 'public/**'
@@ -22,10 +24,12 @@ on:
       - 'tests/**'
       - 'agent/**'
       - 'server.mjs'
+      - 'vercel.json'
       - 'apps/android-capacitor/**'
       - 'apps/desktop-electron/**'
       - '.github/workflows/web-smoke.yml'
       - '.github/workflows/desktop-smoke.yml'
+      - '.github/workflows/desktop-release.yml'
 
 jobs:
   syntax:
@@ -50,17 +54,19 @@ jobs:
         run: node --check public/sexta-personality.js
       - name: Check voice loader
         run: node --check public/voice-loader.js
-      - name: Check Tool Core v4
+      - name: Check Intelligence Core v4.1
         run: |
           node --check lib/tool-policy.mjs
           node --check lib/mcp-client.mjs
           node --check lib/android-hands-tools.mjs
           node --check lib/pc-desktop-tools.mjs
+          node --check lib/pc-command-protocol.mjs
           node --check lib/tool-core.mjs
           node --check lib/agent-auth.mjs
           node --check lib/model-router.mjs
           node --check lib/routines.mjs
           node --check lib/event-engine.mjs
+          node --check lib/memory-search.mjs
           node --check lib/handoff.mjs
           node --check lib/v4-tools.mjs
           node --check api/tool-execute.js
@@ -72,9 +78,10 @@ jobs:
           node --check api/agent-control.js
           node --check api/routines.js
           node --check api/event-engine.js
+          node --check api/cron-event-engine.js
           node --check api/handoff.js
           node --check api/model-router.js
-      - name: Check cloud router
+      - name: Check cloud router and 24/7 cron
         run: |
           node --check server.mjs
           grep -q "'/api/tool-registry', toolRegistry" server.mjs
@@ -84,9 +91,12 @@ jobs:
           grep -q "'/api/agent-control', agentControl" server.mjs
           grep -q "'/api/routines', routines" server.mjs
           grep -q "'/api/event-engine', eventEngine" server.mjs
+          grep -q "'/api/cron-event-engine', cronEventEngine" server.mjs
           grep -q "'/api/handoff', handoff" server.mjs
           grep -q "'/api/model-router', modelRouter" server.mjs
-      - name: Check PC Agent v4 modules
+          grep -Fq '"/api/cron-event-engine"' vercel.json
+          grep -Fq '"*/5 * * * *"' vercel.json
+      - name: Check PC Agent v4.1 modules
         run: |
           node --check agent/agent-v3.mjs
           node --check agent/runtime-state.mjs
@@ -143,13 +153,17 @@ jobs:
           grep -q "1.2.1-listen-thinking-gate" public/voice-barge-in-guard.js
           grep -q "sexta-output-ring-buffer" public/live-output-worklet.js
           ! grep -Eq "voice-core-v[5-9]\\.js" public/voice-loader.js
-      - name: Assert v4 safety contracts
+      - name: Assert v4.1 safety contracts
         run: |
           grep -q "SAFE_ROUTINE_TOOLS" lib/routines.mjs
           grep -q "ProtectedData" agent/secure-vault.mjs
-          grep -q "hardware_status" lib/pc-command-protocol.mjs
+          grep -q "browser_tabs" lib/pc-command-protocol.mjs
+          grep -q "PC_COMMAND_PROTOCOL_VERSION = 2" lib/pc-command-protocol.mjs
+          grep -q "CRON_SECRET" api/cron-event-engine.js
+          grep -q "autoDownload = false" apps/desktop-electron/main.cjs
           ! grep -Eq "secure_vault_get|secret_value" lib/v4-tools.mjs
           ! grep -Eq "'shell'|'exec'" lib/pc-command-protocol.mjs
+          ! grep -Eq "Page\.setDownloadBehavior|DOM\.setFileInputFiles" agent/browser-agent.mjs
       - name: Check audio resampler
         run: node --check public/audio-resampler.js
       - name: Test voice contracts and tool safety
@@ -163,4 +177,7 @@ jobs:
       - name: Check app entry
         run: node --check public/app.js
       - name: Check health endpoint
-        run: node --check api/health.js
+        run: |
+          node --check api/health.js
+          grep -q "4.1.0-operational" api/health.js
+          grep -q "cronStrongAuth" api/health.js
