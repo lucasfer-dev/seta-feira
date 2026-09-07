@@ -94,8 +94,8 @@ jobs:
           grep -q "'/api/cron-event-engine', cronEventEngine" server.mjs
           grep -q "'/api/handoff', handoff" server.mjs
           grep -q "'/api/model-router', modelRouter" server.mjs
-          grep -q '"/api/cron-event-engine"' vercel.json
-          grep -q '"*/5 * * * *"' vercel.json
+          grep -Fq '"/api/cron-event-engine"' vercel.json
+          grep -Fq '"*/5 * * * *"' vercel.json
       - name: Check PC Agent v4.1 modules
         run: |
           node --check agent/agent-v3.mjs
