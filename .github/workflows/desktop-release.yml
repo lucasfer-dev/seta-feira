@@ -1,0 +1,26 @@
+name: Build SEXTA Desktop Installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'desktop-v*'
+
+jobs:
+  build-windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install desktop dependencies
+        run: npm --prefix apps/desktop-electron install
+      - name: Build unsigned NSIS installer
+        run: npm --prefix apps/desktop-electron run dist
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SEXTA-Windows-Installer
+          path: apps/desktop-electron/dist/*.exe
+          if-no-files-found: error

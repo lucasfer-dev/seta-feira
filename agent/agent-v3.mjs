@@ -5,13 +5,15 @@ import { spawn } from 'node:child_process';
 import { browserBack, browserClick, browserOpen, browserSnapshot, browserStatus, browserType } from './browser-agent.mjs';
 import { captureScreen, focusWindow, uiClickText, uiHotkey, uiScroll, uiTree, uiTypeText, windowList } from './windows-ui.mjs';
 import { audit } from './audit.mjs';
+import { hardwareSnapshot } from './hardware.mjs';
+import { secureVaultStatus } from './secure-vault.mjs';
 import { AGENT_PROTOCOL_VERSION, evaluateLocalAction, publicRuntimeState, readRuntimeState, writeRuntimeState } from './runtime-state.mjs';
 
 const BASE = (process.env.SEXTA_BASE_URL || 'https://seta-feira.vercel.app').replace(/\/$/, '');
 const TOKEN = process.env.SEXTA_AGENT_TOKEN || 'local-agent-token';
 const DEVICE_ID = process.env.SEXTA_DEVICE_ID || `windows-${os.hostname().toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
 const configPath = process.env.SEXTA_AGENT_CONFIG || path.join(path.dirname(new URL(import.meta.url).pathname), 'config.json');
-let cfg = { deviceName: os.hostname(), apps: {}, projects: {}, codex: {}, browser: {} };
+let cfg = { deviceName: os.hostname(), apps: {}, projects: {}, codex: {}, browser: {}, wakeWord: {} };
 try { cfg = { ...cfg, ...JSON.parse(fs.readFileSync(configPath, 'utf8')) }; } catch {}
 
 const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}`, 'X-SEXTA-Device-ID': DEVICE_ID };
@@ -178,6 +180,7 @@ async function execute(command) {
     const output = await execCapture('git', ['-C', cfg.projects[requested], 'status', '--short']); return { project: requested, clean: !output, output };
   }
   if (action === 'get_system_info') return { hostname: os.hostname(), platform: os.platform(), release: os.release(), uptimeSeconds: Math.round(os.uptime()), freeMemoryMB: Math.round(os.freemem() / 1024 / 1024), totalMemoryMB: Math.round(os.totalmem() / 1024 / 1024), runtime: publicRuntimeState() };
+  if (action === 'hardware_status') return hardwareSnapshot({ force: true });
   if (action === 'read_clipboard') { const text = await execCapture('powershell.exe', ['-NoProfile', '-Command', 'Get-Clipboard -Raw'], 5000); return { text: String(text || '').slice(0, 20000) }; }
   if (action === 'copy_text') {
     const value = String(payload.text || '').slice(0, 20000);
@@ -205,20 +208,24 @@ async function execute(command) {
 }
 
 const CAPABILITIES = [
-  'open_url', 'open_app', 'open_project', 'git_status', 'get_system_info', 'read_clipboard', 'copy_text', 'codex_task',
+  'open_url', 'open_app', 'open_project', 'git_status', 'get_system_info', 'hardware_status', 'read_clipboard', 'copy_text', 'codex_task',
   'window_list', 'window_focus', 'ui_tree', 'ui_click_text', 'ui_type_text', 'ui_scroll', 'ui_hotkey', 'screen_analyze',
   'browser_open', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_back', 'agent_control'
 ];
 
 async function heartbeat() {
   const runtime = publicRuntimeState();
+  const hardware = runtime.privacy.hardware ? await hardwareSnapshot().catch(() => null) : null;
+  const secureVault = secureVaultStatus();
   return post('/api/device-heartbeat', {
     deviceId: DEVICE_ID, name: cfg.deviceName || os.hostname(), kind: 'agent', capabilities: CAPABILITIES,
     context: {
       hostname: os.hostname(), platform: os.platform(), uptime: Math.round(os.uptime()), projects: Object.keys(cfg.projects || {}),
       codexTask: true, pcAgent: true, pcVision: process.platform === 'win32', pcHands: process.platform === 'win32',
       browserAgent: browserStatus(cfg), codexActiveProjects: [...activeCodexProjects], agentProtocol: AGENT_PROTOCOL_VERSION,
-      agentVersion: AGENT_PROTOCOL_VERSION, autonomy: runtime.autonomy, paused: runtime.paused, privacy: runtime.privacy
+      agentVersion: AGENT_PROTOCOL_VERSION, autonomy: runtime.autonomy, paused: runtime.paused, privacy: runtime.privacy,
+      hardware, secureVault: { available: secureVault.available, version: secureVault.version, aliases: secureVault.aliases.length },
+      wakeWordConfigured: cfg.wakeWord?.enabled === true
     }
   });
 }
