@@ -44,7 +44,7 @@ jobs:
             apps/desktop-electron/dist/*.exe
             apps/desktop-electron/dist/*.blockmap
             apps/desktop-electron/dist/latest.yml
-      - name: Publish current desktop version from main when missing
+      - name: Publish current desktop version from main
         if: github.ref == 'refs/heads/main'
         shell: pwsh
         env:
@@ -54,8 +54,7 @@ jobs:
           $tag = "desktop-v$version"
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release $tag already exists; leaving it immutable."
-            exit 0
+            throw "Release $tag already exists. Desktop code changed without a version bump; bump apps/desktop-electron/package.json before merging."
           }
 
           $assets = Get-ChildItem 'apps/desktop-electron/dist' -File | Where-Object {

@@ -1,8 +1,18 @@
 const { contextBridge, ipcRenderer } = require('electron');
+
+async function safeSystemStatus() {
+  const status = await ipcRenderer.invoke('system:status');
+  if (status?.agent?.diagnostics) {
+    const { lastLog, ...safeDiagnostics } = status.agent.diagnostics;
+    status.agent.diagnostics = safeDiagnostics;
+  }
+  return status;
+}
+
 contextBridge.exposeInMainWorld('sextaDesktop', {
   platform: process.platform,
   desktop: true,
-  version: '2.1.0',
+  version: '2.1.1',
   vault: {
     choose: () => ipcRenderer.invoke('vault:choose'),
     status: () => ipcRenderer.invoke('vault:status'),
@@ -19,14 +29,14 @@ contextBridge.exposeInMainWorld('sextaDesktop', {
       return () => ipcRenderer.removeListener('presence:state', listener);
     }
   },
-  overlay: {
-    open: () => ipcRenderer.send('overlay:open')
-  },
+  overlay: { open: () => ipcRenderer.send('overlay:open') },
   system: {
-    status: () => ipcRenderer.invoke('system:status'),
+    status: safeSystemStatus,
     retryCloud: () => ipcRenderer.invoke('system:retry-cloud'),
     restartAgent: () => ipcRenderer.invoke('system:restart-agent'),
     setupAgent: () => ipcRenderer.invoke('system:setup-agent'),
+    openAgentControl: () => ipcRenderer.invoke('system:open-agent-control'),
+    pairAgent: (payload) => ipcRenderer.invoke('system:pair-agent', payload || {}),
     checkUpdates: () => ipcRenderer.invoke('system:check-updates')
   }
 });

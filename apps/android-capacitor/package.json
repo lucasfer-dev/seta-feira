@@ -1,6 +1,6 @@
 {
   "name": "sexta-android",
-  "version": "1.4.0",
+  "version": "4.1.1",
   "private": true,
   "scripts": {
     "android:add": "cap add android",
@@ -14,8 +14,5 @@
     "@capacitor/core": "8.5.0",
     "@capacitor/push-notifications": "8.0.1"
   },
-  "devDependencies": {
-    "@capacitor/cli": "8.5.0",
-    "typescript": "^5.9.0"
-  }
+  "devDependencies": { "@capacitor/cli": "8.5.0", "typescript": "^5.9.0" }
 }

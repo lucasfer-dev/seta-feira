@@ -9,6 +9,9 @@ export default async function handler(req, res) {
   return send(res, 200, {
     ok: true,
     protocol: 3,
+    authProtocol: 3,
+    agentProtocol: '4.1.0',
+    desktopProtocol: 2,
     deviceId: token?.deviceId || deviceId || 'legacy-agent',
     tokenType: token ? 'paired-device' : 'legacy-shared',
     serverTime: new Date().toISOString()

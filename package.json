@@ -1,6 +1,6 @@
 {
   "name": "sexta",
-  "version": "1.5.0",
+  "version": "4.1.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -23,7 +23,5 @@
     "android:install": "npm --prefix apps/android-capacitor install",
     "android:sync": "npm --prefix apps/android-capacitor run android:sync"
   },
-  "engines": {
-    "node": ">=22"
-  }
+  "engines": { "node": ">=22" }
 }

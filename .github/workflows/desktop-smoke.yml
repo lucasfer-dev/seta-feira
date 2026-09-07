@@ -13,8 +13,10 @@ on:
       - 'lib/agent-auth.mjs'
       - 'api/pc-vision-analyze.js'
       - 'api/agent-*.js'
+      - 'api/sync.js'
       - 'tests/pc-desktop-policy.test.mjs'
       - 'tests/agent-*.test.mjs'
+      - 'tests/desktop-native-pairing.test.mjs'
       - 'tests/v4-contracts.test.mjs'
       - 'tests/v4-1-operational.test.mjs'
       - '.github/workflows/desktop-smoke.yml'
@@ -30,8 +32,10 @@ on:
       - 'lib/agent-auth.mjs'
       - 'api/pc-vision-analyze.js'
       - 'api/agent-*.js'
+      - 'api/sync.js'
       - 'tests/pc-desktop-policy.test.mjs'
       - 'tests/agent-*.test.mjs'
+      - 'tests/desktop-native-pairing.test.mjs'
       - 'tests/v4-contracts.test.mjs'
       - 'tests/v4-1-operational.test.mjs'
       - '.github/workflows/desktop-smoke.yml'
@@ -66,6 +70,8 @@ jobs:
           node --check lib/tool-policy.mjs
           node --check lib/agent-auth.mjs
           node --check api/pc-vision-analyze.js
+          node --check api/sync.js
+          node --check apps/desktop-electron/secure-main.cjs
           node --check apps/desktop-electron/main.cjs
           node --check apps/desktop-electron/preload.cjs
       - name: Verify Windows automation and v4.1 assemblies
@@ -82,7 +88,7 @@ jobs:
           Write-Host 'Windows UI Automation + DPAPI + Speech assemblies OK'
       - name: Run desktop and agent policy tests
         shell: pwsh
-        run: node --test tests/pc-desktop-policy.test.mjs tests/tool-policy.test.mjs tests/agent-runtime.test.mjs tests/agent-auth.test.mjs tests/v4-contracts.test.mjs tests/v4-1-operational.test.mjs
+        run: node --test tests/pc-desktop-policy.test.mjs tests/tool-policy.test.mjs tests/agent-runtime.test.mjs tests/agent-auth.test.mjs tests/desktop-native-pairing.test.mjs tests/v4-contracts.test.mjs tests/v4-1-operational.test.mjs
       - name: Assert no generic shell or destructive browser primitive
         shell: pwsh
         run: |
@@ -93,15 +99,18 @@ jobs:
           Select-String -Path agent/windows-ui.mjs -Pattern "PC_UI_SENSITIVE_CONTROL_BLOCKED","PC_UI_PASSWORD_FIELD_BLOCKED" | Out-Null
           Select-String -Path agent/runtime-state.mjs -Pattern "AUTONOMY_OBSERVER_READ_ONLY","AUTONOMOUS_MODE_REQUIRED","AGENT_PAUSED","PRIVACY_HARDWARE_DISABLED","4.1.0" | Out-Null
           Select-String -Path agent/secure-vault.mjs -Pattern "ProtectedData","CurrentUser" | Out-Null
-      - name: Validate desktop recovery and updater
+      - name: Validate desktop pairing, origin lock, recovery and updater
         shell: pwsh
         run: |
           $pkg = Get-Content apps/desktop-electron/package.json -Raw | ConvertFrom-Json
+          if ($pkg.version -ne '2.1.1') { throw 'Desktop version must be 2.1.1' }
+          if ($pkg.main -ne 'secure-main.cjs') { throw 'Secure desktop entrypoint missing' }
           if (-not $pkg.build.nsis) { throw 'NSIS config missing' }
           if (-not $pkg.scripts.dist) { throw 'Desktop dist script missing' }
           if (-not $pkg.dependencies.'electron-updater') { throw 'electron-updater missing' }
           if (-not $pkg.build.publish) { throw 'GitHub update provider missing' }
           if (-not (Test-Path apps/desktop-electron/fallback.html)) { throw 'Offline fallback missing' }
           if (-not (Test-Path .github/workflows/desktop-release.yml)) { throw 'Desktop release workflow missing' }
-          Select-String -Path apps/desktop-electron/main.cjs -Pattern "autoDownload = false","scheduleAgentRestart","scheduleWakeRestart","fallback.html" | Out-Null
+          Select-String -Path apps/desktop-electron/main.cjs -Pattern "autoDownload = false","scheduleAgentRestart","scheduleWakeRestart","system:pair-agent","SEXTA_AGENT_STATE","fallback.html" | Out-Null
+          Select-String -Path apps/desktop-electron/secure-main.cjs -Pattern "TRUSTED_ORIGIN","will-navigate","setPermissionRequestHandler" | Out-Null
           Write-Host "Desktop operational config OK: $($pkg.version)"

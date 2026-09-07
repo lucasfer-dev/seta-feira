@@ -1,32 +1,32 @@
 {
   "name": "sexta-desktop",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "private": true,
-  "main": "main.cjs",
+  "main": "secure-main.cjs",
   "scripts": {
     "dev": "electron .",
     "start": "electron .",
     "pack": "electron-builder --dir",
     "dist": "electron-builder --win nsis --publish never"
   },
-  "dependencies": {
-    "electron-updater": "6.8.9"
-  },
-  "devDependencies": {
-    "electron": "44.0.0",
-    "electron-builder": "26.15.3"
-  },
+  "dependencies": { "electron-updater": "6.8.9" },
+  "devDependencies": { "electron": "44.0.0", "electron-builder": "26.15.3" },
   "build": {
     "appId": "br.com.sexta.desktop",
     "productName": "SEXTA",
     "asar": true,
-    "files": ["main.cjs", "preload.cjs", "overlay.html", "fallback.html"],
+    "files": ["secure-main.cjs", "main.cjs", "preload.cjs", "overlay.html", "fallback.html"],
     "extraResources": [
-      { "from": "../../agent", "to": "agent", "filter": ["**/*", "!config.json", "!runtime-state.json", "!audit.log"] }
+      {
+        "from": "../../agent",
+        "to": "agent",
+        "filter": [
+          "start-cloud.mjs", "agent-v3.mjs", "runtime-state.mjs", "audit.mjs",
+          "browser-agent.mjs", "windows-ui.mjs", "hardware.mjs", "secure-vault.mjs", "wake-word.mjs"
+        ]
+      }
     ],
-    "publish": [
-      { "provider": "github", "owner": "lucasfer-dev", "repo": "seta-feira", "releaseType": "release" }
-    ],
+    "publish": [{ "provider": "github", "owner": "lucasfer-dev", "repo": "seta-feira", "releaseType": "release" }],
     "win": { "target": [{ "target": "nsis", "arch": ["x64"] }] },
     "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true },
     "artifactName": "SEXTA-Setup-${version}-${arch}.${ext}"
