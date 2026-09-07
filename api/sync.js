@@ -7,25 +7,39 @@ let cache = null;
 let cacheAt = 0;
 let inFlight = null;
 
+const loaders = {
+  messages: () => getMessages(SHARED_CONVERSATION_ID, 50),
+  memories: () => getMemories(30),
+  devices: () => getDevices(),
+  events: () => getEvents(12),
+  notifications: () => getNotifications(25),
+  settings: () => getSettings()
+};
+
 async function loadSnapshot() {
-  const [messages, memories, devices, events, notifications, settings] = await Promise.all([
-    getMessages(SHARED_CONVERSATION_ID, 50),
-    getMemories(30),
-    getDevices(),
-    getEvents(12),
-    getNotifications(25),
-    getSettings()
-  ]);
+  const names = Object.keys(loaders);
+  const settled = await Promise.allSettled(names.map(name => loaders[name]()));
+  const previous = cache || {};
+  const result = {};
+  const errors = {};
+
+  names.forEach((name, index) => {
+    const row = settled[index];
+    if (row.status === 'fulfilled') result[name] = row.value;
+    else {
+      errors[name] = String(row.reason?.message || row.reason || 'unknown_error').slice(0, 500);
+      if (previous[name] !== undefined) result[name] = previous[name];
+      else result[name] = name === 'settings' ? {} : [];
+    }
+  });
+
   return {
     conversationId: SHARED_CONVERSATION_ID,
-    messages,
-    memories,
-    devices,
-    events,
-    notifications,
-    settings,
-    personalityInstruction: buildPersonalityContract(settings, { channel:'voice-live', platform:'connected-device' }),
-    generatedAt: new Date().toISOString()
+    ...result,
+    personalityInstruction: buildPersonalityContract(result.settings || {}, { channel:'voice-live', platform:'connected-device' }),
+    generatedAt: new Date().toISOString(),
+    degraded: Object.keys(errors).length > 0,
+    errors
   };
 }
 
@@ -57,7 +71,11 @@ export default async function handler(req, res) {
     res.setHeader('X-SEXTA-Sync-Cache', forceFresh ? 'BYPASS' : 'MISS');
     return send(res, 200, snapshot);
   } catch (error) {
-    console.error(error);
-    return send(res, 500, { error: 'sync_failed', message: error.message });
+    console.error('[SEXTA Sync]', error);
+    if (cache) {
+      res.setHeader('X-SEXTA-Sync-Cache', 'STALE');
+      return send(res, 200, { ...cache, degraded: true, stale: true, syncError: String(error?.message || error).slice(0, 500) });
+    }
+    return send(res, 500, { error: 'sync_failed', message: String(error?.message || error) });
   }
 }
