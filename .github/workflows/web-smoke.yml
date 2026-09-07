@@ -57,22 +57,42 @@ jobs:
           node --check lib/android-hands-tools.mjs
           node --check lib/pc-desktop-tools.mjs
           node --check lib/tool-core.mjs
+          node --check lib/agent-auth.mjs
           node --check api/tool-execute.js
           node --check api/tool-registry.js
           node --check api/chat.js
           node --check api/pc-vision-analyze.js
+          node --check api/agent-pair.js
+          node --check api/agent-check.js
+          node --check api/agent-control.js
       - name: Check cloud router
         run: |
           node --check server.mjs
           grep -q "'/api/tool-registry', toolRegistry" server.mjs
           grep -q "'/api/pc-vision-analyze', pcVisionAnalyze" server.mjs
-      - name: Check PC Agent modules
+          grep -q "'/api/agent-pair', agentPair" server.mjs
+          grep -q "'/api/agent-check', agentCheck" server.mjs
+          grep -q "'/api/agent-control', agentControl" server.mjs
+      - name: Check PC Agent v3 modules
         run: |
-          node --check agent/agent.mjs
+          node --check agent/agent-v3.mjs
+          node --check agent/runtime-state.mjs
+          node --check agent/audit.mjs
+          node --check agent/setup.mjs
+          node --check agent/doctor.mjs
+          node --check agent/update.mjs
+          node --check agent/control-local.mjs
           node --check agent/windows-ui.mjs
           node --check agent/browser-agent.mjs
           node --check apps/desktop-electron/main.cjs
           node --check apps/desktop-electron/preload.cjs
+      - name: Check SEXTA web HUD v3
+        run: |
+          node --check public/sexta-shell-v3.js
+          grep -q "sexta-shell-v3.js" public/app.js
+          grep -q "sexta-v3.css" public/styles.css
+          grep -q "FIRST CONTACT" public/sexta-shell-v3.js
+          grep -q "AUTONOMY LEVEL" public/sexta-shell-v3.js
       - name: Check Android Hands preparation
         run: node --check apps/android-capacitor/scripts/prepare-hands.mjs
       - name: Check live token endpoint
@@ -99,7 +119,7 @@ jobs:
         run: node --check public/audio-resampler.js
       - name: Test voice contracts and tool safety
         run: node --test tests/*.test.mjs
-      - name: Check SEXTA shell v2
+      - name: Check legacy shell syntax
         run: node --check public/sexta-shell-v2.js
       - name: Check audio worklet
         run: node --check public/live-input-worklet.js

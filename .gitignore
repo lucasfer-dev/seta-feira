@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 agent/config.json
+agent/runtime-state.json
 .vercel
 node_modules
 *.log

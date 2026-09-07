@@ -4,55 +4,34 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-if ($env:OS -ne 'Windows_NT') {
-  throw 'Este instalador é exclusivo para Windows.'
-}
+if ($env:OS -ne 'Windows_NT') { throw 'Este instalador é exclusivo para Windows.' }
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $AgentScript = Join-Path $RepoRoot 'agent\start-cloud.mjs'
 $ConfigPath = Join-Path $RepoRoot 'agent\config.json'
-$ConfigExample = Join-Path $RepoRoot 'agent\config.example.json'
 $EnvPath = Join-Path $RepoRoot '.env.local'
+$DoctorScript = Join-Path $RepoRoot 'agent\doctor.mjs'
 
 $Node = Get-Command node -ErrorAction Stop
 $Codex = Get-Command codex -ErrorAction SilentlyContinue
 
-if (-not (Test-Path $AgentScript)) {
-  throw "Agent não encontrado: $AgentScript"
-}
-
-if (-not (Test-Path $ConfigPath)) {
-  if (Test-Path $ConfigExample) {
-    Copy-Item $ConfigExample $ConfigPath -Force
-  }
-  throw "Criei agent\config.json a partir do exemplo. Configure os projetos permitidos e rode npm run agent:install novamente."
-}
-
-if (-not (Test-Path $EnvPath)) {
-  throw '.env.local não encontrado. O agente precisa do SEXTA_AGENT_TOKEN local para autenticar na SEXTA Cloud.'
-}
+if (-not (Test-Path $AgentScript)) { throw "Agent não encontrado: $AgentScript" }
+if (-not (Test-Path $ConfigPath)) { throw 'agent\config.json não encontrado. Rode primeiro: npm run sexta:setup' }
+if (-not (Test-Path $EnvPath)) { throw '.env.local não encontrado. Rode primeiro: npm run sexta:setup' }
 
 $EnvText = Get-Content $EnvPath -Raw
-if ($EnvText -notmatch '(?m)^\s*SEXTA_AGENT_TOKEN\s*=\s*[^\s#].*$') {
-  throw 'SEXTA_AGENT_TOKEN não foi encontrado em .env.local.'
-}
+if ($EnvText -notmatch '(?m)^\s*SEXTA_AGENT_TOKEN\s*=\s*[^\s#].*$') { throw 'Token do agente ausente. Rode: npm run sexta:setup' }
+if ($EnvText -notmatch '(?m)^\s*SEXTA_DEVICE_ID\s*=\s*[^\s#].*$') { throw 'SEXTA_DEVICE_ID ausente. Rode: npm run sexta:setup' }
 
-if (-not $Codex) {
-  throw 'Codex CLI não foi encontrado no PATH. Instale e faça login no Codex antes de instalar o agente.'
-}
+Write-Host "Node: $(& $Node.Source --version 2>$null)"
+if ($Codex) { Write-Host "Codex: $(& $Codex.Source --version 2>$null)" }
+else { Write-Warning 'Codex CLI não encontrado. A Sexta funcionará normalmente; apenas tarefas de edição/análise de código via Codex ficarão indisponíveis.' }
 
-$NodeVersion = (& $Node.Source --version 2>$null)
-$CodexVersion = (& $Codex.Source --version 2>$null)
-Write-Host "Node: $NodeVersion"
-Write-Host "Codex: $CodexVersion"
-
-# O PC precisa continuar acordado quando estiver bloqueado. Tela desligada continua permitida;
-# apenas o modo de suspensão em alimentação AC é desativado.
-try {
-  & powercfg.exe /change standby-timeout-ac 0 | Out-Null
-  Write-Host 'Suspensão automática em energia AC: desativada.'
-} catch {
-  Write-Warning 'Não consegui desativar a suspensão automática. Configure Windows > Energia > Suspender como Nunca enquanto conectado à tomada.'
+if (Test-Path $DoctorScript) {
+  Write-Host ''
+  Write-Host 'Executando SEXTA Doctor antes da instalação...'
+  & $Node.Source --env-file-if-exists="$EnvPath" "$DoctorScript"
+  if ($LASTEXITCODE -ne 0) { throw 'SEXTA Doctor encontrou bloqueios essenciais. Corrija-os antes de instalar.' }
 }
 
 $Arguments = "--env-file-if-exists=`"$EnvPath`" `"$AgentScript`""
@@ -77,7 +56,7 @@ Register-ScheduledTask `
   -Trigger $Trigger `
   -Settings $Settings `
   -Principal $Principal `
-  -Description 'SEXTA PC Agent: recebe comandos remotos e delega tarefas ao Codex enquanto o Windows está ligado, inclusive na tela de bloqueio.' `
+  -Description 'SEXTA PC Agent v3: corpo local pareado, com kill switch, autonomia e privacidade configuráveis.' `
   -Force | Out-Null
 
 Start-ScheduledTask -TaskName $TaskName
@@ -89,4 +68,5 @@ Write-Host ''
 Write-Host 'SEXTA PC Agent instalado.'
 Write-Host "Estado: $($Task.State)"
 Write-Host "Última execução: $($Info.LastRunTime)"
-Write-Host 'Pode bloquear o Windows normalmente. O agente continua rodando enquanto sua sessão estiver logada.'
+Write-Host 'A instalação NÃO alterou suspensão, energia, firewall ou permissões administrativas do Windows.'
+Write-Host 'Para pausar imediatamente: npm run agent:pause'

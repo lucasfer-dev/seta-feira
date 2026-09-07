@@ -5,5 +5,6 @@ import './app-original.js';
 import './native-bridge.js';
 import './browser-audio-tuning.js';
 import './voice-loader.js';
-import './sexta-shell-v2.js';
+import './sexta-shell-v3.js';
+import './sexta-v3-decision-gate.js';
 import './voice-latency-probe.js';

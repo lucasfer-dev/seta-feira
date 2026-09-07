@@ -17,6 +17,9 @@ import heartbeat from './api/device-heartbeat.js';
 import commands from './api/commands.js';
 import agentPoll from './api/agent-poll.js';
 import agentResult from './api/agent-result.js';
+import agentPair from './api/agent-pair.js';
+import agentCheck from './api/agent-check.js';
+import agentControl from './api/agent-control.js';
 import androidPoll from './api/android-poll.js';
 import androidResult from './api/android-result.js';
 import voiceAction from './api/voice-action.js';
@@ -46,6 +49,7 @@ const routes = new Map([
   ['/api/live-token', liveToken], ['/api/live-turn', liveTurn], ['/api/live-metrics', liveMetrics], ['/api/sync', sync],
   ['/api/memory', memory], ['/api/settings', settings], ['/api/device-heartbeat', heartbeat],
   ['/api/commands', commands], ['/api/agent-poll', agentPoll], ['/api/agent-result', agentResult],
+  ['/api/agent-pair', agentPair], ['/api/agent-check', agentCheck], ['/api/agent-control', agentControl],
   ['/api/android-poll', androidPoll], ['/api/android-result', androidResult], ['/api/voice-action', voiceAction],
   ['/api/tool-execute', toolExecute], ['/api/tool-registry', toolRegistry], ['/api/pc-vision-analyze', pcVisionAnalyze],
   ['/api/google/status', googleStatusRoute], ['/api/google/auth-url', googleAuthUrl],
@@ -89,7 +93,7 @@ const server = http.createServer(async (req, res) => {
 
 const port = Number(process.env.PORT || 3000);
 server.listen(port, () => {
-  console.log(`SEXTA 1.3 em http://localhost:${port}`);
+  console.log(`SEXTA 1.4 em http://localhost:${port}`);
   if (process.env.SEXTA_MONITOR_ENABLED !== 'false') {
     const interval = Math.max(30, Number(process.env.SEXTA_MONITOR_INTERVAL_SECONDS || 60)) * 1000;
     const tick = () => runMonitor().catch(error => console.warn('[SEXTA Monitor]', error.message));
