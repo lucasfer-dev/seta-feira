@@ -2,7 +2,7 @@
   "name": "sexta-desktop",
   "version": "2.1.1",
   "private": true,
-  "main": "main.cjs",
+  "main": "secure-main.cjs",
   "scripts": {
     "dev": "electron .",
     "start": "electron .",
@@ -15,7 +15,7 @@
     "appId": "br.com.sexta.desktop",
     "productName": "SEXTA",
     "asar": true,
-    "files": ["main.cjs", "preload.cjs", "overlay.html", "fallback.html"],
+    "files": ["secure-main.cjs", "main.cjs", "preload.cjs", "overlay.html", "fallback.html"],
     "extraResources": [
       {
         "from": "../../agent",
