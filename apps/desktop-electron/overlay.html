@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>SEXTA Presence</title>
+<style>
+  *{box-sizing:border-box} html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;font-family:Segoe UI,system-ui,sans-serif;color:white}
+  .island{width:100%;height:100%;border:1px solid rgba(255,255,255,.11);border-radius:22px;background:rgba(8,12,20,.88);backdrop-filter:blur(18px);display:flex;align-items:center;gap:12px;padding:10px 14px;box-shadow:0 12px 30px rgba(0,0,0,.32);user-select:none;cursor:pointer}
+  .orb{position:relative;width:42px;height:42px;min-width:42px;border-radius:50%;border:1px solid rgba(103,232,249,.5);box-shadow:0 0 24px rgba(103,232,249,.22),inset 0 0 18px rgba(103,232,249,.12);transition:.22s ease}
+  .orb:before,.orb:after{content:"";position:absolute;inset:6px;border-radius:50%;border:1px solid rgba(103,232,249,.36)}
+  .orb:after{inset:13px;background:rgba(103,232,249,.55);border:0;box-shadow:0 0 16px rgba(103,232,249,.5)}
+  .text{min-width:0}.name{font-size:10px;letter-spacing:.16em;color:rgba(255,255,255,.46);text-transform:uppercase}.state{font-size:13px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sub{font-size:10px;color:rgba(255,255,255,.4);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  body[data-state="listening"] .orb{transform:scale(1.06);box-shadow:0 0 30px rgba(103,232,249,.38),inset 0 0 20px rgba(103,232,249,.16)}
+  body[data-state="thinking"] .orb:before{animation:spin 1.1s linear infinite;border-style:dashed}
+  body[data-state="speaking"] .orb:after{animation:pulse .48s ease-in-out infinite alternate}
+  body[data-state="acting"] .orb{border-color:rgba(167,139,250,.75);box-shadow:0 0 30px rgba(167,139,250,.3)}
+  body[data-state="reconnecting"] .orb{animation:pulse .8s ease-in-out infinite alternate}
+  body[data-state="error"] .orb{border-color:rgba(248,113,113,.8);box-shadow:0 0 28px rgba(248,113,113,.34)}
+  @keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{to{transform:scale(1.18);opacity:.72}}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body data-state="standby">
+  <div class="island" id="island" role="button" aria-label="Abrir SEXTA">
+    <div class="orb"></div>
+    <div class="text"><div class="name">SEXTA</div><div class="state" id="state">Pronta</div><div class="sub" id="sub">Clique para abrir</div></div>
+  </div>
+<script>
+(() => {
+  const labels={standby:'Pronta',listening:'Ouvindo…',thinking:'Pensando…',speaking:'Falando…',acting:'Executando…',reconnecting:'Reconectando…',error:'Atenção necessária'};
+  const stateEl=document.querySelector('#state'); const sub=document.querySelector('#sub');
+  window.sextaDesktop?.presence?.onUpdate?.(detail=>{
+    const state=String(detail?.state||'standby'); document.body.dataset.state=state; stateEl.textContent=labels[state]||state;
+    sub.textContent=detail?.tool?String(detail.tool).replace(/^pc_|^android_/,'').replaceAll('_',' '):'Clique para abrir';
+  });
+  document.querySelector('#island')?.addEventListener('click',()=>window.sextaDesktop?.overlay?.open?.());
+})();
+</script>
+</body>
+</html>

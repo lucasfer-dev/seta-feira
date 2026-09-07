@@ -22,15 +22,19 @@
     error: 'error'
   };
 
+  function relayDesktop(detail) {
+    try { window.sextaDesktop?.presence?.update?.(detail); } catch {}
+  }
+
   function publish(next, detail = {}) {
     const value = String(next || 'standby');
     if (state.presence === value && !detail.force) return;
     state.presence = value;
     state.changedAt = Date.now();
     root.dataset.sextaPresence = value;
-    window.dispatchEvent(new CustomEvent('sexta:presence-state', {
-      detail: { state: value, voice: state.voice, toolDepth: state.toolDepth, changedAt: state.changedAt, ...detail }
-    }));
+    const payload = { state: value, voice: state.voice, toolDepth: state.toolDepth, changedAt: state.changedAt, ...detail };
+    window.dispatchEvent(new CustomEvent('sexta:presence-state', { detail: payload }));
+    relayDesktop(payload);
   }
 
   function reconcile(detail = {}) {
@@ -51,9 +55,10 @@
   });
 
   root.dataset.sextaPresence = 'standby';
+  relayDesktop({ state: 'standby', voice: 'idle', toolDepth: 0, changedAt: state.changedAt, source: 'boot' });
   window.__sextaPresence = {
     installed: true,
-    version: '1.0.0',
+    version: '1.1.0',
     debug: () => ({ ...state })
   };
 })();

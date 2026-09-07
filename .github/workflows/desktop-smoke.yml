@@ -1,0 +1,64 @@
+name: Desktop Smoke
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agent/**'
+      - 'apps/desktop-electron/**'
+      - 'lib/pc-desktop-tools.mjs'
+      - 'lib/tool-core.mjs'
+      - 'lib/tool-policy.mjs'
+      - 'api/pc-vision-analyze.js'
+      - 'tests/pc-desktop-policy.test.mjs'
+      - '.github/workflows/desktop-smoke.yml'
+  pull_request:
+    paths:
+      - 'agent/**'
+      - 'apps/desktop-electron/**'
+      - 'lib/pc-desktop-tools.mjs'
+      - 'lib/tool-core.mjs'
+      - 'lib/tool-policy.mjs'
+      - 'api/pc-vision-analyze.js'
+      - 'tests/pc-desktop-policy.test.mjs'
+      - '.github/workflows/desktop-smoke.yml'
+
+jobs:
+  windows-contract:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check desktop JavaScript
+        shell: pwsh
+        run: |
+          node --check agent/agent.mjs
+          node --check agent/windows-ui.mjs
+          node --check agent/browser-agent.mjs
+          node --check lib/pc-desktop-tools.mjs
+          node --check lib/tool-core.mjs
+          node --check lib/tool-policy.mjs
+          node --check api/pc-vision-analyze.js
+          node --check apps/desktop-electron/main.cjs
+          node --check apps/desktop-electron/preload.cjs
+      - name: Verify Windows automation assemblies
+        shell: powershell
+        run: |
+          Add-Type -AssemblyName UIAutomationClient
+          Add-Type -AssemblyName UIAutomationTypes
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+          if (-not [System.Windows.Automation.AutomationElement]::RootElement) { throw 'UIAutomation unavailable' }
+          Write-Host 'Windows UI Automation assemblies OK'
+      - name: Run desktop policy tests
+        shell: pwsh
+        run: node --test tests/pc-desktop-policy.test.mjs tests/tool-policy.test.mjs
+      - name: Assert no generic shell or destructive browser primitive
+        shell: pwsh
+        run: |
+          Select-String -Path agent/agent.mjs -Pattern "screen_analyze","browser_snapshot","ui_tree" | Out-Null
+          if (Select-String -Path agent/agent.mjs -Pattern "action === 'shell'","action === 'exec'") { throw 'Generic shell action detected' }
+          Select-String -Path agent/browser-agent.mjs -Pattern "PC_BROWSER_SENSITIVE_CONTROL_BLOCKED","PC_BROWSER_PASSWORD_FIELD_BLOCKED" | Out-Null
+          Select-String -Path agent/windows-ui.mjs -Pattern "PC_UI_SENSITIVE_CONTROL_BLOCKED","PC_UI_PASSWORD_FIELD_BLOCKED" | Out-Null

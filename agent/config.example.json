@@ -11,5 +11,10 @@
   "codex": {
     "command": "codex",
     "timeoutMs": 900000
+  },
+  "browser": {
+    "command": "",
+    "debugPort": 9223,
+    "profileDir": "C:\\Users\\SEU_USUARIO\\.sexta-browser-profile"
   }
 }

@@ -2,12 +2,14 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { browserBack, browserClick, browserOpen, browserSnapshot, browserStatus, browserType } from './browser-agent.mjs';
+import { captureScreen, focusWindow, uiClickText, uiHotkey, uiScroll, uiTree, uiTypeText, windowList } from './windows-ui.mjs';
 
 const BASE = (process.env.SEXTA_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
 const TOKEN = process.env.SEXTA_AGENT_TOKEN || 'local-agent-token';
 const DEVICE_ID = process.env.SEXTA_DEVICE_ID || `windows-${os.hostname().toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
 const configPath = process.env.SEXTA_AGENT_CONFIG || path.join(path.dirname(new URL(import.meta.url).pathname), 'config.json');
-let cfg = { deviceName: os.hostname(), apps: {}, projects: {}, codex: {} };
+let cfg = { deviceName: os.hostname(), apps: {}, projects: {}, codex: {}, browser: {} };
 try { cfg = { ...cfg, ...JSON.parse(fs.readFileSync(configPath, 'utf8')) }; } catch {}
 
 const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` };
@@ -225,16 +227,40 @@ async function execute(command) {
     });
     return { copied:true, length:value.length };
   }
+  if (action === 'window_list') return windowList(payload.limit);
+  if (action === 'window_focus') return focusWindow(payload.title);
+  if (action === 'ui_tree') return uiTree(payload.maxNodes);
+  if (action === 'ui_click_text') return uiClickText(payload.text);
+  if (action === 'ui_type_text') return uiTypeText(payload.text, payload.target);
+  if (action === 'ui_scroll') return uiScroll(payload.direction, payload.amount);
+  if (action === 'ui_hotkey') return uiHotkey(payload.shortcut);
+  if (action === 'screen_analyze') {
+    const shot = await captureScreen(payload.scope === 'all' ? 'all' : 'primary');
+    const vision = await post('/api/pc-vision-analyze', { imageBase64: shot.imageBase64, question: payload.question || '', scope: shot.scope });
+    return { screenshot: { width: shot.width, height: shot.height, scope: shot.scope, bytes: shot.bytes }, analysis: vision.analysis || {}, model: vision.model || '' };
+  }
+  if (action === 'browser_open') return browserOpen(cfg, payload.url);
+  if (action === 'browser_snapshot') return browserSnapshot(cfg);
+  if (action === 'browser_click') return browserClick(cfg, payload.index);
+  if (action === 'browser_type') return browserType(cfg, payload.index, payload.text);
+  if (action === 'browser_back') return browserBack(cfg);
   throw new Error('Ação não permitida');
 }
+
+const CAPABILITIES = [
+  'open_url','open_app','open_project','git_status','get_system_info','read_clipboard','copy_text','codex_task',
+  'window_list','window_focus','ui_tree','ui_click_text','ui_type_text','ui_scroll','ui_hotkey','screen_analyze',
+  'browser_open','browser_snapshot','browser_click','browser_type','browser_back'
+];
 
 async function heartbeat() {
   return post('/api/device-heartbeat', {
     deviceId: DEVICE_ID, name: cfg.deviceName || os.hostname(), kind: 'agent',
-    capabilities: ['open_url','open_app','open_project','git_status','get_system_info','read_clipboard','copy_text','codex_task'],
+    capabilities: CAPABILITIES,
     context: {
       hostname: os.hostname(), platform: os.platform(), uptime: Math.round(os.uptime()),
-      projects: Object.keys(cfg.projects || {}), codexTask: true,
+      projects: Object.keys(cfg.projects || {}), codexTask: true, pcAgent: true,
+      pcVision: process.platform === 'win32', pcHands: process.platform === 'win32', browserAgent: browserStatus(cfg),
       codexActiveProjects: [...activeCodexProjects]
     }
   });

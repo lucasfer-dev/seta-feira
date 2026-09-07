@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, shell, ipcMain, dialog, screen } = require('electron');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const fs = require('node:fs');
@@ -6,8 +6,10 @@ const fsp = fs.promises;
 
 const WEB_URL = process.env.SEXTA_WEB_URL || 'http://localhost:3000';
 let win;
+let overlay;
 let tray;
 let agent;
+let lastPresence = { state: 'standby' };
 
 function desktopConfigPath() { return path.join(app.getPath('userData'), 'sexta-desktop.json'); }
 function readDesktopConfig() {
@@ -19,6 +21,7 @@ function writeDesktopConfig(next) {
   fs.writeFileSync(desktopConfigPath(), JSON.stringify({ ...current, ...next }, null, 2), 'utf8');
 }
 function selectedVaultPath() { return String(readDesktopConfig().vaultPath || ''); }
+function overlayEnabled() { return readDesktopConfig().overlayEnabled !== false; }
 function safeRelativeNotePath(value) {
   const normalized = String(value || '').replace(/\\/g, '/').replace(/^\/+/, '');
   if (!normalized || !normalized.toLowerCase().endsWith('.md')) throw new Error('VAULT_PATH_INVALID');
@@ -97,6 +100,19 @@ function registerVaultIpc() {
   });
 }
 
+function registerPresenceIpc() {
+  ipcMain.on('presence:update', (_event, detail = {}) => {
+    const state = String(detail.state || 'standby').slice(0, 40);
+    lastPresence = { state, tool: detail.tool ? String(detail.tool).slice(0, 120) : null };
+    if (overlay && !overlay.isDestroyed()) overlay.webContents.send('presence:state', lastPresence);
+  });
+  ipcMain.on('overlay:open', () => {
+    if (!win || win.isDestroyed()) return;
+    win.show();
+    win.focus();
+  });
+}
+
 function createWindow() {
   win = new BrowserWindow({
     width: 1320,
@@ -129,6 +145,52 @@ function createWindow() {
   });
 }
 
+function positionOverlay() {
+  if (!overlay || overlay.isDestroyed()) return;
+  const display = screen.getPrimaryDisplay();
+  const area = display.workArea;
+  const bounds = overlay.getBounds();
+  overlay.setPosition(Math.round(area.x + area.width / 2 - bounds.width / 2), area.y + 12, false);
+}
+
+function createOverlay() {
+  overlay = new BrowserWindow({
+    width: 270,
+    height: 66,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: false,
+    show: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  });
+  overlay.setAlwaysOnTop(true, 'screen-saver');
+  overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  overlay.loadFile(path.join(__dirname, 'overlay.html'));
+  overlay.webContents.on('did-finish-load', () => overlay.webContents.send('presence:state', lastPresence));
+  overlay.once('ready-to-show', () => {
+    positionOverlay();
+    if (overlayEnabled()) overlay.showInactive();
+  });
+}
+
+function setOverlayEnabled(enabled) {
+  writeDesktopConfig({ overlayEnabled: Boolean(enabled) });
+  if (!overlay || overlay.isDestroyed()) return;
+  if (enabled) { positionOverlay(); overlay.showInactive(); }
+  else overlay.hide();
+}
+
 function startAgent() {
   const agentPath = path.resolve(__dirname, '../../agent/agent.mjs');
   if (!fs.existsSync(agentPath)) return;
@@ -146,6 +208,7 @@ function createTray() {
   tray.setToolTip('SEXTA');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Abrir Sexta', click: () => { win.show(); win.focus(); } },
+    { label: 'Mostrar ilha da SEXTA', type: 'checkbox', checked: overlayEnabled(), click: item => setOverlayEnabled(item.checked) },
     { label: 'Abrir Vault', click: async () => { const p = selectedVaultPath(); if (p) await shell.openExternal(`obsidian://open?path=${encodeURIComponent(p)}`).catch(() => shell.openPath(p)); } },
     { label: 'Iniciar com o Windows', type: 'checkbox', checked: app.getLoginItemSettings().openAtLogin, click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }) },
     { type: 'separator' },
@@ -156,9 +219,14 @@ function createTray() {
 
 app.whenReady().then(() => {
   registerVaultIpc();
+  registerPresenceIpc();
   createWindow();
+  createOverlay();
   createTray();
   startAgent();
+  screen.on('display-metrics-changed', positionOverlay);
+  screen.on('display-added', positionOverlay);
+  screen.on('display-removed', positionOverlay);
 });
 app.on('activate', () => { if (win) win.show(); else createWindow(); });
 app.on('before-quit', () => {
