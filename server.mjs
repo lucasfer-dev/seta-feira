@@ -99,7 +99,7 @@ const server = http.createServer(async (req, res) => {
 
 const port = Number(process.env.PORT || 3000);
 server.listen(port, () => {
-  console.log(`SEXTA 1.5 em http://localhost:${port}`);
+  console.log(`SEXTA 4.1.1 em http://localhost:${port}`);
   if (process.env.SEXTA_MONITOR_ENABLED !== 'false') {
     const interval = Math.max(30, Number(process.env.SEXTA_MONITOR_INTERVAL_SECONDS || 60)) * 1000;
     const tick = () => runMonitor().catch(error => console.warn('[SEXTA Monitor]', error.message));
