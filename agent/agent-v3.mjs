@@ -2,7 +2,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { browserBack, browserClick, browserOpen, browserSnapshot, browserStatus, browserType } from './browser-agent.mjs';
+import { browserBack, browserClick, browserForward, browserOpen, browserReload, browserSelectTab, browserSnapshot, browserStatus, browserTabs, browserType } from './browser-agent.mjs';
 import { captureScreen, focusWindow, uiClickText, uiHotkey, uiScroll, uiTree, uiTypeText, windowList } from './windows-ui.mjs';
 import { audit } from './audit.mjs';
 import { hardwareSnapshot } from './hardware.mjs';
@@ -200,17 +200,21 @@ async function execute(command) {
     return { screenshot: { width: shot.width, height: shot.height, scope: shot.scope, bytes: shot.bytes }, analysis: vision.analysis || {}, model: vision.model || '' };
   }
   if (action === 'browser_open') return browserOpen(cfg, payload.url);
+  if (action === 'browser_tabs') return browserTabs(cfg);
+  if (action === 'browser_select_tab') return browserSelectTab(cfg, payload.index);
   if (action === 'browser_snapshot') return browserSnapshot(cfg);
   if (action === 'browser_click') return browserClick(cfg, payload.index);
   if (action === 'browser_type') return browserType(cfg, payload.index, payload.text);
   if (action === 'browser_back') return browserBack(cfg);
+  if (action === 'browser_forward') return browserForward(cfg);
+  if (action === 'browser_reload') return browserReload(cfg);
   throw new Error('Ação não permitida');
 }
 
 const CAPABILITIES = [
   'open_url', 'open_app', 'open_project', 'git_status', 'get_system_info', 'hardware_status', 'read_clipboard', 'copy_text', 'codex_task',
   'window_list', 'window_focus', 'ui_tree', 'ui_click_text', 'ui_type_text', 'ui_scroll', 'ui_hotkey', 'screen_analyze',
-  'browser_open', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_back', 'agent_control'
+  'browser_open', 'browser_tabs', 'browser_select_tab', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_back', 'browser_forward', 'browser_reload', 'agent_control'
 ];
 
 async function heartbeat() {
