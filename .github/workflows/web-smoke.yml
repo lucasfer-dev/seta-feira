@@ -8,6 +8,7 @@ on:
       - 'api/**'
       - 'lib/**'
       - 'tests/**'
+      - 'apps/android-capacitor/**'
       - '.github/workflows/web-smoke.yml'
   pull_request:
     paths:
@@ -15,6 +16,7 @@ on:
       - 'api/**'
       - 'lib/**'
       - 'tests/**'
+      - 'apps/android-capacitor/**'
       - '.github/workflows/web-smoke.yml'
 
 jobs:
@@ -34,6 +36,7 @@ jobs:
       - name: Check presence and tool context
         run: |
           node --check public/presence-engine.js
+          node --check public/presence-orb-lite.js
           node --check public/voice-tool-context.js
       - name: Check canonical personality
         run: node --check public/sexta-personality.js
@@ -43,10 +46,13 @@ jobs:
         run: |
           node --check lib/tool-policy.mjs
           node --check lib/mcp-client.mjs
+          node --check lib/android-hands-tools.mjs
           node --check lib/tool-core.mjs
           node --check api/tool-execute.js
           node --check api/tool-registry.js
           node --check api/chat.js
+      - name: Check Android Hands preparation
+        run: node --check apps/android-capacitor/scripts/prepare-hands.mjs
       - name: Check live token endpoint
         run: node --check api/live-token.js
       - name: Assert deterministic Voice Core v10 contract
@@ -59,9 +65,11 @@ jobs:
           grep -q "voice-barge-in-guard.js" public/voice-loader.js
           grep -q "voice-output-jitter-guard.js" public/voice-loader.js
           grep -q "presence-engine.js" public/voice-loader.js
+          grep -q "presence-orb-lite.js" public/voice-loader.js
           grep -q "voice-tool-context.js" public/voice-loader.js
           grep -q "START_SENSITIVITY_LOW" api/live-token.js
           grep -q "getLiveToolDeclarations" api/live-token.js
+          grep -q "ANDROID_HANDS_TOOL_DECLARATIONS" lib/tool-core.mjs
           ! grep -Eq "voice-core-v[5-9]\\.js" public/voice-loader.js
       - name: Check audio resampler
         run: node --check public/audio-resampler.js
