@@ -1,6 +1,6 @@
 {
   "name": "sexta",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,6 +9,8 @@
     "sexta:setup": "node agent/setup.mjs",
     "sexta:doctor": "node --env-file-if-exists=.env.local agent/doctor.mjs",
     "sexta:update": "node --env-file-if-exists=.env.local agent/update.mjs",
+    "sexta:vault": "node agent/vault-cli.mjs",
+    "sexta:wake:probe": "node -e \"import('./agent/wake-word.mjs').then(m=>console.log(JSON.stringify(m.probeWakeWord(),null,2)))\"",
     "agent:start": "node --env-file-if-exists=.env.local agent/start-cloud.mjs",
     "agent:install": "powershell -NoProfile -ExecutionPolicy Bypass -File agent/install-windows.ps1",
     "agent:status": "powershell -NoProfile -ExecutionPolicy Bypass -File agent/status-windows.ps1",
@@ -17,6 +19,7 @@
     "agent:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File agent/uninstall-windows.ps1",
     "desktop:install": "npm --prefix apps/desktop-electron install",
     "desktop:dev": "npm --prefix apps/desktop-electron run dev",
+    "desktop:build": "npm --prefix apps/desktop-electron run dist",
     "android:install": "npm --prefix apps/android-capacitor install",
     "android:sync": "npm --prefix apps/android-capacitor run android:sync"
   },

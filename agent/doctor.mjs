@@ -4,39 +4,22 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { AGENT_PROTOCOL_VERSION, readRuntimeState } from './runtime-state.mjs';
+import { hardwareSnapshot } from './hardware.mjs';
+import { secureVaultStatus } from './secure-vault.mjs';
+import { probeWakeWord } from './wake-word.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const ENV_PATH = path.join(ROOT, '.env.local');
-const CONFIG_PATH = path.join(ROOT, 'agent', 'config.json');
+const AGENT_HOME = path.resolve(process.env.SEXTA_AGENT_HOME || path.join(ROOT, 'agent'));
+const ENV_PATH = path.resolve(process.env.SEXTA_ENV_PATH || path.join(ROOT, '.env.local'));
+const CONFIG_PATH = path.resolve(process.env.SEXTA_AGENT_CONFIG || path.join(AGENT_HOME, 'config.json'));
 
-function envFile() {
-  const map = {};
-  try {
-    for (const line of fs.readFileSync(ENV_PATH, 'utf8').split(/\r?\n/)) {
-      const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/i);
-      if (match) map[match[1]] = match[2].replace(/^['"]|['"]$/g, '');
-    }
-  } catch {}
-  return map;
-}
-
-function commandExists(name) {
-  const result = spawnSync(process.platform === 'win32' ? 'where.exe' : 'which', [name], { encoding: 'utf8', windowsHide: true });
-  return result.status === 0 ? String(result.stdout || '').trim().split(/\r?\n/)[0] : '';
-}
-
-function powershell(script) {
-  if (process.platform !== 'win32') return { ok: false, message: 'Windows necessário' };
-  const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true, timeout: 10000 });
-  return { ok: r.status === 0, message: String(r.stderr || r.stdout || '').trim() };
-}
-
+function envFile() { const map = {}; try { for (const line of fs.readFileSync(ENV_PATH, 'utf8').split(/\r?\n/)) { const match = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/i); if (match) map[match[1]] = match[2].replace(/^['"]|['"]$/g, ''); } } catch {} return map; }
+function commandExists(name) { const result = spawnSync(process.platform === 'win32' ? 'where.exe' : 'which', [name], { encoding: 'utf8', windowsHide: true }); return result.status === 0 ? String(result.stdout || '').trim().split(/\r?\n/)[0] : ''; }
+function powershell(script) { if (process.platform !== 'win32') return { ok: false, message: 'Windows necessário' }; const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { encoding: 'utf8', windowsHide: true, timeout: 10000 }); return { ok: r.status === 0, message: String(r.stderr || r.stdout || '').trim() }; }
 function row(name, ok, detail = '', required = true) { return { name, ok: Boolean(ok), detail: String(detail || ''), required }; }
 
 export async function runDoctor({ print = true } = {}) {
-  const rows = [];
-  const env = { ...envFile(), ...process.env };
-  let cfg = {};
+  const rows = []; const env = { ...envFile(), ...process.env }; let cfg = {};
   try { cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch {}
 
   rows.push(row('Windows', process.platform === 'win32', `${os.platform()} ${os.release()}`));
@@ -45,8 +28,7 @@ export async function runDoctor({ print = true } = {}) {
   rows.push(row('Token pareado', Boolean(env.SEXTA_AGENT_TOKEN), env.SEXTA_AGENT_TOKEN ? 'presente' : 'ausente'));
   rows.push(row('Device ID', Boolean(env.SEXTA_DEVICE_ID), env.SEXTA_DEVICE_ID || 'ausente'));
 
-  const code = commandExists('code');
-  const codex = commandExists('codex');
+  const code = commandExists('code'); const codex = commandExists('codex');
   rows.push(row('VS Code', Boolean(code), code || 'não encontrado', false));
   rows.push(row('Codex CLI', Boolean(codex), codex || 'não encontrado; recursos de código ficam opcionais', false));
 
@@ -56,48 +38,40 @@ export async function runDoctor({ print = true } = {}) {
   rows.push(row('Captura de tela', drawing.ok, drawing.ok ? 'System.Drawing disponível' : drawing.message));
   const clipboard = powershell("Get-Command Get-Clipboard | Out-Null; Get-Command Set-Clipboard | Out-Null");
   rows.push(row('Clipboard', clipboard.ok, clipboard.ok ? 'PowerShell clipboard disponível' : clipboard.message));
+  const dpapi = powershell("Add-Type -AssemblyName System.Security; [Security.Cryptography.ProtectedData] | Out-Null");
+  const vault = secureVaultStatus();
+  rows.push(row('Secure Vault / DPAPI', dpapi.ok, dpapi.ok ? `${vault.aliases.length} alias(es) protegido(s)` : dpapi.message, false));
+  const wake = probeWakeWord();
+  rows.push(row('Wake word local', wake.available, wake.available ? `Speech recognizer: ${wake.cultures.join(', ')}` : wake.reason, false));
+  try { const hw = await hardwareSnapshot({ force: true }); rows.push(row('Hardware Intelligence', Boolean(hw?.memory), hw?.memory ? `RAM ${hw.memory.usedPercent}% • ${hw.disks.length} disco(s)` : 'telemetria parcial', false)); }
+  catch (error) { rows.push(row('Hardware Intelligence', false, String(error?.message || error), false)); }
 
   const browserConfigured = String(cfg.browser?.command || '').trim();
-  const browserCandidates = [
-    browserConfigured,
-    process.env['PROGRAMFILES(X86)'] ? path.join(process.env['PROGRAMFILES(X86)'], 'Microsoft', 'Edge', 'Application', 'msedge.exe') : '',
-    process.env.PROGRAMFILES ? path.join(process.env.PROGRAMFILES, 'Google', 'Chrome', 'Application', 'chrome.exe') : '',
-    commandExists('msedge'), commandExists('chrome')
-  ].filter(Boolean);
+  const browserCandidates = [browserConfigured, process.env['PROGRAMFILES(X86)'] ? path.join(process.env['PROGRAMFILES(X86)'], 'Microsoft', 'Edge', 'Application', 'msedge.exe') : '', process.env.PROGRAMFILES ? path.join(process.env.PROGRAMFILES, 'Google', 'Chrome', 'Application', 'chrome.exe') : '', commandExists('msedge'), commandExists('chrome')].filter(Boolean);
   const browser = browserCandidates.find(candidate => fs.existsSync(candidate) || (!path.isAbsolute(candidate) && commandExists(candidate)));
   rows.push(row('Browser Agent', Boolean(browser), browser || 'Edge/Chrome não encontrado'));
 
-  const projects = Object.entries(cfg.projects || {});
-  const missingProjects = projects.filter(([, value]) => !fs.existsSync(String(value))).map(([key]) => key);
+  const projects = Object.entries(cfg.projects || {}); const missingProjects = projects.filter(([, value]) => !fs.existsSync(String(value))).map(([key]) => key);
   rows.push(row('Projetos allowlist', missingProjects.length === 0, projects.length ? `${projects.length} configurado(s)${missingProjects.length ? `; ausentes: ${missingProjects.join(', ')}` : ''}` : 'nenhum projeto configurado', false));
 
   const state = readRuntimeState();
   rows.push(row('Runtime state', true, `${state.autonomy}${state.paused ? ' • pausado' : ''} • privacy ${Object.values(state.privacy).every(Boolean) ? 'on' : 'custom'}`, false));
 
-  const base = String(env.SEXTA_BASE_URL || 'https://seta-feira.vercel.app').replace(/\/$/, '');
-  const started = Date.now();
-  try {
-    const health = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(8000) });
-    rows.push(row('SEXTA Cloud', health.ok, health.ok ? `${Date.now() - started} ms` : `HTTP ${health.status}`));
-  } catch (error) { rows.push(row('SEXTA Cloud', false, String(error?.message || error))); }
+  const base = String(env.SEXTA_BASE_URL || 'https://seta-feira.vercel.app').replace(/\/$/, ''); const started = Date.now();
+  try { const health = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(8000) }); rows.push(row('SEXTA Cloud', health.ok, health.ok ? `${Date.now() - started} ms` : `HTTP ${health.status}`)); }
+  catch (error) { rows.push(row('SEXTA Cloud', false, String(error?.message || error))); }
 
   if (env.SEXTA_AGENT_TOKEN && env.SEXTA_DEVICE_ID) {
     const startedAuth = Date.now();
     try {
-      const response = await fetch(`${base}/api/agent-check`, {
-        headers: { Authorization: `Bearer ${env.SEXTA_AGENT_TOKEN}`, 'X-SEXTA-Device-ID': env.SEXTA_DEVICE_ID },
-        signal: AbortSignal.timeout(8000)
-      });
+      const response = await fetch(`${base}/api/agent-check`, { headers: { Authorization: `Bearer ${env.SEXTA_AGENT_TOKEN}`, 'X-SEXTA-Device-ID': env.SEXTA_DEVICE_ID }, signal: AbortSignal.timeout(8000) });
       const data = await response.json().catch(() => ({}));
       rows.push(row('Autenticação do agente', response.ok, response.ok ? `${data.tokenType || 'agent'} • ${Date.now() - startedAuth} ms` : `HTTP ${response.status}`));
     } catch (error) { rows.push(row('Autenticação do agente', false, String(error?.message || error))); }
   }
 
-  const required = rows.filter(r => r.required);
-  const passed = required.filter(r => r.ok).length;
-  const optionalWarnings = rows.filter(r => !r.required && !r.ok).length;
+  const required = rows.filter(r => r.required); const passed = required.filter(r => r.ok).length; const optionalWarnings = rows.filter(r => !r.required && !r.ok).length;
   const result = { ok: passed === required.length, protocol: AGENT_PROTOCOL_VERSION, passed, required: required.length, optionalWarnings, rows };
-
   if (print) {
     console.log('\nSEXTA DOCTOR // PC READINESS\n');
     for (const item of rows) console.log(`${item.ok ? '✓' : item.required ? '✕' : '△'} ${item.name.padEnd(24)} ${item.detail}`);
@@ -106,7 +80,4 @@ export async function runDoctor({ print = true } = {}) {
   return result;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const result = await runDoctor();
-  process.exitCode = result.ok ? 0 : 1;
-}
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) { const result = await runDoctor(); process.exitCode = result.ok ? 0 : 1; }

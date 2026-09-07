@@ -4,42 +4,25 @@ import { getConnectedGoogleAccount, isGoogleAccountQuestion } from '../lib/googl
 import { detectWhatsAppIntent, evolutionStatus, sendWhatsAppText } from '../lib/evolution.mjs';
 import { absorbAutomaticMemory } from '../lib/auto-memory.mjs';
 import { planAndExecuteTools } from '../lib/tool-core.mjs';
+import { routedAnswer } from '../lib/model-router.mjs';
 
 const SHARED_CONVERSATION_ID = 'main';
 
 function likelyAction(text = '') {
-  return /\b(manda|mande|envia|envie|avisa|avise|fala|diz|abre|abra|abrir|fecha|liga|desliga|aumenta|abaixa|volume|lanterna|spotify|whatsapp|wpp|gmail|e-?mail|agenda|calend[aá]rio|reuni[aã]o|evento|drive|documento|planilha|tarefa|contato|pc|computador|celular|android|notifica[cç][aã]o|responde|responda|procura|busca|consulta|cria|crie|marca|marque|coloca|coloque|mostra|ver|veja|ler|leia)\b/i.test(String(text));
+  return /\b(manda|mande|envia|envie|avisa|avise|monitora|monitore|rotina|routine|roda|rode|execute|handoff|transfere|transfira|fala|diz|abre|abra|abrir|fecha|liga|desliga|aumenta|abaixa|volume|lanterna|spotify|whatsapp|wpp|gmail|e-?mail|agenda|calend[aá]rio|reuni[aã]o|evento|drive|documento|planilha|tarefa|contato|pc|computador|celular|android|notifica[cç][aã]o|responde|responda|procura|busca|consulta|cria|crie|marca|marque|coloca|coloque|mostra|ver|veja|ler|leia)\b/i.test(String(text));
 }
 
 function detectDirectAddressEmailIntent(text = '') {
   const raw = String(text || '').replace(/\\@/g, '@').replace(/\s+/g, ' ').trim();
   if (!/\b(?:manda|mande|mandar|envia|envie|enviar)\b/i.test(raw)) return null;
   if (!/\b(?:e-?mail|gmail)\b/i.test(raw)) return null;
-
   const addressMatch = raw.match(/([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i);
   if (!addressMatch?.[1]) return null;
-
-  const recipient = addressMatch[1].replace(/[),.;:!?]+$/g, '').trim();
-  let body = 'Teste da SEXTA';
-  let subject = 'Teste da SEXTA';
-
-  const beforeAddress = raw.slice(0, addressMatch.index).trim();
-  const describedBody = beforeAddress.match(/\b(?:e-?mail|gmail)\s+(?:de\s+)?(.+?)\s+(?:para|pra|pro|ao|à)\s*$/i);
-  if (describedBody?.[1]) {
-    const candidate = describedBody[1].replace(/^(?:um|uma)\s+/i, '').trim();
-    if (candidate && !/^(?:para|pra|pro)$/i.test(candidate)) {
-      body = candidate;
-      subject = /\bteste\b/i.test(candidate) ? 'Teste da SEXTA' : 'Mensagem da Sexta-feira';
-    }
-  }
-
-  const afterAddress = raw.slice((addressMatch.index || 0) + addressMatch[0].length).trim();
-  const trailingBody = afterAddress.match(/^(?:dizendo|falando|com\s+(?:a\s+)?(?:mensagem|texto)|mensagem)\s+(.+)$/i);
-  if (trailingBody?.[1]) {
-    body = trailingBody[1].trim();
-    subject = 'Mensagem da Sexta-feira';
-  }
-
+  const recipient = addressMatch[1].replace(/[),.;:!?]+$/g, '').trim(); let body = 'Teste da SEXTA'; let subject = 'Teste da SEXTA';
+  const beforeAddress = raw.slice(0, addressMatch.index).trim(); const describedBody = beforeAddress.match(/\b(?:e-?mail|gmail)\s+(?:de\s+)?(.+?)\s+(?:para|pra|pro|ao|à)\s*$/i);
+  if (describedBody?.[1]) { const candidate = describedBody[1].replace(/^(?:um|uma)\s+/i, '').trim(); if (candidate && !/^(?:para|pra|pro)$/i.test(candidate)) { body = candidate; subject = /\bteste\b/i.test(candidate) ? 'Teste da SEXTA' : 'Mensagem da Sexta-feira'; } }
+  const afterAddress = raw.slice((addressMatch.index || 0) + addressMatch[0].length).trim(); const trailingBody = afterAddress.match(/^(?:dizendo|falando|com\s+(?:a\s+)?(?:mensagem|texto)|mensagem)\s+(.+)$/i);
+  if (trailingBody?.[1]) { body = trailingBody[1].trim(); subject = 'Mensagem da Sexta-feira'; }
   return { action: 'gmail.send-smart', args: { recipient, subject, body } };
 }
 
@@ -53,158 +36,63 @@ function toolFallback(planned) {
 }
 
 async function plannerInput(message, conversationId) {
-  const [messages, memories] = await Promise.all([
-    getMessages(conversationId, 10).catch(() => []),
-    getMemories(10).catch(() => [])
-  ]);
+  const [messages, memories] = await Promise.all([getMessages(conversationId, 10).catch(() => []), getMemories(10).catch(() => [])]);
   const recent = messages.slice(-9).map(m => `${m.role === 'assistant' ? 'SEXTA' : 'USUÁRIO'}: ${m.content}`).join('\n');
   const memoryText = memories.map(m => `- ${m.content}`).join('\n');
   return [
     'Você é o roteador de ferramentas da SEXTA. Use o contexto abaixo apenas para resolver referências como "o mesmo", "aquele arquivo", "ela", "ele" ou nomes já citados. Execute somente o pedido atual.',
     'Nunca substitua um endereço de e-mail explícito por busca de contato. Se houver um endereço com @, use esse endereço diretamente.',
     'Ações com efeito colateral devem corresponder a um pedido explícito do usuário atual. Nunca invente envio, criação, edição ou abertura apenas para parecer útil.',
-    memoryText ? `MEMÓRIAS RELEVANTES:\n${memoryText}` : '',
-    recent ? `CONVERSA RECENTE:\n${recent}` : '',
-    `PEDIDO ATUAL:\n${message}`
+    'Rotinas são skills determinísticas não-destrutivas. Regras do Event Engine apenas observam e notificam.',
+    memoryText ? `MEMÓRIAS RELEVANTES:\n${memoryText}` : '', recent ? `CONVERSA RECENTE:\n${recent}` : '', `PEDIDO ATUAL:\n${message}`
   ].filter(Boolean).join('\n\n');
 }
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
   if (!isOwner(req)) return send(res, 401, { error: 'unauthorized' });
-  const body = await parseJson(req);
-  const message = String(body.message || '').trim();
-  const conversationId = SHARED_CONVERSATION_ID;
-  const deviceId = String(body.deviceId || 'unknown').slice(0, 120);
+  const body = await parseJson(req); const message = String(body.message || '').trim(); const conversationId = SHARED_CONVERSATION_ID; const deviceId = String(body.deviceId || 'unknown').slice(0, 120);
   if (!message) return send(res, 400, { error: 'message_required' });
 
-  const persistReply = async (reply, source = 'cloud-core') => {
-    await saveMessage({ conversation_id: conversationId, role: 'assistant', content: reply, device_id: source });
-    const automatic = await absorbAutomaticMemory({ userText: message, assistantText: reply, source: 'auto-chat' });
-    return automatic;
-  };
-
+  const persistReply = async (reply, source = 'cloud-core') => { await saveMessage({ conversation_id: conversationId, role: 'assistant', content: reply, device_id: source }); return absorbAutomaticMemory({ userText: message, assistantText: reply, source: 'auto-chat' }); };
   const executeGoogleIntent = async (intent, memory) => {
     const workspaceStatus = await googleStatus();
-    if (!workspaceStatus.connected) {
-      const reply = workspaceStatus.configured
-        ? 'Eu entendi que isso é uma ação do Google Workspace, mas sua conta Google ainda não está conectada. Abra Integrações e autorize o acesso.'
-        : 'Eu entendi a ação do Google, mas o OAuth ainda não foi configurado.';
-      await persistReply(reply);
-      return send(res, 200, { reply, needsGoogleConnect: true, memorySaved: Boolean(memory) });
-    }
-
+    if (!workspaceStatus.connected) { const reply = workspaceStatus.configured ? 'Eu entendi que isso é uma ação do Google Workspace, mas sua conta Google ainda não está conectada. Abra Integrações e autorize o acesso.' : 'Eu entendi a ação do Google, mas o OAuth ainda não foi configurado.'; await persistReply(reply); return send(res, 200, { reply, needsGoogleConnect: true, memorySaved: Boolean(memory) }); }
     const workspaceResult = await executeWorkspaceAction(intent.action, intent.args);
-    if (intent.action === 'calendar.create') {
-      const title = String(intent.args.title || '').trim();
-      const date = String(intent.args.date || '').trim();
-      if (title && date) await saveMemory({
-        content: `${title}: ${date.split('-').reverse().join('/')}`,
-        kind: 'event',
-        importance: /anivers[aá]rio/i.test(title) ? 0.95 : 0.78,
-        source: 'google-calendar'
-      });
-    }
-    const reply = formatWorkspaceResult(intent, workspaceResult);
-    const automatic = await persistReply(reply, 'google-workspace');
-    return send(res, 200, { reply, workspaceAction: intent, workspaceResult, memorySaved: Boolean(memory) || automatic.saved.length > 0 });
+    if (intent.action === 'calendar.create') { const title = String(intent.args.title || '').trim(); const date = String(intent.args.date || '').trim(); if (title && date) await saveMemory({ content: `${title}: ${date.split('-').reverse().join('/')}`, kind: 'event', importance: /anivers[aá]rio/i.test(title) ? 0.95 : 0.78, source: 'google-calendar' }); }
+    const reply = formatWorkspaceResult(intent, workspaceResult); const automatic = await persistReply(reply, 'google-workspace'); return send(res, 200, { reply, workspaceAction: intent, workspaceResult, memorySaved: Boolean(memory) || automatic.saved.length > 0 });
   };
 
   try {
-    await saveMessage({ conversation_id: conversationId, role: 'user', content: message, device_id: deviceId });
-    const memory = maybeExtractMemory(message);
-    if (memory) await saveMemory(memory);
-
+    await saveMessage({ conversation_id: conversationId, role: 'user', content: message, device_id: deviceId }); const memory = maybeExtractMemory(message); if (memory) await saveMemory(memory);
     if (isGoogleAccountQuestion(message)) {
-      const status = await googleStatus();
-      if (!status.connected) {
-        const reply = status.configured ? 'Nenhuma conta Google está conectada agora.' : 'O Google Workspace ainda não está configurado no servidor.';
-        await persistReply(reply, 'google-workspace');
-        return send(res, 200, { reply, needsGoogleConnect: true, memorySaved: Boolean(memory) });
-      }
-      const account = await getConnectedGoogleAccount();
-      const reply = account.email
-        ? `A conta Google conectada é ${account.email}${account.name ? `, de ${account.name}` : ''}.`
-        : 'A conta Google está conectada, mas o Google não retornou o endereço de e-mail.';
-      const automatic = await persistReply(reply, 'google-workspace');
-      return send(res, 200, { reply, googleAccount: account, memorySaved: Boolean(memory) || automatic.saved.length > 0 });
+      const status = await googleStatus(); if (!status.connected) { const reply = status.configured ? 'Nenhuma conta Google está conectada agora.' : 'O Google Workspace ainda não está configurado no servidor.'; await persistReply(reply, 'google-workspace'); return send(res, 200, { reply, needsGoogleConnect: true, memorySaved: Boolean(memory) }); }
+      const account = await getConnectedGoogleAccount(); const reply = account.email ? `A conta Google conectada é ${account.email}${account.name ? `, de ${account.name}` : ''}.` : 'A conta Google está conectada, mas o Google não retornou o endereço de e-mail.'; const automatic = await persistReply(reply, 'google-workspace'); return send(res, 200, { reply, googleAccount: account, memorySaved: Boolean(memory) || automatic.saved.length > 0 });
     }
-
-    const directEmailIntent = detectDirectAddressEmailIntent(message);
-    if (directEmailIntent) return executeGoogleIntent(directEmailIntent, memory);
-
-    const workspaceIntent = detectWorkspaceIntent(message);
-    if (workspaceIntent) return executeGoogleIntent(workspaceIntent, memory);
-
+    const directEmailIntent = detectDirectAddressEmailIntent(message); if (directEmailIntent) return executeGoogleIntent(directEmailIntent, memory);
+    const workspaceIntent = detectWorkspaceIntent(message); if (workspaceIntent) return executeGoogleIntent(workspaceIntent, memory);
     const whatsappIntent = detectWhatsAppIntent(message);
     if (whatsappIntent) {
-      if (!evolutionStatus().configured) {
-        const reply = 'Eu entendi que você quer mandar uma mensagem pelo WhatsApp, mas a Evolution API ainda não está configurada. Abra Integrações e conecte o WhatsApp.';
-        const automatic = await persistReply(reply);
-        return send(res, 200, { reply, needsEvolutionConnect: true, memorySaved: Boolean(memory) || automatic.saved.length > 0 });
-      }
-      try {
-        const sent = await sendWhatsAppText(whatsappIntent.args);
-        const reply = `Enviado no WhatsApp para ${sent.to.label}.`;
-        const automatic = await persistReply(reply, 'whatsapp-evolution');
-        return send(res, 200, { reply, whatsappAction: whatsappIntent, whatsappResult: { to: sent.to }, memorySaved: Boolean(memory) || automatic.saved.length > 0 });
-      } catch (error) {
-        if (error.message === 'WHATSAPP_RECIPIENT_AMBIGUOUS') {
-          const names = (error.candidates || []).map(x => `${x.name} (${x.phone})`).join(', ');
-          const reply = `Encontrei mais de um telefone para esse contato: ${names}. Me diga qual deles.`;
-          await persistReply(reply, 'whatsapp-evolution');
-          return send(res, 200, { reply, whatsappCandidates: error.candidates || [] });
-        }
-        throw error;
-      }
+      if (!evolutionStatus().configured) { const reply = 'Eu entendi que você quer mandar uma mensagem pelo WhatsApp, mas a Evolution API ainda não está configurada. Abra Integrações e conecte o WhatsApp.'; const automatic = await persistReply(reply); return send(res, 200, { reply, needsEvolutionConnect: true, memorySaved: Boolean(memory) || automatic.saved.length > 0 }); }
+      try { const sent = await sendWhatsAppText(whatsappIntent.args); const reply = `Enviado no WhatsApp para ${sent.to.label}.`; const automatic = await persistReply(reply, 'whatsapp-evolution'); return send(res, 200, { reply, whatsappAction: whatsappIntent, whatsappResult: { to: sent.to }, memorySaved: Boolean(memory) || automatic.saved.length > 0 }); }
+      catch (error) { if (error.message === 'WHATSAPP_RECIPIENT_AMBIGUOUS') { const names = (error.candidates || []).map(x => `${x.name} (${x.phone})`).join(', '); const reply = `Encontrei mais de um telefone para esse contato: ${names}. Me diga qual deles.`; await persistReply(reply, 'whatsapp-evolution'); return send(res, 200, { reply, whatsappCandidates: error.candidates || [] }); } throw error; }
     }
 
     if (likelyAction(message)) {
       try {
-        const planned = await planAndExecuteTools(await plannerInput(message, conversationId), {
-          deviceId: '',
-          maxRounds: 4,
-          requestText: message
-        });
-        if (planned.handled) {
-          const reply = planned.modelText || toolFallback(planned);
-          const automatic = await persistReply(reply, 'tool-core');
-          return send(res, 200, {
-            reply,
-            conversationId,
-            toolCalls: planned.calls,
-            toolResults: planned.results,
-            toolCore: planned.toolCore || null,
-            memorySaved: Boolean(memory) || automatic.saved.length > 0,
-            automaticMemoriesSaved: automatic.saved.length
-          });
-        }
-      } catch (error) {
-        console.warn('[SEXTA Tool Core] fallback para roteadores antigos:', error.message);
-      }
+        const planned = await planAndExecuteTools(await plannerInput(message, conversationId), { deviceId, maxRounds: 4, requestText: message });
+        if (planned.handled) { const reply = planned.modelText || toolFallback(planned); const automatic = await persistReply(reply, 'tool-core'); return send(res, 200, { reply, conversationId, toolCalls: planned.calls, toolResults: planned.results, toolCore: planned.toolCore || null, memorySaved: Boolean(memory) || automatic.saved.length > 0, automaticMemoriesSaved: automatic.saved.length }); }
+      } catch (error) { console.warn('[SEXTA Tool Core] fallback para roteadores antigos:', error.message); }
     }
 
     const actionContext = await inferAndQueueSafeAction(message);
-    const reply = await answer({
-      message, conversationId, deviceId,
-      settings: body.settings || {}, clientContext: body.context || {}, actionContext
-    });
-    const automatic = await persistReply(reply);
-    return send(res, 200, {
-      reply,
-      action: actionContext,
-      memorySaved: Boolean(memory) || automatic.saved.length > 0,
-      automaticMemoriesSaved: automatic.saved.length,
-      conversationId
-    });
+    const routed = await routedAnswer({ message, conversationId, deviceId, settings: body.settings || {}, clientContext: body.context || {}, actionContext }, answer);
+    const reply = routed.reply; const automatic = await persistReply(reply);
+    return send(res, 200, { reply, action: actionContext, modelRoute: routed.route, memorySaved: Boolean(memory) || automatic.saved.length > 0, automaticMemoriesSaved: automatic.saved.length, conversationId });
   } catch (error) {
     console.error(error);
-    if (String(error?.message || '').startsWith('GEMINI_NETWORK:')) {
-      return send(res, 503, { error: 'ai_network_unavailable', message: 'Não consegui alcançar o Gemini agora. Seus comandos e respostas locais continuam funcionando.' });
-    }
-    if (String(error?.message || '').startsWith('GEMINI_UNAVAILABLE:')) {
-      return send(res, 503, { error: 'ai_temporarily_unavailable', message: 'Meus cérebros do Gemini estão congestionados agora. Seus comandos locais continuam funcionando; tente novamente em instantes.' });
-    }
+    if (String(error?.message || '').startsWith('GEMINI_NETWORK:')) return send(res, 503, { error: 'ai_network_unavailable', message: 'Não consegui alcançar o Gemini agora. Seus comandos e respostas locais continuam funcionando.' });
+    if (String(error?.message || '').startsWith('GEMINI_UNAVAILABLE:')) return send(res, 503, { error: 'ai_temporarily_unavailable', message: 'Meus cérebros do Gemini estão congestionados agora. Seus comandos locais continuam funcionando; tente novamente em instantes.' });
     return send(res, Number(error?.status) || 500, { error: 'chat_failed', message: error.message });
   }
 }

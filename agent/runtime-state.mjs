@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const AGENT_PROTOCOL_VERSION = '3.0.0';
+export const AGENT_PROTOCOL_VERSION = '4.0.0';
 const STATE_PATH = process.env.SEXTA_AGENT_STATE || fileURLToPath(new URL('./runtime-state.json', import.meta.url));
 
 const DEFAULTS = Object.freeze({
@@ -13,7 +13,8 @@ const DEFAULTS = Object.freeze({
     screen: true,
     clipboard: true,
     uiAutomation: true,
-    browser: true
+    browser: true,
+    hardware: true
   },
   cancelEpoch: 0,
   updatedAt: ''
@@ -21,7 +22,7 @@ const DEFAULTS = Object.freeze({
 
 const CONTROL_ACTIONS = new Set(['agent_control']);
 const OBSERVER_ACTIONS = new Set([
-  'git_status', 'get_system_info', 'read_clipboard', 'window_list', 'ui_tree',
+  'git_status', 'get_system_info', 'hardware_status', 'read_clipboard', 'window_list', 'ui_tree',
   'screen_analyze', 'browser_snapshot'
 ]);
 
@@ -35,7 +36,8 @@ function cleanState(raw = {}) {
       screen: raw.privacy?.screen !== false,
       clipboard: raw.privacy?.clipboard !== false,
       uiAutomation: raw.privacy?.uiAutomation !== false,
-      browser: raw.privacy?.browser !== false
+      browser: raw.privacy?.browser !== false,
+      hardware: raw.privacy?.hardware !== false
     },
     cancelEpoch: Math.max(0, Number(raw.cancelEpoch) || 0),
     updatedAt: String(raw.updatedAt || '')
@@ -65,25 +67,14 @@ export function evaluateLocalAction(action, payload = {}, state = readRuntimeSta
   if (CONTROL_ACTIONS.has(name)) return { allowed: true, reason: 'control', state };
   if (state.paused) return { allowed: false, reason: 'AGENT_PAUSED', state };
 
-  if (!state.privacy.clipboard && ['read_clipboard', 'copy_text'].includes(name)) {
-    return { allowed: false, reason: 'PRIVACY_CLIPBOARD_DISABLED', state };
-  }
-  if (!state.privacy.screen && name === 'screen_analyze') {
-    return { allowed: false, reason: 'PRIVACY_SCREEN_DISABLED', state };
-  }
-  if (!state.privacy.uiAutomation && (name === 'window_list' || name === 'window_focus' || name.startsWith('ui_'))) {
-    return { allowed: false, reason: 'PRIVACY_UI_AUTOMATION_DISABLED', state };
-  }
-  if (!state.privacy.browser && name.startsWith('browser_')) {
-    return { allowed: false, reason: 'PRIVACY_BROWSER_DISABLED', state };
-  }
+  if (!state.privacy.clipboard && ['read_clipboard', 'copy_text'].includes(name)) return { allowed: false, reason: 'PRIVACY_CLIPBOARD_DISABLED', state };
+  if (!state.privacy.screen && name === 'screen_analyze') return { allowed: false, reason: 'PRIVACY_SCREEN_DISABLED', state };
+  if (!state.privacy.uiAutomation && (name === 'window_list' || name === 'window_focus' || name.startsWith('ui_'))) return { allowed: false, reason: 'PRIVACY_UI_AUTOMATION_DISABLED', state };
+  if (!state.privacy.browser && name.startsWith('browser_')) return { allowed: false, reason: 'PRIVACY_BROWSER_DISABLED', state };
+  if (!state.privacy.hardware && name === 'hardware_status') return { allowed: false, reason: 'PRIVACY_HARDWARE_DISABLED', state };
 
-  if (state.autonomy === 'observer' && !OBSERVER_ACTIONS.has(name)) {
-    return { allowed: false, reason: 'AUTONOMY_OBSERVER_READ_ONLY', state };
-  }
-  if (payload?._sextaAgentTask === true && state.autonomy !== 'autonomous') {
-    return { allowed: false, reason: 'AUTONOMOUS_MODE_REQUIRED', state };
-  }
+  if (state.autonomy === 'observer' && !OBSERVER_ACTIONS.has(name)) return { allowed: false, reason: 'AUTONOMY_OBSERVER_READ_ONLY', state };
+  if (payload?._sextaAgentTask === true && state.autonomy !== 'autonomous') return { allowed: false, reason: 'AUTONOMOUS_MODE_REQUIRED', state };
 
   return { allowed: true, reason: 'allowed', state };
 }

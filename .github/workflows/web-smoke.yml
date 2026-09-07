@@ -50,7 +50,7 @@ jobs:
         run: node --check public/sexta-personality.js
       - name: Check voice loader
         run: node --check public/voice-loader.js
-      - name: Check Tool Core
+      - name: Check Tool Core v4
         run: |
           node --check lib/tool-policy.mjs
           node --check lib/mcp-client.mjs
@@ -58,6 +58,11 @@ jobs:
           node --check lib/pc-desktop-tools.mjs
           node --check lib/tool-core.mjs
           node --check lib/agent-auth.mjs
+          node --check lib/model-router.mjs
+          node --check lib/routines.mjs
+          node --check lib/event-engine.mjs
+          node --check lib/handoff.mjs
+          node --check lib/v4-tools.mjs
           node --check api/tool-execute.js
           node --check api/tool-registry.js
           node --check api/chat.js
@@ -65,6 +70,10 @@ jobs:
           node --check api/agent-pair.js
           node --check api/agent-check.js
           node --check api/agent-control.js
+          node --check api/routines.js
+          node --check api/event-engine.js
+          node --check api/handoff.js
+          node --check api/model-router.js
       - name: Check cloud router
         run: |
           node --check server.mjs
@@ -73,7 +82,11 @@ jobs:
           grep -q "'/api/agent-pair', agentPair" server.mjs
           grep -q "'/api/agent-check', agentCheck" server.mjs
           grep -q "'/api/agent-control', agentControl" server.mjs
-      - name: Check PC Agent v3 modules
+          grep -q "'/api/routines', routines" server.mjs
+          grep -q "'/api/event-engine', eventEngine" server.mjs
+          grep -q "'/api/handoff', handoff" server.mjs
+          grep -q "'/api/model-router', modelRouter" server.mjs
+      - name: Check PC Agent v4 modules
         run: |
           node --check agent/agent-v3.mjs
           node --check agent/runtime-state.mjs
@@ -84,15 +97,24 @@ jobs:
           node --check agent/control-local.mjs
           node --check agent/windows-ui.mjs
           node --check agent/browser-agent.mjs
+          node --check agent/hardware.mjs
+          node --check agent/secure-vault.mjs
+          node --check agent/vault-cli.mjs
+          node --check agent/wake-word.mjs
           node --check apps/desktop-electron/main.cjs
           node --check apps/desktop-electron/preload.cjs
-      - name: Check SEXTA web HUD v3
+      - name: Check SEXTA web HUD v4
         run: |
           node --check public/sexta-shell-v3.js
+          node --check public/proactivity-engine.js
+          node --check public/sexta-v4-intelligence.js
           grep -q "sexta-shell-v3.js" public/app.js
           grep -q "sexta-v3.css" public/styles.css
+          grep -q "proactivity-engine.js" public/index.html
+          grep -q "sexta-v4-intelligence.js" public/index.html
           grep -q "FIRST CONTACT" public/sexta-shell-v3.js
           grep -q "AUTONOMY LEVEL" public/sexta-shell-v3.js
+          grep -q "INTELLIGENCE V4" public/sexta-v4-intelligence.js
       - name: Check Android Hands preparation
         run: node --check apps/android-capacitor/scripts/prepare-hands.mjs
       - name: Check live token endpoint
@@ -115,11 +137,19 @@ jobs:
           grep -q "getLiveToolDeclarations" api/live-token.js
           grep -q "ANDROID_HANDS_TOOL_DECLARATIONS" lib/tool-core.mjs
           grep -q "PC_DESKTOP_TOOL_DECLARATIONS" lib/tool-core.mjs
+          grep -q "V4_TOOL_DECLARATIONS" lib/tool-core.mjs
           grep -q "pc_agent_task" lib/tool-core.mjs
           grep -q "2.1.0-firefox-headroom" public/voice-output-jitter-guard.js
           grep -q "1.2.1-listen-thinking-gate" public/voice-barge-in-guard.js
           grep -q "sexta-output-ring-buffer" public/live-output-worklet.js
           ! grep -Eq "voice-core-v[5-9]\\.js" public/voice-loader.js
+      - name: Assert v4 safety contracts
+        run: |
+          grep -q "SAFE_ROUTINE_TOOLS" lib/routines.mjs
+          grep -q "ProtectedData" agent/secure-vault.mjs
+          grep -q "hardware_status" lib/pc-command-protocol.mjs
+          ! grep -Eq "secure_vault_get|secret_value" lib/v4-tools.mjs
+          ! grep -Eq "'shell'|'exec'" lib/pc-command-protocol.mjs
       - name: Check audio resampler
         run: node --check public/audio-resampler.js
       - name: Test voice contracts and tool safety

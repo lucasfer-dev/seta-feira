@@ -1,13 +1,28 @@
 {
   "name": "sexta-desktop",
-  "version": "1.3.0",
+  "version": "2.0.0",
   "private": true,
   "main": "main.cjs",
   "scripts": {
     "dev": "electron .",
-    "start": "electron ."
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win nsis"
   },
   "devDependencies": {
-    "electron": "44.0.0"
+    "electron": "44.0.0",
+    "electron-builder": "26.0.12"
+  },
+  "build": {
+    "appId": "br.com.sexta.desktop",
+    "productName": "SEXTA",
+    "asar": true,
+    "files": ["main.cjs", "preload.cjs", "overlay.html"],
+    "extraResources": [
+      { "from": "../../agent", "to": "agent", "filter": ["**/*", "!config.json", "!runtime-state.json", "!audit.log"] }
+    ],
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }] },
+    "nsis": { "oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true, "createStartMenuShortcut": true },
+    "artifactName": "SEXTA-Setup-${version}-${arch}.${ext}"
   }
 }

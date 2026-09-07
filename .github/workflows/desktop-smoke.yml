@@ -7,6 +7,7 @@ on:
       - 'agent/**'
       - 'apps/desktop-electron/**'
       - 'lib/pc-desktop-tools.mjs'
+      - 'lib/pc-command-protocol.mjs'
       - 'lib/tool-core.mjs'
       - 'lib/tool-policy.mjs'
       - 'lib/agent-auth.mjs'
@@ -14,12 +15,15 @@ on:
       - 'api/agent-*.js'
       - 'tests/pc-desktop-policy.test.mjs'
       - 'tests/agent-*.test.mjs'
+      - 'tests/v4-contracts.test.mjs'
       - '.github/workflows/desktop-smoke.yml'
+      - '.github/workflows/desktop-release.yml'
   pull_request:
     paths:
       - 'agent/**'
       - 'apps/desktop-electron/**'
       - 'lib/pc-desktop-tools.mjs'
+      - 'lib/pc-command-protocol.mjs'
       - 'lib/tool-core.mjs'
       - 'lib/tool-policy.mjs'
       - 'lib/agent-auth.mjs'
@@ -27,7 +31,9 @@ on:
       - 'api/agent-*.js'
       - 'tests/pc-desktop-policy.test.mjs'
       - 'tests/agent-*.test.mjs'
+      - 'tests/v4-contracts.test.mjs'
       - '.github/workflows/desktop-smoke.yml'
+      - '.github/workflows/desktop-release.yml'
 
 jobs:
   windows-contract:
@@ -48,6 +54,11 @@ jobs:
           node --check agent/control-local.mjs
           node --check agent/windows-ui.mjs
           node --check agent/browser-agent.mjs
+          node --check agent/hardware.mjs
+          node --check agent/secure-vault.mjs
+          node --check agent/vault-cli.mjs
+          node --check agent/wake-word.mjs
+          node --check lib/pc-command-protocol.mjs
           node --check lib/pc-desktop-tools.mjs
           node --check lib/tool-core.mjs
           node --check lib/tool-policy.mjs
@@ -55,23 +66,35 @@ jobs:
           node --check api/pc-vision-analyze.js
           node --check apps/desktop-electron/main.cjs
           node --check apps/desktop-electron/preload.cjs
-      - name: Verify Windows automation assemblies
+      - name: Verify Windows automation and v4 assemblies
         shell: powershell
         run: |
           Add-Type -AssemblyName UIAutomationClient
           Add-Type -AssemblyName UIAutomationTypes
           Add-Type -AssemblyName System.Windows.Forms
           Add-Type -AssemblyName System.Drawing
+          Add-Type -AssemblyName System.Security
+          Add-Type -AssemblyName System.Speech
           if (-not [System.Windows.Automation.AutomationElement]::RootElement) { throw 'UIAutomation unavailable' }
-          Write-Host 'Windows UI Automation assemblies OK'
+          if (-not [Security.Cryptography.ProtectedData]) { throw 'DPAPI unavailable' }
+          Write-Host 'Windows UI Automation + DPAPI + Speech assemblies OK'
       - name: Run desktop and agent policy tests
         shell: pwsh
-        run: node --test tests/pc-desktop-policy.test.mjs tests/tool-policy.test.mjs tests/agent-runtime.test.mjs tests/agent-auth.test.mjs
+        run: node --test tests/pc-desktop-policy.test.mjs tests/tool-policy.test.mjs tests/agent-runtime.test.mjs tests/agent-auth.test.mjs tests/v4-contracts.test.mjs
       - name: Assert no generic shell or destructive browser primitive
         shell: pwsh
         run: |
-          Select-String -Path agent/agent-v3.mjs -Pattern "screen_analyze","browser_snapshot","ui_tree","agent_control" | Out-Null
+          Select-String -Path agent/agent-v3.mjs -Pattern "screen_analyze","browser_snapshot","ui_tree","agent_control","hardware_status" | Out-Null
           if (Select-String -Path agent/agent-v3.mjs -Pattern "action === 'shell'","action === 'exec'") { throw 'Generic shell action detected' }
           Select-String -Path agent/browser-agent.mjs -Pattern "PC_BROWSER_SENSITIVE_CONTROL_BLOCKED","PC_BROWSER_PASSWORD_FIELD_BLOCKED" | Out-Null
           Select-String -Path agent/windows-ui.mjs -Pattern "PC_UI_SENSITIVE_CONTROL_BLOCKED","PC_UI_PASSWORD_FIELD_BLOCKED" | Out-Null
-          Select-String -Path agent/runtime-state.mjs -Pattern "AUTONOMY_OBSERVER_READ_ONLY","AUTONOMOUS_MODE_REQUIRED","AGENT_PAUSED" | Out-Null
+          Select-String -Path agent/runtime-state.mjs -Pattern "AUTONOMY_OBSERVER_READ_ONLY","AUTONOMOUS_MODE_REQUIRED","AGENT_PAUSED","PRIVACY_HARDWARE_DISABLED" | Out-Null
+          Select-String -Path agent/secure-vault.mjs -Pattern "ProtectedData","CurrentUser" | Out-Null
+      - name: Validate desktop installer configuration
+        shell: pwsh
+        run: |
+          $pkg = Get-Content apps/desktop-electron/package.json -Raw | ConvertFrom-Json
+          if (-not $pkg.build.nsis) { throw 'NSIS config missing' }
+          if (-not $pkg.scripts.dist) { throw 'Desktop dist script missing' }
+          if (-not (Test-Path .github/workflows/desktop-release.yml)) { throw 'Desktop release workflow missing' }
+          Write-Host "Desktop installer config OK: $($pkg.version)"

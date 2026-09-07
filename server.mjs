@@ -41,6 +41,10 @@ import notificationAction from './api/notifications/action.js';
 import monitorRun from './api/monitor/run.js';
 import pushRegister from './api/push/register.js';
 import vault from './api/vault.js';
+import routines from './api/routines.js';
+import eventEngine from './api/event-engine.js';
+import handoff from './api/handoff.js';
+import modelRouter from './api/model-router.js';
 import { runMonitor } from './lib/monitor.mjs';
 
 const root = fileURLToPath(new URL('./public/', import.meta.url));
@@ -55,7 +59,8 @@ const routes = new Map([
   ['/api/google/status', googleStatusRoute], ['/api/google/auth-url', googleAuthUrl],
   ['/api/google/callback', googleCallback], ['/api/google/action', googleAction], ['/api/import-response', importResponse], ['/api/command-status', commandStatus],
   ['/api/evolution/status', evolutionStatusRoute], ['/api/evolution/configure-webhook', evolutionConfigureWebhook], ['/api/evolution/send', evolutionSend], ['/api/evolution/webhook', evolutionWebhook],
-  ['/api/notifications', notificationsRoute], ['/api/notifications/action', notificationAction], ['/api/monitor/run', monitorRun], ['/api/push/register', pushRegister], ['/api/vault', vault]
+  ['/api/notifications', notificationsRoute], ['/api/notifications/action', notificationAction], ['/api/monitor/run', monitorRun], ['/api/push/register', pushRegister], ['/api/vault', vault],
+  ['/api/routines', routines], ['/api/event-engine', eventEngine], ['/api/handoff', handoff], ['/api/model-router', modelRouter]
 ]);
 
 const mime = {
@@ -93,7 +98,7 @@ const server = http.createServer(async (req, res) => {
 
 const port = Number(process.env.PORT || 3000);
 server.listen(port, () => {
-  console.log(`SEXTA 1.4 em http://localhost:${port}`);
+  console.log(`SEXTA 1.5 em http://localhost:${port}`);
   if (process.env.SEXTA_MONITOR_ENABLED !== 'false') {
     const interval = Math.max(30, Number(process.env.SEXTA_MONITOR_INTERVAL_SECONDS || 60)) * 1000;
     const tick = () => runMonitor().catch(error => console.warn('[SEXTA Monitor]', error.message));
