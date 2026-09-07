@@ -43,6 +43,7 @@ import pushRegister from './api/push/register.js';
 import vault from './api/vault.js';
 import routines from './api/routines.js';
 import eventEngine from './api/event-engine.js';
+import cronEventEngine from './api/cron-event-engine.js';
 import handoff from './api/handoff.js';
 import modelRouter from './api/model-router.js';
 import { runMonitor } from './lib/monitor.mjs';
@@ -60,7 +61,7 @@ const routes = new Map([
   ['/api/google/callback', googleCallback], ['/api/google/action', googleAction], ['/api/import-response', importResponse], ['/api/command-status', commandStatus],
   ['/api/evolution/status', evolutionStatusRoute], ['/api/evolution/configure-webhook', evolutionConfigureWebhook], ['/api/evolution/send', evolutionSend], ['/api/evolution/webhook', evolutionWebhook],
   ['/api/notifications', notificationsRoute], ['/api/notifications/action', notificationAction], ['/api/monitor/run', monitorRun], ['/api/push/register', pushRegister], ['/api/vault', vault],
-  ['/api/routines', routines], ['/api/event-engine', eventEngine], ['/api/handoff', handoff], ['/api/model-router', modelRouter]
+  ['/api/routines', routines], ['/api/event-engine', eventEngine], ['/api/cron-event-engine', cronEventEngine], ['/api/handoff', handoff], ['/api/model-router', modelRouter]
 ]);
 
 const mime = {
