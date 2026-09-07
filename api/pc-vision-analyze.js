@@ -1,4 +1,5 @@
-import { config, isAgent, parseJson, send } from '../lib/core.mjs';
+import { config, parseJson, send } from '../lib/core.mjs';
+import { isAgentRequest, requestDeviceId } from '../lib/agent-auth.mjs';
 
 function cleanBase64(value = '') {
   return String(value || '').replace(/^data:image\/(?:jpeg|jpg);base64,/i, '').replace(/\s+/g, '');
@@ -6,9 +7,10 @@ function cleanBase64(value = '') {
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
-  if (!isAgent(req)) return send(res, 401, { error: 'unauthorized' });
-
   const body = await parseJson(req);
+  const deviceId = String(body.deviceId || requestDeviceId(req) || '').trim();
+  if (!isAgentRequest(req, deviceId)) return send(res, 401, { error: 'unauthorized' });
+
   const imageBase64 = cleanBase64(body.imageBase64);
   const question = String(body.question || 'Descreva a interface visível e os controles relevantes.').trim().slice(0, 1800);
   if (!imageBase64) return send(res, 400, { error: 'image_required' });
