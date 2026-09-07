@@ -9,6 +9,7 @@ on:
       - 'lib/**'
       - 'tests/**'
       - 'agent/**'
+      - 'server.mjs'
       - 'apps/android-capacitor/**'
       - 'apps/desktop-electron/**'
       - '.github/workflows/web-smoke.yml'
@@ -20,6 +21,7 @@ on:
       - 'lib/**'
       - 'tests/**'
       - 'agent/**'
+      - 'server.mjs'
       - 'apps/android-capacitor/**'
       - 'apps/desktop-electron/**'
       - '.github/workflows/web-smoke.yml'
@@ -59,6 +61,11 @@ jobs:
           node --check api/tool-registry.js
           node --check api/chat.js
           node --check api/pc-vision-analyze.js
+      - name: Check cloud router
+        run: |
+          node --check server.mjs
+          grep -q "'/api/tool-registry', toolRegistry" server.mjs
+          grep -q "'/api/pc-vision-analyze', pcVisionAnalyze" server.mjs
       - name: Check PC Agent modules
         run: |
           node --check agent/agent.mjs
