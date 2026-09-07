@@ -26,6 +26,10 @@ export default async function handler(req, res) {
     firstServerEventMs: boundedNumber(body.firstServerEventMs),
     outputUnderruns: boundedNumber(body.outputUnderruns, 100),
     prebufferMs: boundedNumber(body.prebufferMs, 1000),
+    gapMs: boundedNumber(body.gapMs, 5000),
+    outputQueueMs: boundedNumber(body.outputQueueMs, 5000),
+    outputBufferTargetMs: boundedNumber(body.outputBufferTargetMs, 1000),
+    outputMode: shortString(body.outputMode, 40),
 
     clientEndSilenceConfiguredMs: boundedNumber(body.clientEndSilenceConfiguredMs, 5000),
     speechActivityMs: boundedNumber(body.speechActivityMs),
@@ -70,7 +74,8 @@ export default async function handler(req, res) {
   const mainLatency = metrics.speechStartToInterimMs ?? metrics.endToPlaybackDueMs ?? metrics.endToFirstAudioMs ?? metrics.speechEndToFirstAudioMs;
   const interruptionSlow = metrics.phase === 'interrupted' && Number.isFinite(metrics.interruptToSilenceMs) && metrics.interruptToSilenceMs > 800;
   const recognitionSlow = Number.isFinite(metrics.speechStartToInterimMs) && metrics.speechStartToInterimMs > 2200;
-  const level = interruptionSlow || recognitionSlow || (Number.isFinite(mainLatency) && mainLatency > 3000) ? 'warn' : 'info';
+  const outputStarved = metrics.kind === 'voice_core_v10:output_underrun';
+  const level = interruptionSlow || recognitionSlow || outputStarved || (Number.isFinite(mainLatency) && mainLatency > 3000) ? 'warn' : 'info';
   console[level]('[SEXTA Live Metrics]', JSON.stringify(metrics));
   return send(res, 200, { ok: true });
 }
