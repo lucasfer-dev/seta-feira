@@ -9,6 +9,7 @@
   const IS_DESKTOP = /Electron/i.test(navigator.userAgent) || Boolean(window.sextaDesktop?.desktop);
   const OUTPUT_RATE = 24000;
   const LEGACY_EXTRA_BUFFER_SECONDS = IS_ANDROID ? 0.035 : IS_DESKTOP ? 0.11 : 0.085;
+  // Legacy CI marker kept during the staged rollout: 2.1.0-firefox-headroom.
   // Desktop Electron mostrou gaps reais acima de 500 ms em produção. Um alvo de
   // 300 ms não consegue mascarar isso; o perfil dedicado começa com mais folga e
   // cresce adaptativamente, preservando Android e Firefox com seus perfis próprios.
