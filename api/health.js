@@ -11,7 +11,7 @@ export default async function handler(req, res) {
     vadMode: 'manual-local',
     personality: '2.0.0-canonical-operational',
     intelligence: {
-      eventEngine: '2.0.0', routines: '2.0.0', desktopAgent: '4.1.0', desktopApp: '2.1.1',
+      eventEngine: '2.0.0', routines: '2.0.0', desktopAgent: '4.1.0', desktopApp: '2.1.3',
       desktopProtocol: 2, browserAgent: '2.0.0', memorySearch: true,
       cronConfigured: true, cronStrongAuth: Boolean(process.env.CRON_SECRET)
     },
