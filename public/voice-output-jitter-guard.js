@@ -248,6 +248,7 @@
     debug: () => ({
       mode: lastMode,
       extraBufferMs: Math.round(LEGACY_EXTRA_BUFFER_SECONDS * 1000),
+      effectiveTargetMs: Math.round(LEGACY_EXTRA_BUFFER_SECONDS * 1000) + (IS_ANDROID ? 90 : IS_DESKTOP ? RING_TARGET_MS : 28),
       baseTargetMs: RING_TARGET_MS,
       adaptiveTargetMs,
       maxTargetMs: RING_MAX_TARGET_MS,
