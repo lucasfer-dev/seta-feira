@@ -40,6 +40,8 @@ function createProcessor(options = {}) {
       targetMs: 80,
       maxTargetMs: 140,
       stepMs: 20,
+      gapSafetyMs: 100,
+      underrunWindowMs: 700,
       ...options
     }
   });
@@ -71,8 +73,8 @@ test('ring buffer segura a saída até atingir o prebuffer alvo', () => {
   assert.ok(processor.port.messages.some(message => message.type === 'playing'));
 });
 
-test('ring buffer detecta starvation curta e aumenta o alvo adaptativamente', () => {
-  const processor = createProcessor({ targetMs: 80, maxTargetMs: 140, stepMs: 20 });
+test('ring buffer detecta starvation curta e aprende com o tamanho do gap', () => {
+  const processor = createProcessor({ targetMs: 80, maxTargetMs: 140, stepMs: 20, gapSafetyMs: 100 });
   push(processor, 'first', 1920);
 
   for (let i = 0; i < 15; i += 1) render(processor, 128); // consome 1920 frames
@@ -85,10 +87,28 @@ test('ring buffer detecta starvation curta e aumenta o alvo adaptativamente', ()
   assert.ok(underrun, 'esperava evento de underrun após starvation curta');
   assert.ok(underrun.gapMs >= 0 && underrun.gapMs < 700);
   assert.equal(underrun.underruns, 1);
-  assert.equal(underrun.targetMs, 100);
+  assert.ok(underrun.targetMs >= 100 && underrun.targetMs <= 140);
+  assert.ok(underrun.observedTargetMs >= underrun.gapMs);
 
   const resumed = render(processor);
   assert.ok(resumed.some(sample => Math.abs(sample) > 0.01));
+});
+
+test('gap grande dentro da janela faz salto proporcional e evita vários passos pequenos', () => {
+  const processor = createProcessor({ targetMs: 80, maxTargetMs: 900, stepMs: 20, gapSafetyMs: 120, underrunWindowMs: 1200 });
+  push(processor, 'first', 1920);
+  for (let i = 0; i < 15; i += 1) render(processor, 128);
+  render(processor, 128); // starvation
+
+  // ~600 ms de gap a 24 kHz: 113 blocos de 128 ~= 603 ms.
+  for (let i = 0; i < 113; i += 1) render(processor, 128);
+  push(processor, 'second', 24000);
+
+  const underrun = processor.port.messages.find(message => message.type === 'underrun');
+  assert.ok(underrun);
+  assert.ok(underrun.gapMs > 500 && underrun.gapMs < 700);
+  assert.ok(underrun.targetMs >= underrun.gapMs + 100);
+  assert.ok(underrun.targetMs > 100, 'não deve subir apenas um passo fixo');
 });
 
 test('silêncio longo entre turnos não é classificado como underrun', () => {
