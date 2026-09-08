@@ -7,6 +7,7 @@ const BLOCKED_EXECUTABLES = new Set([
   'cmd.exe', 'powershell.exe', 'pwsh.exe', 'wscript.exe', 'cscript.exe', 'mshta.exe',
   'rundll32.exe', 'regsvr32.exe', 'reg.exe', 'schtasks.exe', 'wmic.exe'
 ]);
+const BLOCKED_DYNAMIC_APP = /\b(?:powershell|pwsh|command prompt|prompt de comando|windows terminal|terminal|cmd|wscript|cscript|mshta|rundll32|regsvr32|registry editor|editor do registro|regedit)\b/i;
 
 const APP_ALIASES = new Map([
   ['chrome', 'google chrome'],
@@ -57,8 +58,25 @@ function scoreMatch(requested, candidateName) {
   return 40 + Math.round(30 * overlap / Math.max(qTokens.size, nTokens.size));
 }
 
+export function isSafeExecutable(target = '') {
+  const raw = String(target || '').trim();
+  if (!raw || !path.isAbsolute(raw) || path.extname(raw).toLowerCase() !== '.exe') return false;
+  if (BLOCKED_EXECUTABLES.has(path.basename(raw).toLowerCase())) return false;
+  return true;
+}
+
+export function isSafeDiscoveredApp(app = {}) {
+  const name = String(app?.name || '').trim();
+  const appId = String(app?.appId || '').trim();
+  if (!name || BLOCKED_DYNAMIC_APP.test(name) || BLOCKED_DYNAMIC_APP.test(appId)) return false;
+  if (app?.source === 'shortcut') return isSafeExecutable(app.target);
+  if (app?.source === 'startapp') return Boolean(appId) && !/[\r\n]/.test(appId);
+  return false;
+}
+
 export function selectInstalledApp(requested, apps = []) {
   const ranked = (Array.isArray(apps) ? apps : [])
+    .filter(isSafeDiscoveredApp)
     .map(app => ({ app, score: scoreMatch(requested, app?.name || '') }))
     .filter(item => item.score >= 60)
     .sort((a, b) => b.score - a.score || String(a.app?.name || '').length - String(b.app?.name || '').length);
@@ -73,13 +91,6 @@ export function resolveConfiguredApp(apps = {}, requested = '') {
   if (exact?.value?.command) return exact;
   const aliased = entries.find(entry => aliasName(entry.key) === aliasName(requested));
   return aliased?.value?.command ? aliased : null;
-}
-
-export function isSafeExecutable(target = '') {
-  const raw = String(target || '').trim();
-  if (!raw || !path.isAbsolute(raw) || path.extname(raw).toLowerCase() !== '.exe') return false;
-  if (BLOCKED_EXECUTABLES.has(path.basename(raw).toLowerCase())) return false;
-  return true;
 }
 
 function runPowerShell(script, timeout = 10_000) {
@@ -158,7 +169,7 @@ try {
       appId: String(item?.appId || '').trim().slice(0, 500),
       target: String(item?.target || '').trim()
     }))
-    .filter(item => item.name && (item.appId || isSafeExecutable(item.target)));
+    .filter(isSafeDiscoveredApp);
 
   const unique = [];
   const seen = new Set();
@@ -178,12 +189,12 @@ function spawnDetached(command, args = []) {
 }
 
 async function launchDiscovered(app) {
-  if (app?.source === 'startapp' && app.appId) {
-    if (/\r|\n/.test(app.appId)) throw new Error('APP_ID_INVALID');
+  if (!isSafeDiscoveredApp(app)) throw new Error('APP_TARGET_NOT_SAFE');
+  if (app.source === 'startapp') {
     spawnDetached('explorer.exe', [`shell:AppsFolder\\${app.appId}`]);
     return { opened: true, app: app.name, matchedBy: 'windows_start_apps' };
   }
-  if (app?.source === 'shortcut' && isSafeExecutable(app.target) && fs.existsSync(app.target)) {
+  if (app.source === 'shortcut' && fs.existsSync(app.target)) {
     spawnDetached(app.target, []);
     return { opened: true, app: app.name, matchedBy: 'windows_shortcut' };
   }
