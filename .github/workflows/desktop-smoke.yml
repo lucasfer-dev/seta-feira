@@ -97,13 +97,16 @@ jobs:
           Select-String -Path agent/browser-agent.mjs -Pattern "PC_BROWSER_SENSITIVE_CONTROL_BLOCKED","PC_BROWSER_PASSWORD_FIELD_BLOCKED","browserTabs","browserSelectTab","browserForward","browserReload" | Out-Null
           if (Select-String -Path agent/browser-agent.mjs -Pattern "Page.setDownloadBehavior","DOM.setFileInputFiles","uploadFile") { throw 'Hidden download/upload primitive detected' }
           Select-String -Path agent/windows-ui.mjs -Pattern "PC_UI_SENSITIVE_CONTROL_BLOCKED","PC_UI_PASSWORD_FIELD_BLOCKED" | Out-Null
+          if (Select-String -Path agent/windows-ui.mjs -Pattern "ExecutionPolicy.*Bypass","EncodedCommand") { throw 'Defender-hostile PowerShell invocation detected' }
+          Select-String -Path agent/windows-ui.mjs -SimpleMatch "'-Command', '-'" | Out-Null
+          Select-String -Path api/pc-vision-analyze.js -Pattern "GEMINI_VISION_FALLBACK_MODELS","vision_temporarily_unavailable","cacheHit","cooldowns" | Out-Null
           Select-String -Path agent/runtime-state.mjs -Pattern "AUTONOMY_OBSERVER_READ_ONLY","AUTONOMOUS_MODE_REQUIRED","AGENT_PAUSED","PRIVACY_HARDWARE_DISABLED","4.1.0" | Out-Null
           Select-String -Path agent/secure-vault.mjs -Pattern "ProtectedData","CurrentUser" | Out-Null
       - name: Validate desktop pairing, origin lock, recovery and updater
         shell: pwsh
         run: |
           $pkg = Get-Content apps/desktop-electron/package.json -Raw | ConvertFrom-Json
-          if ($pkg.version -ne '2.1.1') { throw 'Desktop version must be 2.1.1' }
+          if ($pkg.version -ne '2.1.2') { throw 'Desktop version must be 2.1.2' }
           if ($pkg.main -ne 'secure-main.cjs') { throw 'Secure desktop entrypoint missing' }
           if (-not $pkg.build.nsis) { throw 'NSIS config missing' }
           if (-not $pkg.scripts.dist) { throw 'Desktop dist script missing' }
