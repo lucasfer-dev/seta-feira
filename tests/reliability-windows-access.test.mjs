@@ -1,8 +1,16 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 
 const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+const localPath = path => new URL(`../${path}`, import.meta.url);
+
+test('guards novos passam no parser do Node', () => {
+  for (const file of ['public/voice-reliability-v10-1.js', 'public/windows-access-control.js', 'public/voice-output-jitter-guard.js', 'api/live-metrics.js', 'agent/browser-agent.mjs']) {
+    execFileSync(process.execPath, ['--check', localPath(file)], { stdio: 'pipe' });
+  }
+});
 
 test('Voice Reliability v10.1 carrega antes do Voice Core e protege continuação pós-tool', () => {
   const loader = read('public/voice-loader.js');
