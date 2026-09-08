@@ -60,8 +60,8 @@ function scoreMatch(requested, candidateName) {
 
 export function isSafeExecutable(target = '') {
   const raw = String(target || '').trim();
-  if (!raw || !path.isAbsolute(raw) || path.extname(raw).toLowerCase() !== '.exe') return false;
-  if (BLOCKED_EXECUTABLES.has(path.basename(raw).toLowerCase())) return false;
+  if (!raw || !path.win32.isAbsolute(raw) || path.win32.extname(raw).toLowerCase() !== '.exe') return false;
+  if (BLOCKED_EXECUTABLES.has(path.win32.basename(raw).toLowerCase())) return false;
   return true;
 }
 
