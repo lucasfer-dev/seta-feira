@@ -7,8 +7,10 @@ class SextaOutputRingBufferProcessor extends AudioWorkletProcessor {
 
     this.rate = rate;
     this.baseTargetMs = clampMs(cfg.targetMs, 160, 80, 800);
-    this.maxTargetMs = clampMs(cfg.maxTargetMs, 600, this.baseTargetMs, 1200);
-    this.stepMs = clampMs(cfg.stepMs, 35, 10, 160);
+    this.maxTargetMs = clampMs(cfg.maxTargetMs, 600, this.baseTargetMs, 1400);
+    this.stepMs = clampMs(cfg.stepMs, 35, 10, 200);
+    this.gapSafetyMs = clampMs(cfg.gapSafetyMs, 100, 40, 300);
+    this.underrunWindowMs = clampMs(cfg.underrunWindowMs, 700, 250, 2000);
     this.targetMs = this.baseTargetMs;
     this.targetFrames = this.framesForMs(this.targetMs);
 
@@ -52,17 +54,25 @@ class SextaOutputRingBufferProcessor extends AudioWorkletProcessor {
       if (this.starvedFrame != null) {
         const gapFrames = Math.max(0, this.renderedFrames - this.starvedFrame);
         const gapMs = Math.round(gapFrames / this.rate * 1000);
-        if (gapMs <= 700) {
+        if (gapMs <= this.underrunWindowMs) {
           this.underruns += 1;
           this.rebuffers += 1;
-          this.updateTarget(Math.min(this.maxTargetMs, this.targetMs + this.stepMs));
+          // Antes o alvo subia apenas um passo fixo. Um gap real de ~638 ms em
+          // produção fazia 480→580 ms e o áudio quebrava de novo logo depois.
+          // Agora o próximo alvo aprende com o gap observado + margem de segurança.
+          const observedTargetMs = gapMs + this.gapSafetyMs;
+          const steppedTargetMs = this.targetMs + this.stepMs;
+          this.updateTarget(Math.min(this.maxTargetMs, Math.max(steppedTargetMs, observedTargetMs)));
           this.port.postMessage({
             type: 'underrun',
             gapMs,
             underruns: this.underruns,
-            targetMs: Math.round(this.targetMs)
+            targetMs: Math.round(this.targetMs),
+            observedTargetMs: Math.round(observedTargetMs)
           });
         } else {
+          // Intervalos realmente longos são tratados como mudança de turno e não
+          // fazem o buffer crescer indefinidamente.
           this.updateTarget(Math.max(this.baseTargetMs, this.targetMs - this.stepMs));
         }
         this.starvedFrame = null;

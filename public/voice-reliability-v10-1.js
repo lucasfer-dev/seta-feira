@@ -87,6 +87,30 @@
       continuationTimer = null;
     }
 
+    function markContinuationActivity(source = 'server-content', detail = {}) {
+      if (!awaitingContinuation) return false;
+      if (!continuationActivity) {
+        continuationActivity = true;
+        metric('tool_continuation_started', {
+          source,
+          hasAudio: detail.hasAudio === true,
+          hasOutputText: detail.hasOutputText === true,
+          toolNames: lastToolNames.join(',')
+        });
+      }
+      clearContinuationTimer();
+      return true;
+    }
+
+    try {
+      Object.defineProperty(socket, '__sextaMarkToolContinuation', {
+        value: source => markContinuationActivity(source || 'playback-state'),
+        configurable: true
+      });
+    } catch {
+      try { socket.__sextaMarkToolContinuation = source => markContinuationActivity(source || 'playback-state'); } catch {}
+    }
+
     function resetToolLifecycle() {
       clearContinuationTimer();
       toolPending = false;
@@ -100,6 +124,10 @@
       clearContinuationTimer();
       continuationTimer = setTimeout(() => {
         if (!awaitingContinuation || continuationActivity) return;
+        // O Voice Core é quem realmente agenda o áudio. Em produção observamos
+        // pacotes que colocavam o Core em `speaking`, mas não casavam com a forma
+        // de inlineData esperada por este guard. Playback real vence o watchdog.
+        if (lastState === 'speaking' && markContinuationActivity('playback-state-timeout')) return;
         metric('tool_continuation_timeout', {
           timeoutMs: TOOL_CONTINUATION_TIMEOUT_MS,
           toolNames: lastToolNames.join(','),
@@ -151,15 +179,7 @@
       const hasAudio = (content.modelTurn?.parts || []).some(part => Boolean(part?.inlineData?.data));
       const hasOutputText = Boolean(String(content.outputTranscription?.text || '').trim());
       if (awaitingContinuation && (hasAudio || hasOutputText)) {
-        if (!continuationActivity) {
-          continuationActivity = true;
-          metric('tool_continuation_started', {
-            hasAudio,
-            hasOutputText,
-            toolNames: lastToolNames.join(',')
-          });
-        }
-        clearContinuationTimer();
+        markContinuationActivity('server-content', { hasAudio, hasOutputText });
       }
 
       const prematureComplete = content.turnComplete === true && (
@@ -238,6 +258,11 @@
       metric('recovering', { hadTranscript: Boolean(latestTranscript) });
     }
     if (next === 'speaking' && lastState !== 'speaking') {
+      // Este é o sinal mais confiável de que o Core recebeu e começou a tocar a
+      // continuação. Cancela o watchdog mesmo se o guard não reconheceu o pacote.
+      for (const socket of liveSockets) {
+        try { socket.__sextaMarkToolContinuation?.('playback-state'); } catch {}
+      }
       metric('first_audio_state', { hadTranscript: Boolean(latestTranscript) });
     }
     lastState = next;
@@ -245,7 +270,7 @@
 
   window.__sextaVoiceReliability = {
     installed: true,
-    version: '10.1-tool-continuation-guard',
+    version: '10.1.1-playback-continuation-guard',
     debug: () => ({
       currentTurnId,
       lastState,
