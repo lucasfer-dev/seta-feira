@@ -2,6 +2,7 @@
   if (window.__sextaVoiceReliability?.installed || typeof window.WebSocket !== 'function') return;
 
   const NativeWebSocket = window.WebSocket;
+  const NativeFetch = typeof window.fetch === 'function' ? window.fetch.bind(window) : null;
   const LIVE_URL = /generativelanguage\.googleapis\.com\/ws\/google\.ai\.generativelanguage\.v1beta\.GenerativeService\.BidiGenerateContentConstrained/i;
   const TOOL_CONTINUATION_TIMEOUT_MS = 10000;
   const ORIGIN = /Android/i.test(navigator.userAgent)
@@ -25,6 +26,26 @@
   function nextTurnId() {
     turnSequence += 1;
     return `${ORIGIN}-${Date.now().toString(36)}-${turnSequence.toString(36)}`;
+  }
+
+  // Correlaciona também as métricas produzidas pelo Voice Core antigo sem tocar
+  // na lógica de áudio dele. Só reescreve POSTs locais de /api/live-metrics.
+  if (NativeFetch) {
+    window.fetch = (input, init = {}) => {
+      const url = typeof input === 'string' ? input : String(input?.url || '');
+      if (url === '/api/live-metrics' && typeof init?.body === 'string') {
+        try {
+          const body = JSON.parse(init.body);
+          if (body && typeof body === 'object') {
+            if (!body.turnId && currentTurnId) body.turnId = currentTurnId;
+            if (!body.clientTimestamp) body.clientTimestamp = new Date().toISOString();
+            if (!body.platform || body.platform === 'browser') body.platform = ORIGIN;
+            return NativeFetch(input, { ...init, body: JSON.stringify(body) });
+          }
+        } catch {}
+      }
+      return NativeFetch(input, init);
+    };
   }
 
   function metric(kind, extra = {}) {
