@@ -15,6 +15,22 @@ function browserProfile(cfg = {}) {
   return path.resolve(String(cfg.browser?.profileDir || path.join(os.homedir(), '.sexta-browser-profile')));
 }
 
+function selectionPath(port) {
+  return path.join(os.tmpdir(), `sexta-browser-selected-${Number(port) || 9223}.txt`);
+}
+
+function readPersistedSelection(port) {
+  try { return String(fs.readFileSync(selectionPath(port), 'utf8') || '').trim(); }
+  catch { return ''; }
+}
+
+function setSelectedTarget(port, id) {
+  const targetId = String(id || '').trim();
+  selectedTargetId = targetId || null;
+  if (!targetId) return;
+  try { fs.writeFileSync(selectionPath(port), targetId, 'utf8'); } catch {}
+}
+
 function executableCandidates(cfg = {}) {
   const configured = String(cfg.browser?.command || '').trim();
   const pf = process.env.ProgramFiles || 'C:\\Program Files';
@@ -80,12 +96,25 @@ async function pageTargets(port) {
   return (Array.isArray(targets) ? targets : []).filter(item => item?.type === 'page' && item?.webSocketDebuggerUrl && !String(item.url || '').startsWith('devtools://'));
 }
 
+function usefulPage(page = {}) {
+  const url = String(page.url || '');
+  return Boolean(url && url !== 'about:blank' && !url.startsWith('chrome://') && !url.startsWith('edge://'));
+}
+
 async function pageTarget(port) {
   const pages = await pageTargets(port);
   if (!pages.length) throw new Error('PC_BROWSER_NO_PAGE');
-  const selected = selectedTargetId ? pages.find(item => item.id === selectedTargetId) : null;
-  const target = selected || pages[0];
-  selectedTargetId = target.id;
+  const persisted = selectedTargetId || readPersistedSelection(port);
+  const selected = persisted ? pages.find(item => item.id === persisted) : null;
+  // Em processos duplicados/recém-reiniciados, não deixe uma about:blank roubar o
+  // foco de uma página útil. A seleção também é persistida por porta para que
+  // Browser Agent e Agent local compartilhem a mesma aba preferida.
+  const target = (selected && usefulPage(selected))
+    ? selected
+    : pages.find(usefulPage)
+      || selected
+      || pages[0];
+  setSelectedTarget(port, target.id);
   return target;
 }
 
@@ -94,7 +123,7 @@ async function activateTarget(port, id) {
   if (!targetId) throw new Error('PC_BROWSER_TAB_ID_REQUIRED');
   const response = await fetch(`http://127.0.0.1:${port}/json/activate/${encodeURIComponent(targetId)}`, { signal: AbortSignal.timeout(1500) });
   if (!response.ok) throw new Error(`PC_BROWSER_TAB_ACTIVATE_${response.status}`);
-  selectedTargetId = targetId;
+  setSelectedTarget(port, targetId);
   return true;
 }
 
@@ -165,10 +194,15 @@ export async function browserOpen(cfg, rawUrl) {
   const url = new URL(String(rawUrl || ''));
   if (!['http:', 'https:'].includes(url.protocol)) throw new Error('PC_BROWSER_URL_BLOCKED');
   const port = await ensureBrowser(cfg);
+  const before = await pageTarget(port);
+  setSelectedTarget(port, before.id);
   await cdpCall(port, 'Page.enable').catch(() => {});
   const result = await cdpCall(port, 'Page.navigate', { url: url.toString() });
   await waitForReady(port, 5000);
-  const target = await pageTarget(port);
+  await activateTarget(port, before.id).catch(() => {});
+  const pages = await pageTargets(port);
+  const target = pages.find(page => page.id === before.id) || await pageTarget(port);
+  setSelectedTarget(port, target.id);
   return { opened: url.toString(), frameId: result.frameId || null, tabId: target.id, port, profile: browserProfile(cfg) };
 }
 
@@ -176,7 +210,9 @@ export async function browserTabs(cfg) {
   const port = await ensureBrowser(cfg);
   const pages = await pageTargets(port);
   if (!pages.length) throw new Error('PC_BROWSER_NO_PAGE');
-  if (!selectedTargetId || !pages.some(page => page.id === selectedTargetId)) selectedTargetId = pages[0].id;
+  const persisted = selectedTargetId || readPersistedSelection(port);
+  if (!persisted || !pages.some(page => page.id === persisted)) setSelectedTarget(port, (pages.find(usefulPage) || pages[0]).id);
+  else selectedTargetId = persisted;
   return {
     selectedTargetId,
     tabs: pages.slice(0, 24).map((page, index) => ({ index, id: page.id, title: String(page.title || '').slice(0, 240), url: String(page.url || '').slice(0, 1000), selected: page.id === selectedTargetId }))
@@ -267,5 +303,7 @@ export async function browserReload(cfg) {
 }
 
 export function browserStatus(cfg = {}) {
-  return { configured: true, port: browserPort(cfg), profile: browserProfile(cfg), processStarted: Boolean(browserProcess), selectedTargetId };
+  const port = browserPort(cfg);
+  const persisted = selectedTargetId || readPersistedSelection(port);
+  return { configured: true, port, profile: browserProfile(cfg), processStarted: Boolean(browserProcess), selectedTargetId: persisted || null };
 }

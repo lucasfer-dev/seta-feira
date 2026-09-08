@@ -3,6 +3,7 @@ import { encodeDesktopCommand } from '../lib/pc-command-protocol.mjs';
 
 const AUTONOMY = new Set(['observer', 'assistant', 'autonomous']);
 const CONTROL_OPS = new Set(['pause', 'resume', 'cancel', 'set_autonomy', 'set_privacy']);
+const PRIVACY_KEYS = ['screen', 'clipboard', 'uiAutomation', 'browser', 'hardware'];
 
 export default async function handler(req, res) {
   if (!isOwner(req)) return send(res, 401, { error: 'unauthorized' });
@@ -27,7 +28,7 @@ export default async function handler(req, res) {
   if (op === 'set_privacy') {
     const value = body.value && typeof body.value === 'object' ? body.value : {};
     payload.value = {};
-    for (const key of ['screen', 'clipboard', 'uiAutomation', 'browser']) {
+    for (const key of PRIVACY_KEYS) {
       if (typeof value[key] === 'boolean') payload.value[key] = value[key];
     }
     if (!Object.keys(payload.value).length) return send(res, 400, { error: 'privacy_value_required' });

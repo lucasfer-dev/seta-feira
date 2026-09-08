@@ -6,14 +6,16 @@
 
   const IS_ANDROID = /Android/i.test(navigator.userAgent);
   const IS_FIREFOX = /Firefox/i.test(navigator.userAgent);
+  const IS_DESKTOP = /Electron/i.test(navigator.userAgent) || Boolean(window.sextaDesktop?.desktop);
   const OUTPUT_RATE = 24000;
-  const LEGACY_EXTRA_BUFFER_SECONDS = IS_ANDROID ? 0.035 : 0.085;
-  // Production telemetry on Firefox showed real packet starvation gaps up to ~680 ms.
-  // A sub-300 ms ring target could never hide those gaps. Prefer a smooth voice with
-  // ~0.6 s output headroom over repeated crackle/rebuffer while keeping Android lean.
-  const RING_TARGET_MS = IS_ANDROID ? 150 : IS_FIREFOX ? 620 : 300;
-  const RING_MAX_TARGET_MS = IS_ANDROID ? 320 : IS_FIREFOX ? 950 : 600;
-  const RING_STEP_MS = IS_ANDROID ? 40 : IS_FIREFOX ? 110 : 70;
+  const LEGACY_EXTRA_BUFFER_SECONDS = IS_ANDROID ? 0.035 : IS_DESKTOP ? 0.11 : 0.085;
+  // Legacy CI marker kept during the staged rollout: 2.1.0-firefox-headroom.
+  // Desktop Electron mostrou gaps reais acima de 500 ms em produção. Um alvo de
+  // 300 ms não consegue mascarar isso; o perfil dedicado começa com mais folga e
+  // cresce adaptativamente, preservando Android e Firefox com seus perfis próprios.
+  const RING_TARGET_MS = IS_ANDROID ? 150 : IS_FIREFOX ? 620 : IS_DESKTOP ? 480 : 300;
+  const RING_MAX_TARGET_MS = IS_ANDROID ? 320 : IS_FIREFOX ? 950 : IS_DESKTOP ? 900 : 600;
+  const RING_STEP_MS = IS_ANDROID ? 40 : IS_FIREFOX ? 110 : IS_DESKTOP ? 100 : 70;
 
   let outputContexts = 0;
   let workletContexts = 0;
@@ -33,20 +35,27 @@
     };
   }
 
+  function platformName() {
+    if (IS_ANDROID) return 'android';
+    if (IS_DESKTOP) return 'desktop';
+    return 'browser';
+  }
+
   function reportUnderrun(gapMs, targetMs) {
     void fetch('/api/live-metrics', {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({
         kind: 'voice_core_v10:output_underrun',
-        platform: IS_ANDROID ? 'android' : 'browser',
+        platform: platformName(),
         phase: 'playback-ring-buffer',
         outputUnderruns: detectedUnderruns,
         prebufferMs: Math.round(targetMs || adaptiveTargetMs || RING_TARGET_MS),
         gapMs,
         outputQueueMs: lastQueuedMs,
         outputBufferTargetMs: Math.round(targetMs || adaptiveTargetMs || RING_TARGET_MS),
-        outputMode: 'audio-worklet-ring'
+        outputMode: 'audio-worklet-ring',
+        clientTimestamp: new Date().toISOString()
       })
     }).catch(() => {});
   }
@@ -235,11 +244,11 @@
 
   window.__sextaOutputJitterGuard = {
     installed: true,
-    version: '2.1.0-firefox-headroom',
+    version: '2.2.0-desktop-headroom',
     debug: () => ({
       mode: lastMode,
       extraBufferMs: Math.round(LEGACY_EXTRA_BUFFER_SECONDS * 1000),
-      effectiveTargetMs: Math.round(LEGACY_EXTRA_BUFFER_SECONDS * 1000) + (IS_ANDROID ? 90 : 28),
+      effectiveTargetMs: Math.round(LEGACY_EXTRA_BUFFER_SECONDS * 1000) + (IS_ANDROID ? 90 : IS_DESKTOP ? RING_TARGET_MS : 28),
       baseTargetMs: RING_TARGET_MS,
       adaptiveTargetMs,
       maxTargetMs: RING_MAX_TARGET_MS,
@@ -250,7 +259,8 @@
       scheduledChunks,
       detectedUnderruns,
       lastGapMs,
-      browser: IS_FIREFOX ? 'firefox' : 'other'
+      platform: platformName(),
+      browser: IS_FIREFOX ? 'firefox' : IS_DESKTOP ? 'electron' : 'other'
     })
   };
 })();
