@@ -1,6 +1,6 @@
 {
   "name": "sexta-desktop",
-  "version": "2.1.4",
+  "version": "2.1.5",
   "private": true,
   "main": "secure-main.cjs",
   "scripts": {
@@ -34,6 +34,7 @@
         "filter": [
           "start-cloud.mjs",
           "agent-v3.mjs",
+          "vision-fallback.mjs",
           "runtime-state.mjs",
           "audit.mjs",
           "browser-agent.mjs",
