@@ -40,7 +40,7 @@ test('telemetria de voz é persistida sem gravar transcrições', () => {
   assert.doesNotMatch(metrics, /body\.(?:transcript|content|userText|assistantText)/);
 });
 
-test('configurações oferecem controle explícito do Windows sem shell genérico', () => {
+test('configurações oferecem controle explícito do Windows sem primitive de terminal', () => {
   const ui = read('public/windows-access-control.js');
   const app = read('public/app.js');
   const api = read('api/agent-control.js');
@@ -52,7 +52,8 @@ test('configurações oferecem controle explícito do Windows sem shell genéric
   assert.match(ui, /Ativar controle completo/);
   assert.match(ui, /set_privacy/);
   assert.match(ui, /set_autonomy/);
-  assert.doesNotMatch(ui, /shell|cmd\.exe|powershell\.exe/i);
+  assert.match(ui, /não recebe shell genérico/i);
+  assert.doesNotMatch(ui, /cmd\.exe|powershell\.exe|\/api\/shell|child_process|spawn\s*\(/i);
 });
 
 test('Browser Agent preserva a aba útil entre processos e evita about:blank', () => {
