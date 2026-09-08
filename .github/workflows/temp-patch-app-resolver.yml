@@ -1,0 +1,71 @@
+name: Temp patch app resolver
+
+on:
+  push:
+    branches: [fix/windows-app-discovery-2.1.3]
+    paths: ['.github/workflows/temp-patch-app-resolver.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/windows-app-discovery-2.1.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Patch Agent and Desktop package
+        shell: python
+        run: |
+          from pathlib import Path
+          import json
+
+          agent = Path('agent/agent-v3.mjs')
+          text = agent.read_text(encoding='utf-8')
+          anchor = "import { captureScreen, focusWindow, uiClickText, uiHotkey, uiScroll, uiTree, uiTypeText, windowList } from './windows-ui.mjs';\n"
+          new_import = "import { launchApp } from './app-resolver.mjs';\n"
+          if new_import not in text:
+              assert anchor in text, 'windows-ui import anchor missing'
+              text = text.replace(anchor, anchor + new_import, 1)
+
+          old = """  if (action === 'open_app') {\n    const app = cfg.apps?.[String(payload.app || '')];\n    if (!app?.command) throw new Error('Aplicativo não está na allowlist local');\n    execDetached(app.command, Array.isArray(app.args) ? app.args : []); return { app: payload.app };\n  }\n"""
+          new = "  if (action === 'open_app') return launchApp(cfg, payload.app);\n"
+          assert old in text, 'legacy open_app block missing'
+          text = text.replace(old, new, 1)
+          agent.write_text(text, encoding='utf-8')
+
+          package_path = Path('apps/desktop-electron/package.json')
+          package = json.loads(package_path.read_text(encoding='utf-8'))
+          package['version'] = '2.1.3'
+          filters = package['build']['extraResources'][0]['filter']
+          if 'app-resolver.mjs' not in filters:
+              filters.append('app-resolver.mjs')
+          package_path.write_text(json.dumps(package, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+          health = Path('api/health.js')
+          health_text = health.read_text(encoding='utf-8')
+          health_text = health_text.replace("desktopApp: '2.1.1'", "desktopApp: '2.1.3'")
+          health.write_text(health_text, encoding='utf-8')
+
+          test = Path('tests/app-resolver.test.mjs')
+          test.write_text("""import assert from 'node:assert/strict';\nimport fs from 'node:fs';\nimport { normalizeAppName, resolveConfiguredApp, selectInstalledApp } from '../agent/app-resolver.mjs';\n\nassert.equal(normalizeAppName('Google  Chrôme'), 'google chrome');\nconst installed = [\n  { name: 'Google Chrome', source: 'startapp', appId: 'Chrome.App' },\n  { name: 'Zen Browser', source: 'startapp', appId: 'Zen.App' },\n  { name: 'Visual Studio Code', source: 'shortcut', target: 'C:\\\\Apps\\\\Code.exe' }\n];\nassert.equal(selectInstalledApp('chrome', installed)?.name, 'Google Chrome');\nassert.equal(selectInstalledApp('Google Chrome', installed)?.name, 'Google Chrome');\nassert.equal(selectInstalledApp('zen', installed)?.name, 'Zen Browser');\nassert.equal(selectInstalledApp('VS Code', installed)?.name, 'Visual Studio Code');\nassert.equal(selectInstalledApp('aplicativo inexistente', installed), null);\nconst configured = resolveConfiguredApp({ chrome: { command: 'chrome.exe' } }, 'Google Chrome');\nassert.equal(configured?.key, 'chrome');\n\nconst source = fs.readFileSync(new URL('../agent/app-resolver.mjs', import.meta.url), 'utf8');\nassert.match(source, /Get-StartApps/);\nassert.match(source, /shell:AppsFolder/);\nassert.match(source, /cmd\\.exe/);\nassert.match(source, /powershell\\.exe/);\nassert.doesNotMatch(source, /shell:\\s*true/);\nconsole.log('app resolver contracts ok');\n""", encoding='utf-8')
+      - name: Validate app resolver
+        run: |
+          node --check agent/app-resolver.mjs
+          node --check agent/agent-v3.mjs
+          node tests/app-resolver.test.mjs
+          node -e "const p=require('./apps/desktop-electron/package.json'); if(p.version!=='2.1.3'||!p.build.extraResources[0].filter.includes('app-resolver.mjs')) process.exit(1)"
+      - name: Commit patch and remove temporary workflow
+        shell: bash
+        run: |
+          rm .github/workflows/temp-patch-app-resolver.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add agent/agent-v3.mjs agent/app-resolver.mjs apps/desktop-electron/package.json api/health.js tests/app-resolver.test.mjs .github/workflows/temp-patch-app-resolver.yml
+          git commit -m 'fix(windows): abrir aplicativos instalados com resolver seguro'
+          git push origin HEAD:fix/windows-app-discovery-2.1.3
