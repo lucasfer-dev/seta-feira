@@ -32,15 +32,20 @@ test('Voice Reliability v10.1 carrega antes do Voice Core e protege continuaçã
   assert.match(reliability, /toolResponse/);
   assert.match(reliability, /premature_turn_boundary_suppressed/);
   assert.match(reliability, /tool_continuation_timeout/);
+  assert.match(reliability, /__sextaMarkToolContinuation/);
+  assert.match(reliability, /playback-state/);
+  assert.match(reliability, /10\.1\.1-playback-continuation-guard/);
   assert.match(reliability, /socket\.close\(4011/);
 });
 
-test('Desktop ganha buffer próprio para reduzir underrun sem alterar Android/Firefox', () => {
+test('Desktop usa buffer adaptativo gap-aware sem aumentar a partida base', () => {
   const output = read('public/voice-output-jitter-guard.js');
   assert.match(output, /IS_DESKTOP/);
   assert.match(output, /IS_DESKTOP \? 480 : 300/);
-  assert.match(output, /IS_DESKTOP \? 900 : 600/);
-  assert.match(output, /version: '2\.2\.0-desktop-headroom'/);
+  assert.match(output, /IS_DESKTOP \? 1100 : 600/);
+  assert.match(output, /RING_GAP_SAFETY_MS/);
+  assert.match(output, /RING_UNDERRUN_WINDOW_MS/);
+  assert.match(output, /version: '2\.2\.1-gap-aware-desktop'/);
   assert.match(output, /return 'desktop'/);
 });
 
