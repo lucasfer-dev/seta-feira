@@ -80,3 +80,10 @@ test('identidade de produto nao regride para 1.x', () => {
   assert.match(serviceWorker, /sexta-4\.1\.1-operational/);
   assert.doesNotThrow(() => new Function(product));
 });
+
+test('Voice Core dá janela maior apenas para análise de tela', () => {
+  const voice = read('public/voice-core-v10.js');
+  assert.match(voice, /const TOOL_TIMEOUT_MS = 12000;/);
+  assert.match(voice, /const SCREEN_TOOL_TIMEOUT_MS = 22000;/);
+  assert.match(voice, /pc_screen_analyze[^\n]*SCREEN_TOOL_TIMEOUT_MS[^\n]*TOOL_TIMEOUT_MS/);
+});

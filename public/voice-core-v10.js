@@ -24,6 +24,7 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
   const OUTPUT_SETTLE_MS = 80;
   const OUTPUT_DRAIN_POLL_MS = 30;
   const TOOL_TIMEOUT_MS = 12000;
+  const SCREEN_TOOL_TIMEOUT_MS = 22000;
 
   let sessionActive = false;
   let setupComplete = false;
@@ -511,7 +512,8 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
     transition('tool');
     const responses = await Promise.all(calls.map(async call => {
       try {
-        const result = await withTimeout(executeLiveTool(call), TOOL_TIMEOUT_MS, `TOOL_${String(call?.name || 'UNKNOWN').toUpperCase()}`);
+        const timeoutMs = String(call?.name || '') === 'pc_screen_analyze' ? SCREEN_TOOL_TIMEOUT_MS : TOOL_TIMEOUT_MS;
+        const result = await withTimeout(executeLiveTool(call), timeoutMs, `TOOL_${String(call?.name || 'UNKNOWN').toUpperCase()}`);
         return { id:call.id, name:call.name, response:result ?? { ok:true, state:'completed' } };
       } catch (error) {
         return { id:call.id, name:call.name, response:{ ok:false, handled:true, state:'failed', error:String(error?.message || error || 'TOOL_FAILED').slice(0,700) } };
