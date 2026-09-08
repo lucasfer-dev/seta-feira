@@ -10,12 +10,13 @@
   const OUTPUT_RATE = 24000;
   const LEGACY_EXTRA_BUFFER_SECONDS = IS_ANDROID ? 0.035 : IS_DESKTOP ? 0.11 : 0.085;
   // Legacy CI marker kept during the staged rollout: 2.1.0-firefox-headroom.
-  // Desktop Electron mostrou gaps reais acima de 500 ms em produção. Um alvo de
-  // 300 ms não consegue mascarar isso; o perfil dedicado começa com mais folga e
-  // cresce adaptativamente, preservando Android e Firefox com seus perfis próprios.
+  // Mantemos a partida do Desktop em 480 ms para não aumentar a latência inicial,
+  // mas damos espaço para o buffer aprender com gaps reais acima de 500 ms.
   const RING_TARGET_MS = IS_ANDROID ? 150 : IS_FIREFOX ? 620 : IS_DESKTOP ? 480 : 300;
-  const RING_MAX_TARGET_MS = IS_ANDROID ? 320 : IS_FIREFOX ? 950 : IS_DESKTOP ? 900 : 600;
-  const RING_STEP_MS = IS_ANDROID ? 40 : IS_FIREFOX ? 110 : IS_DESKTOP ? 100 : 70;
+  const RING_MAX_TARGET_MS = IS_ANDROID ? 320 : IS_FIREFOX ? 950 : IS_DESKTOP ? 1100 : 600;
+  const RING_STEP_MS = IS_ANDROID ? 40 : IS_FIREFOX ? 110 : IS_DESKTOP ? 120 : 70;
+  const RING_GAP_SAFETY_MS = IS_ANDROID ? 80 : IS_FIREFOX ? 120 : IS_DESKTOP ? 160 : 100;
+  const RING_UNDERRUN_WINDOW_MS = IS_ANDROID ? 700 : IS_FIREFOX ? 900 : IS_DESKTOP ? 1200 : 700;
 
   let outputContexts = 0;
   let workletContexts = 0;
@@ -99,7 +100,9 @@
             processorOptions: {
               targetMs: RING_TARGET_MS,
               maxTargetMs: RING_MAX_TARGET_MS,
-              stepMs: RING_STEP_MS
+              stepMs: RING_STEP_MS,
+              gapSafetyMs: RING_GAP_SAFETY_MS,
+              underrunWindowMs: RING_UNDERRUN_WINDOW_MS
             }
           });
           workletNode.connect(context.destination);
@@ -244,7 +247,7 @@
 
   window.__sextaOutputJitterGuard = {
     installed: true,
-    version: '2.2.0-desktop-headroom',
+    version: '2.2.1-gap-aware-desktop',
     debug: () => ({
       mode: lastMode,
       extraBufferMs: Math.round(LEGACY_EXTRA_BUFFER_SECONDS * 1000),
@@ -252,6 +255,8 @@
       baseTargetMs: RING_TARGET_MS,
       adaptiveTargetMs,
       maxTargetMs: RING_MAX_TARGET_MS,
+      gapSafetyMs: RING_GAP_SAFETY_MS,
+      underrunWindowMs: RING_UNDERRUN_WINDOW_MS,
       queuedMs: lastQueuedMs,
       outputContexts,
       workletContexts,
