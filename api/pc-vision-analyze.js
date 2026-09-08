@@ -31,6 +31,10 @@ function transientFailure(status, message = '') {
   return [429, 500, 502, 503, 504].includes(Number(status)) || /overload|high demand|temporar|unavailable|resource_exhausted|rate.?limit|timeout/i.test(String(message));
 }
 
+function compatibilityFailure(status, message = '') {
+  return [400, 404, 422].includes(Number(status)) && /invalid argument|unsupported|not supported|not found|unknown field|unknown name|invalid value|thinking|response.?mime/i.test(String(message));
+}
+
 function providerRetryMs(response, status) {
   const raw = Number(response?.headers?.get?.('retry-after') || 0);
   if (Number.isFinite(raw) && raw > 0) return Math.min(120_000, raw * 1000);
@@ -50,10 +54,12 @@ function pruneCache(now = Date.now()) {
 }
 
 function parseAnalysis(text = '') {
-  try { return JSON.parse(text); }
+  const raw = String(text || '').trim();
+  const unfenced = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  try { return JSON.parse(unfenced); }
   catch {
     return {
-      summary: String(text).slice(0, 5000),
+      summary: raw.slice(0, 5000),
       activeApp: '',
       visibleText: [],
       targets: [],
@@ -71,22 +77,27 @@ function instructionFor(question) {
     'Identifique aplicativo/janela, estado atual, mensagens de erro e controles úteis para cumprir a pergunta.',
     'Não diga que clicou ou alterou algo: este endpoint só observa.',
     'Se texto pequeno estiver ilegível, diga isso em vez de inventar.',
-    'Retorne JSON com: summary (string), activeApp (string), visibleText (array de strings, máx 20), targets (array de {label,kind,locationHint}, máx 20), risks (array de strings).',
+    'Retorne SOMENTE JSON com: summary (string), activeApp (string), visibleText (array de strings, máx 20), targets (array de {label,kind,locationHint}, máx 20), risks (array de strings).',
     `Pergunta do usuário: ${question}`
   ].join('\n');
 }
 
-async function callVision({ key, model, imageBase64, instruction, timeoutMs }) {
+function requestBody({ imageBase64, instruction, compatibilityMode = false }) {
+  const body = {
+    contents: [{ role: 'user', parts: [
+      { text: instruction },
+      { inlineData: { mimeType: 'image/jpeg', data: imageBase64 } }
+    ] }]
+  };
+  if (!compatibilityMode) body.generationConfig = { responseMimeType: 'application/json' };
+  return body;
+}
+
+async function callVision({ key, model, imageBase64, instruction, timeoutMs, compatibilityMode = false }) {
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [
-        { text: instruction },
-        { inlineData: { mimeType: 'image/jpeg', data: imageBase64 } }
-      ] }],
-      generationConfig: { responseMimeType: 'application/json', thinkingConfig: { thinkingBudget: 0 } }
-    }),
+    body: JSON.stringify(requestBody({ imageBase64, instruction, compatibilityMode })),
     signal: AbortSignal.timeout(timeoutMs)
   });
   const data = await response.json().catch(() => ({}));
@@ -114,7 +125,7 @@ export default async function handler(req, res) {
   const key = cacheKey(imageBase64, question);
   const cached = state.cache.get(key);
   if (cached?.expiresAt > now) {
-    return send(res, 200, { ok: true, model: cached.model, analysis: cached.analysis, cacheHit: true, fallbackUsed: cached.fallbackUsed, attempts: [] });
+    return send(res, 200, { ok: true, model: cached.model, analysis: cached.analysis, cacheHit: true, fallbackUsed: cached.fallbackUsed, compatibilityMode: cached.compatibilityMode, attempts: [] });
   }
 
   const models = visionModels(c);
@@ -126,54 +137,74 @@ export default async function handler(req, res) {
   for (const model of models) {
     const cooldownUntil = Number(state.cooldowns.get(model) || 0);
     if (cooldownUntil > Date.now()) {
-      attempts.push({ model, status: 'cooldown' });
+      attempts.push({ model, mode: 'skip', status: 'cooldown' });
       continue;
     }
     state.cooldowns.delete(model);
 
-    const remaining = REQUEST_BUDGET_MS - (Date.now() - startedAt);
-    if (remaining < 1200) break;
+    const modes = [false, true];
+    for (const compatibilityMode of modes) {
+      const remaining = REQUEST_BUDGET_MS - (Date.now() - startedAt);
+      if (remaining < 1200) break;
 
-    try {
-      const { response, data } = await callVision({
-        key: c.geminiKey,
-        model,
-        imageBase64,
-        instruction,
-        timeoutMs: Math.max(1200, Math.min(5500, remaining))
-      });
+      try {
+        const { response, data } = await callVision({
+          key: c.geminiKey,
+          model,
+          imageBase64,
+          instruction,
+          compatibilityMode,
+          timeoutMs: Math.max(1200, Math.min(5500, remaining))
+        });
 
-      if (response.ok) {
-        const text = (data?.candidates?.[0]?.content?.parts || []).map(part => part?.text || '').join('').trim();
-        const analysis = parseAnalysis(text);
-        state.cooldowns.delete(model);
-        const fallbackUsed = model !== primaryModel;
-        state.cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, model, analysis, fallbackUsed });
-        pruneCache();
-        return send(res, 200, { ok: true, model, analysis, cacheHit: false, fallbackUsed, attempts });
+        if (response.ok) {
+          const text = (data?.candidates?.[0]?.content?.parts || []).map(part => part?.text || '').join('').trim();
+          const analysis = parseAnalysis(text);
+          state.cooldowns.delete(model);
+          const fallbackUsed = model !== primaryModel;
+          state.cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, model, analysis, fallbackUsed, compatibilityMode });
+          pruneCache();
+          return send(res, 200, { ok: true, model, analysis, cacheHit: false, fallbackUsed, compatibilityMode, attempts });
+        }
+
+        const message = data?.error?.message || 'Gemini vision failed';
+        attempts.push({ model, mode: compatibilityMode ? 'compat' : 'json', status: response.status, message: String(message).slice(0, 180) });
+        console.warn('[SEXTA Vision] provider rejected request', { model, mode: compatibilityMode ? 'compat' : 'json', status: response.status, message: String(message).slice(0, 180) });
+
+        if (compatibilityFailure(response.status, message)) {
+          if (!compatibilityMode) continue;
+          state.cooldowns.set(model, Date.now() + 20_000);
+          break;
+        }
+
+        if (transientFailure(response.status, message)) {
+          state.cooldowns.set(model, Date.now() + providerRetryMs(response, response.status));
+          break;
+        }
+
+        if ([401, 403].includes(Number(response.status))) {
+          return send(res, response.status, { error: 'vision_provider_auth_failed', message: String(message).slice(0, 500), attempts });
+        }
+
+        state.cooldowns.set(model, Date.now() + 20_000);
+        break;
+      } catch (error) {
+        const message = String(error?.message || error);
+        attempts.push({ model, mode: compatibilityMode ? 'compat' : 'json', status: 'network', message: message.slice(0, 180) });
+        state.cooldowns.set(model, Date.now() + 12_000);
+        if (!/timeout|abort|fetch/i.test(message)) break;
       }
-
-      const message = data?.error?.message || 'Gemini vision failed';
-      attempts.push({ model, status: response.status, message: String(message).slice(0, 180) });
-      if (!transientFailure(response.status, message)) {
-        return send(res, response.status, { error: 'vision_failed', message });
-      }
-
-      state.cooldowns.set(model, Date.now() + providerRetryMs(response, response.status));
-      if (Date.now() - startedAt < REQUEST_BUDGET_MS - 700) await sleep(250);
-    } catch (error) {
-      const message = String(error?.message || error);
-      attempts.push({ model, status: 'network', message: message.slice(0, 180) });
-      state.cooldowns.set(model, Date.now() + 12_000);
-      if (!/timeout|abort|fetch/i.test(message)) break;
     }
+
+    if (Date.now() - startedAt < REQUEST_BUDGET_MS - 700) await sleep(180);
   }
 
-  const retryAfterMs = Math.max(2500, Math.min(45_000, ...models.map(model => Math.max(0, Number(state.cooldowns.get(model) || 0) - Date.now())).filter(Boolean), 5000));
+  const cooldowns = models.map(model => Math.max(0, Number(state.cooldowns.get(model) || 0) - Date.now())).filter(Boolean);
+  const retryAfterMs = Math.max(2500, Math.min(45_000, ...(cooldowns.length ? cooldowns : [5000])));
   res.setHeader('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
   return send(res, 503, {
     error: 'vision_temporarily_unavailable',
-    message: 'A visão está congestionada agora. A SEXTA deve aguardar o cooldown ou usar DOM/UI Automation antes de tentar outra captura.',
+    message: 'A visão não conseguiu uma resposta válida do provedor. A SEXTA deve usar DOM/UI Automation quando possível e aguardar o cooldown antes de tentar outra captura.',
     retryAfterMs,
     attempts
   });
