@@ -8,7 +8,8 @@ const state = globalThis.__sextaVisionResilience || (globalThis.__sextaVisionRes
 });
 const CACHE_TTL_MS = 20_000;
 const MODEL_COOLDOWN_MS = 45_000;
-const REQUEST_BUDGET_MS = 13_500;
+const REQUEST_BUDGET_MS = 15_800;
+const MODEL_TIMEOUT_MS = 7_500;
 
 function cleanBase64(value = '') {
   return String(value || '').replace(/^data:image\/(?:jpeg|jpg);base64,/i, '').replace(/\s+/g, '');
@@ -142,8 +143,8 @@ export default async function handler(req, res) {
     }
     state.cooldowns.delete(model);
 
-    const modes = [false, true];
-    for (const compatibilityMode of modes) {
+    let compatibilityMode = false;
+    for (let modeAttempt = 0; modeAttempt < 2; modeAttempt += 1) {
       const remaining = REQUEST_BUDGET_MS - (Date.now() - startedAt);
       if (remaining < 1200) break;
 
@@ -154,7 +155,7 @@ export default async function handler(req, res) {
           imageBase64,
           instruction,
           compatibilityMode,
-          timeoutMs: Math.max(1200, Math.min(5500, remaining))
+          timeoutMs: Math.max(1200, Math.min(MODEL_TIMEOUT_MS, remaining))
         });
 
         if (response.ok) {
@@ -171,10 +172,9 @@ export default async function handler(req, res) {
         attempts.push({ model, mode: compatibilityMode ? 'compat' : 'json', status: response.status, message: String(message).slice(0, 180) });
         console.warn('[SEXTA Vision] provider rejected request', { model, mode: compatibilityMode ? 'compat' : 'json', status: response.status, message: String(message).slice(0, 180) });
 
-        if (compatibilityFailure(response.status, message)) {
-          if (!compatibilityMode) continue;
-          state.cooldowns.set(model, Date.now() + 20_000);
-          break;
+        if (compatibilityFailure(response.status, message) && !compatibilityMode) {
+          compatibilityMode = true;
+          continue;
         }
 
         if (transientFailure(response.status, message)) {
@@ -192,11 +192,13 @@ export default async function handler(req, res) {
         const message = String(error?.message || error);
         attempts.push({ model, mode: compatibilityMode ? 'compat' : 'json', status: 'network', message: message.slice(0, 180) });
         state.cooldowns.set(model, Date.now() + 12_000);
-        if (!/timeout|abort|fetch/i.test(message)) break;
+        // Timeout/rede não é incompatibilidade de payload. Repetir o mesmo modelo
+        // em modo compatível só consumia o orçamento e impedia o fallback real.
+        break;
       }
     }
 
-    if (Date.now() - startedAt < REQUEST_BUDGET_MS - 700) await sleep(180);
+    if (Date.now() - startedAt < REQUEST_BUDGET_MS - 700) await sleep(120);
   }
 
   const cooldowns = models.map(model => Math.max(0, Number(state.cooldowns.get(model) || 0) - Date.now())).filter(Boolean);
@@ -204,7 +206,8 @@ export default async function handler(req, res) {
   res.setHeader('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
   return send(res, 503, {
     error: 'vision_temporarily_unavailable',
-    message: 'A visão não conseguiu uma resposta válida do provedor. A SEXTA deve usar DOM/UI Automation quando possível e aguardar o cooldown antes de tentar outra captura.',
+    message: 'A permissão local de tela não é o problema. O provedor de visão não respondeu dentro do orçamento. A SEXTA deve usar DOM/UI Automation automaticamente e não solicitar nova confirmação de permissão.',
+    permissionIssue: false,
     retryAfterMs,
     attempts
   });
