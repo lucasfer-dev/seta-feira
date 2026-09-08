@@ -55,6 +55,15 @@ test('visao possui fallback, cooldown e cache anti-overload', () => {
   assert.match(vision, /cacheHit/);
 });
 
+test('visao recupera erro 400 do provider em modo compativel', () => {
+  const vision = read('api/pc-vision-analyze.js');
+  assert.match(vision, /compatibilityFailure/);
+  assert.match(vision, /compatibilityMode/);
+  assert.match(vision, /mode: compatibilityMode \? 'compat' : 'json'/);
+  assert.match(vision, /responseMimeType: 'application\/json'/);
+  assert.doesNotMatch(vision, /thinkingConfig/);
+});
+
 test('sync tolera falhas parciais de backend', () => {
   const sync = read('api/sync.js');
   assert.match(sync, /Promise\.allSettled/);
