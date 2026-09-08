@@ -7,7 +7,7 @@ function runPowerShell(script, timeout = 8000) {
   if (process.platform !== 'win32') return Promise.reject(new Error('PC_WINDOWS_ONLY'));
   return new Promise((resolve, reject) => {
     // Defender-friendly: execute a normal non-interactive PowerShell command from stdin.
-    // Do not use ExecutionPolicy Bypass or EncodedCommand; both are common malware heuristics.
+    // Avoid policy-bypass flags and encoded command-line payloads; keep scripts visible to the local security stack.
     const child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '-'], {
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe']
