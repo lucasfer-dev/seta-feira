@@ -4,12 +4,12 @@ import fs from 'node:fs';
 
 const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('Desktop 2.1.2 faz pairing nativo sem PowerShell de setup', () => {
+test('Desktop 2.1.3 faz pairing nativo sem PowerShell de setup', () => {
   const pkg = JSON.parse(read('apps/desktop-electron/package.json'));
   const main = read('apps/desktop-electron/main.cjs');
   const preload = read('apps/desktop-electron/preload.cjs');
   const web = read('public/desktop-pairing-auth-fix.js');
-  assert.equal(pkg.version, '2.1.2');
+  assert.equal(pkg.version, '2.1.3');
   assert.equal(pkg.main, 'secure-main.cjs');
   assert.match(main, /system:pair-agent/);
   assert.match(main, /pairAgent\(payload/);

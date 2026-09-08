@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { browserBack, browserClick, browserForward, browserOpen, browserReload, browserSelectTab, browserSnapshot, browserStatus, browserTabs, browserType } from './browser-agent.mjs';
 import { captureScreen, focusWindow, uiClickText, uiHotkey, uiScroll, uiTree, uiTypeText, windowList } from './windows-ui.mjs';
+import { launchApp } from './app-resolver.mjs';
 import { audit } from './audit.mjs';
 import { hardwareSnapshot } from './hardware.mjs';
 import { secureVaultStatus } from './secure-vault.mjs';
@@ -168,11 +169,7 @@ async function execute(command) {
     if (process.platform === 'win32') execDetached('cmd', ['/c', 'start', '', url.toString()]); else execDetached('xdg-open', [url.toString()]);
     return { opened: url.toString() };
   }
-  if (action === 'open_app') {
-    const app = cfg.apps?.[String(payload.app || '')];
-    if (!app?.command) throw new Error('Aplicativo não está na allowlist local');
-    execDetached(app.command, Array.isArray(app.args) ? app.args : []); return { app: payload.app };
-  }
+  if (action === 'open_app') return launchApp(cfg, payload.app);
   if (action === 'open_project') { const project = projectPath(payload.project); execDetached('code', [project.value]); return { project: project.key, path: project.value }; }
   if (action === 'git_status') {
     const names = Object.keys(cfg.projects || {}); const requested = payload.project && cfg.projects[payload.project] ? payload.project : names[0];
