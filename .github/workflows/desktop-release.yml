@@ -24,8 +24,41 @@ jobs:
           node-version: 22
       - name: Install desktop dependencies
         run: npm --prefix apps/desktop-electron install
-      - name: Build unsigned NSIS installer and update metadata
+      - name: Build NSIS installer and update metadata
+        env:
+          # electron-builder signs automatically when these optional repository secrets exist.
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: npm --prefix apps/desktop-electron run dist
+      - name: Scan SEXTA with Microsoft Defender
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem 'apps/desktop-electron/dist' -Filter '*.exe' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $installer) { throw 'SEXTA installer not found for Defender scan.' }
+
+          $mpCandidates = @(
+            "$env:ProgramFiles\Windows Defender\MpCmdRun.exe",
+            (Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform" -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1 | ForEach-Object { Join-Path $_.FullName 'MpCmdRun.exe' })
+          ) | Where-Object { $_ -and (Test-Path $_) }
+          $mp = $mpCandidates | Select-Object -First 1
+          if (-not $mp) {
+            Write-Warning 'Microsoft Defender CLI unavailable on this runner; static Defender-safety contracts still run in Desktop Smoke.'
+          } else {
+            $started = Get-Date
+            & $mp -Scan -ScanType 3 -File $installer.FullName -DisableRemediation
+            $scanExit = $LASTEXITCODE
+            if (-not (Test-Path $installer.FullName)) { throw 'Microsoft Defender removed/quarantined the SEXTA installer.' }
+
+            $detections = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {
+              $_.InitialDetectionTime -ge $started.AddMinutes(-2) -and (($_.Resources -join ' ') -match [regex]::Escape($installer.Name))
+            })
+            if ($detections.Count -gt 0) {
+              $detections | Format-List * | Out-String | Write-Host
+              throw 'Microsoft Defender detected the SEXTA installer.'
+            }
+            if ($scanExit -ne 0) { Write-Warning "Defender scanner exited with code $scanExit but reported no SEXTA detection." }
+            Write-Host "Defender scan completed for $($installer.Name)"
+          }
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
