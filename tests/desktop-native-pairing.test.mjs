@@ -4,12 +4,12 @@ import fs from 'node:fs';
 
 const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('Desktop 2.1.1 faz pairing nativo sem PowerShell', () => {
+test('Desktop 2.1.2 faz pairing nativo sem PowerShell de setup', () => {
   const pkg = JSON.parse(read('apps/desktop-electron/package.json'));
   const main = read('apps/desktop-electron/main.cjs');
   const preload = read('apps/desktop-electron/preload.cjs');
   const web = read('public/desktop-pairing-auth-fix.js');
-  assert.equal(pkg.version, '2.1.1');
+  assert.equal(pkg.version, '2.1.2');
   assert.equal(pkg.main, 'secure-main.cjs');
   assert.match(main, /system:pair-agent/);
   assert.match(main, /pairAgent\(payload/);
@@ -37,6 +37,22 @@ test('Desktop continua sem primitive shell/exec exposta ao renderer', () => {
   assert.doesNotMatch(preload, /shell|exec|spawn|powershell/i);
   assert.match(preload, /const \{ lastLog, \.\.\.safeDiagnostics \}/);
   assert.match(preload, /status\.agent\.diagnostics = safeDiagnostics/);
+});
+
+test('Windows Hands nao usa PowerShell Bypass ou EncodedCommand', () => {
+  const windowsUi = read('agent/windows-ui.mjs');
+  assert.doesNotMatch(windowsUi, /ExecutionPolicy[^\n]*Bypass/i);
+  assert.doesNotMatch(windowsUi, /EncodedCommand/i);
+  assert.match(windowsUi, /'-Command', '-'/);
+});
+
+test('visao possui fallback, cooldown e cache anti-overload', () => {
+  const vision = read('api/pc-vision-analyze.js');
+  assert.match(vision, /GEMINI_VISION_FALLBACK_MODELS/);
+  assert.match(vision, /cooldowns/);
+  assert.match(vision, /CACHE_TTL_MS/);
+  assert.match(vision, /vision_temporarily_unavailable/);
+  assert.match(vision, /cacheHit/);
 });
 
 test('sync tolera falhas parciais de backend', () => {

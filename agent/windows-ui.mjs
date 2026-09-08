@@ -3,27 +3,37 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
-function encodePowerShell(script) {
-  return Buffer.from(String(script || ''), 'utf16le').toString('base64');
-}
-
 function runPowerShell(script, timeout = 8000) {
   if (process.platform !== 'win32') return Promise.reject(new Error('PC_WINDOWS_ONLY'));
   return new Promise((resolve, reject) => {
-    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encodePowerShell(script)], { windowsHide: true });
-    let out = '', err = '';
+    // Defender-friendly: execute a normal non-interactive PowerShell command from stdin.
+    // Avoid policy-bypass flags and encoded command-line payloads; keep scripts visible to the local security stack.
+    const child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '-'], {
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    let out = '', err = '', settled = false;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn(value);
+    };
     const timer = setTimeout(() => {
       try { child.kill(); } catch {}
-      reject(new Error('PC_POWERSHELL_TIMEOUT'));
+      finish(reject, new Error('PC_POWERSHELL_TIMEOUT'));
     }, timeout);
     child.stdout?.on('data', d => { out += d; });
     child.stderr?.on('data', d => { err += d; });
-    child.on('error', reject);
+    child.on('error', error => finish(reject, error));
     child.on('close', code => {
-      clearTimeout(timer);
-      if (code !== 0) return reject(new Error(String(err || out || `powershell exit ${code}`).trim()));
-      resolve(String(out || '').trim());
+      if (code !== 0) return finish(reject, new Error(String(err || out || `powershell exit ${code}`).trim()));
+      finish(resolve, String(out || '').trim());
     });
+    child.stdin?.on('error', error => {
+      if (error?.code !== 'EPIPE') finish(reject, error);
+    });
+    child.stdin?.end(`${String(script || '')}\r\n`, 'utf8');
   });
 }
 
@@ -214,6 +224,8 @@ export async function captureScreen(scope = 'primary') {
   if (process.platform !== 'win32') throw new Error('PC_SCREEN_WINDOWS_ONLY');
   const tmp = path.join(os.tmpdir(), `sexta-screen-${Date.now()}-${Math.random().toString(16).slice(2)}.jpg`);
   const all = scope === 'all';
+  const maxWidth = Math.max(900, Math.min(1440, Number(process.env.SEXTA_VISION_MAX_WIDTH) || 1152));
+  const quality = Math.max(45, Math.min(78, Number(process.env.SEXTA_VISION_JPEG_QUALITY) || 60));
   const script = String.raw`
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -222,15 +234,15 @@ $source = New-Object System.Drawing.Bitmap $bounds.Width,$bounds.Height
 $g=[System.Drawing.Graphics]::FromImage($source)
 $g.CopyFromScreen($bounds.X,$bounds.Y,0,0,$bounds.Size)
 $g.Dispose()
-$maxWidth=1280
+$maxWidth=${maxWidth}
 if ($source.Width -gt $maxWidth) {
   $ratio=$maxWidth / [double]$source.Width; $h=[int]($source.Height*$ratio)
   $target=New-Object System.Drawing.Bitmap $maxWidth,$h
-  $tg=[System.Drawing.Graphics]::FromImage($target); $tg.DrawImage($source,0,0,$maxWidth,$h); $tg.Dispose(); $source.Dispose(); $source=$target
+  $tg=[System.Drawing.Graphics]::FromImage($target); $tg.InterpolationMode=[System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic; $tg.DrawImage($source,0,0,$maxWidth,$h); $tg.Dispose(); $source.Dispose(); $source=$target
 }
 $codec=[System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
 $params=New-Object System.Drawing.Imaging.EncoderParameters 1
-$params.Param[0]=New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality,[long]68)
+$params.Param[0]=New-Object System.Drawing.Imaging.EncoderParameter([System.Drawing.Imaging.Encoder]::Quality,[long]${quality})
 $source.Save(${psString(tmp)},$codec,$params)
 $w=$source.Width; $h=$source.Height; $source.Dispose()
 [pscustomobject]@{ path=${psString(tmp)}; width=$w; height=$h; scope=${psString(all ? 'all' : 'primary')} } | ConvertTo-Json -Compress
@@ -239,6 +251,6 @@ $w=$source.Width; $h=$source.Height; $source.Dispose()
   if (!fs.existsSync(tmp)) throw new Error('PC_SCREEN_CAPTURE_FAILED');
   const data = fs.readFileSync(tmp);
   try { fs.unlinkSync(tmp); } catch {}
-  if (data.length > 1_800_000) throw new Error('PC_SCREEN_CAPTURE_TOO_LARGE');
+  if (data.length > 1_350_000) throw new Error('PC_SCREEN_CAPTURE_TOO_LARGE');
   return { ...meta, mimeType: 'image/jpeg', imageBase64: data.toString('base64'), bytes: data.length };
 }
