@@ -7,6 +7,18 @@ import test from 'node:test';
 const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 const localPath = path => fileURLToPath(new URL(`../${path}`, import.meta.url));
 
+function semverAtLeast(actual, minimum) {
+  const parse = value => String(value || '').split('.').map(part => Number.parseInt(part, 10));
+  const a = parse(actual);
+  const b = parse(minimum);
+  if (a.length !== 3 || b.length !== 3 || [...a, ...b].some(Number.isNaN)) return false;
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] > b[i]) return true;
+    if (a[i] < b[i]) return false;
+  }
+  return true;
+}
+
 test('guards novos passam no parser do Node', () => {
   for (const file of ['public/voice-reliability-v10-1.js', 'public/windows-access-control.js', 'public/voice-output-jitter-guard.js', 'api/live-metrics.js', 'agent/browser-agent.mjs']) {
     execFileSync(process.execPath, ['--check', localPath(file)], { stdio: 'pipe' });
@@ -65,9 +77,9 @@ test('Browser Agent preserva a aba útil entre processos e evita about:blank', (
   assert.match(browser, /url !== 'about:blank'/);
 });
 
-test('Desktop 2.1.4 empacota o Browser Agent corrigido', () => {
+test('Desktop moderno empacota o Browser Agent corrigido', () => {
   const pkg = JSON.parse(read('apps/desktop-electron/package.json'));
-  assert.equal(pkg.version, '2.1.4');
+  assert.ok(semverAtLeast(pkg.version, '2.1.4'), `Desktop ${pkg.version} não pode regredir abaixo de 2.1.4`);
   const filters = pkg.build.extraResources.flatMap(item => item.filter || []);
   assert.ok(filters.includes('browser-agent.mjs'));
   assert.ok(filters.includes('runtime-state.mjs'));
