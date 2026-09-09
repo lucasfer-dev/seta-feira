@@ -35,3 +35,4 @@ app.whenReady().then(() => {
 });
 
 require('./main.cjs');
+require('./windows-habitat.cjs');
