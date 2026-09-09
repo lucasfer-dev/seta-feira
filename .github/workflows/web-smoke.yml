@@ -116,15 +116,23 @@ jobs:
       - name: Check SEXTA web HUD v4
         run: |
           node --check public/sexta-shell-v4.js
+          node --check public/sexta-v4-system.js
+          node --check public/sexta-v4-desktop-events.js
           node --check public/sexta-shell-v3.js
           node --check public/proactivity-engine.js
           node --check public/sexta-v4-intelligence.js
           grep -q "sexta-shell-v4.js" public/app.js
+          grep -q "sexta-v4-system.js" public/app.js
+          grep -q "sexta-v4-desktop-events.js" public/app.js
           grep -q "sexta-v4.css" public/styles.css
+          grep -q "sexta-v4-system.css" public/styles.css
           grep -q "proactivity-engine.js" public/index.html
           grep -q "sexta-v4-intelligence.js" public/index.html
           grep -q "s4CommandTrigger" public/sexta-shell-v4.js
           grep -q "s4PaletteInput" public/sexta-shell-v4.js
+          grep -q "s4AutonomyButtons" public/sexta-v4-system.js
+          grep -q "s4DecisionList" public/sexta-v4-system.js
+          grep -q "sexta:open-agent-control" public/sexta-v4-desktop-events.js
           grep -q "INTELLIGENCE V4" public/sexta-v4-intelligence.js
       - name: Check Android Hands preparation
         run: node --check apps/android-capacitor/scripts/prepare-hands.mjs
