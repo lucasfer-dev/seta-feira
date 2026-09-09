@@ -30,12 +30,13 @@ test('real CDP: observe, act, verify; stale IDs and sensitive controls fail clos
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
   const port = await freePort();
   const profile = await fs.mkdtemp(path.join(os.tmpdir(),'sexta-cdp-test-'));
-  const child=spawn(executable,['--headless=new','--no-sandbox',`--remote-debugging-port=${port}`,`--user-data-dir=${profile}`,'--no-first-run','about:blank'],{stdio:'ignore'});
+  const child=spawn(executable,['--headless=new','--no-sandbox','--disable-dev-shm-usage',`--remote-debugging-port=${port}`,`--user-data-dir=${profile}`,'--no-first-run','about:blank'],{stdio:['ignore','ignore','pipe']});
+  let browserErrors='';child.stderr.on('data',chunk=>{browserErrors=(browserErrors+chunk).slice(-6000);});
   let launchError; child.on('error',e=>{launchError=e;});
   t.after(async()=>{child.kill();await new Promise(r=>server.close(r));await fs.rm(profile,{recursive:true,force:true,maxRetries:4,retryDelay:200}).catch(()=>{});});
   let ready=false;
-  for(let i=0;i<80;i++){if(launchError)throw launchError; try{ready=(await fetch(`http://127.0.0.1:${port}/json/version`)).ok;}catch{} if(ready)break;await delay(100);}
-  assert.ok(ready,'real browser must start');
+  for(let i=0;i<200;i++){if(launchError)throw launchError; try{ready=(await fetch(`http://127.0.0.1:${port}/json/version`)).ok;}catch{} if(ready)break;await delay(100);}
+  assert.ok(ready,`real browser must start (exit=${child.exitCode}): ${browserErrors}`);
   const cfg={browser:{debugPort:port}};
   const url=`http://127.0.0.1:${server.address().port}/`;
   const ok=r=>{assert.equal(r.ok,true,JSON.stringify(r));assert.equal(r.verified,true);return r;};
