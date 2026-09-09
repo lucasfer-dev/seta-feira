@@ -53,8 +53,10 @@ using System.Runtime.InteropServices;
 public static class SextaWin32 {
   // Initialize from a compiled frame: the legacy proxy loader cannot inspect
   // PowerShell dynamic frames whose MethodBase.ReflectedType is null.
+  [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining | System.Runtime.CompilerServices.MethodImplOptions.NoOptimization)]
   public static void InitializeUi() {
-    System.Windows.Automation.ClientSettings.RegisterClientSideProviders(UIAutomationClientsideProviders.UIAutomationClientSideProviders.ClientSideProviderDescriptionTable);
+    try { System.Windows.Automation.ClientSettings.RegisterClientSideProviders(UIAutomationClientsideProviders.UIAutomationClientSideProviders.ClientSideProviderDescriptionTable); }
+    catch (Exception e) { throw new InvalidOperationException(e.ToString(), e); }
   }
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s,int n);
