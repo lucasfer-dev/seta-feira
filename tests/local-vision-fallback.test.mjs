@@ -4,9 +4,21 @@ import test from 'node:test';
 
 const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
-test('Desktop 2.1.6 empacota fallback local de visão', () => {
+function semverAtLeast(actual, minimum) {
+  const parse = value => String(value || '').split('.').map(part => Number.parseInt(part, 10));
+  const a = parse(actual);
+  const b = parse(minimum);
+  if (a.length !== 3 || b.length !== 3 || [...a, ...b].some(Number.isNaN)) return false;
+  for (let i = 0; i < 3; i += 1) {
+    if (a[i] > b[i]) return true;
+    if (a[i] < b[i]) return false;
+  }
+  return true;
+}
+
+test('Desktop moderno empacota fallback local de visão', () => {
   const pkg = JSON.parse(read('apps/desktop-electron/package.json'));
-  assert.equal(pkg.version, '2.1.6');
+  assert.ok(semverAtLeast(pkg.version, '2.1.6'), `Desktop ${pkg.version} não pode regredir abaixo de 2.1.6`);
   const resources = pkg.build.extraResources.flatMap(item => item.filter || []);
   assert.ok(resources.includes('vision-fallback.mjs'));
 });
