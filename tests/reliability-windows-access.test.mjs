@@ -79,7 +79,7 @@ test('Browser Agent preserva a aba útil entre processos e evita about:blank', (
   assert.match(browser, /readPersistedSelection/);
   assert.match(browser, /setSelectedTarget/);
   assert.match(browser, /usefulPage/);
-  assert.match(browser, /url !== 'about:blank'/);
+  assert.match(browser, /url\s*!==?\s*['"]about:blank['"]/);
 });
 
 test('Desktop moderno empacota o Browser Agent corrigido', () => {
