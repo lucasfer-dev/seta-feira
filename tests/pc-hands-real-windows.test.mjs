@@ -68,7 +68,7 @@ test('Windows Hands restores/focuses and drives UI Automation sem senha', { skip
   assert.ok(tree.nodes.some(node=>node.password===true||node.name==='[password]'), diagnostic);
   const clicked=await uiClickText('Configurações'); assert.equal(clicked.clicked,true); await waitFor(async()=>String((await activeWindow()).title).startsWith('Clicked '));
   const typed=await uiTypeText('Lucas','Nome'); assert.equal(typed.typed,true); assert.equal(typed.verified,true); await waitFor(async()=> (await uiTree(180)).nodes.some(node=>node.name==='typed:Lucas'));
-  await assert.rejects(()=>uiTypeText('segredo','Senha'),/PC_UI_PASSWORD_FIELD_BLOCKED/);
+  await assert.rejects(()=>uiTypeText('segredo','[password]'),/PC_UI_PASSWORD_FIELD_BLOCKED/);
 });
 
 test('Windows Hands focuses maximized windows and resolves exact title among similar windows', { skip: process.platform !== 'win32', timeout: 45000 }, async t => {
