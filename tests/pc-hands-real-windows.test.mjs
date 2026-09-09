@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import test from 'node:test';
-import { browserBack, browserClick, browserForward, browserOpen, browserReload, browserSnapshot, browserType } from '../agent/browser-agent.mjs';
+import { browserBack, browserClick, browserForward, browserOpen, browserReload, browserSelectTab, browserSnapshot, browserTabs, browserType } from '../agent/browser-agent.mjs';
 import { activeWindow, focusWindow, uiClickText, uiTree, uiTypeText, windowList } from '../agent/windows-ui.mjs';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -11,8 +11,9 @@ async function waitFor(fn, { timeout = 8000, interval = 120 } = {}) {
   while (Date.now() < deadline) { try { const value = await fn(); if (value) return value; } catch (error) { lastError = error; } await sleep(interval); }
   if (lastError) throw lastError; throw new Error('WAIT_TIMEOUT');
 }
-function startUiFixture(title) {
+function startUiFixture(title, state = 'Minimized') {
   const safe = title.replace(/'/g, "''");
+  const safeState = ['Minimized', 'Maximized', 'Normal'].includes(state) ? state : 'Normal';
   const config64 = Buffer.from('Configurações', 'utf8').toString('base64');
   const script = `
 Add-Type -AssemblyName System.Windows.Forms
@@ -23,7 +24,7 @@ $name=New-Object System.Windows.Forms.TextBox;$name.Left=20;$name.Top=30;$name.W
 $echo=New-Object System.Windows.Forms.Label;$echo.Left=20;$echo.Top=70;$echo.Width=300;$echo.Text='typed:';$name.Add_TextChanged({$echo.Text='typed:'+$name.Text})
 $pass=New-Object System.Windows.Forms.TextBox;$pass.Left=20;$pass.Top=110;$pass.Width=260;$pass.AccessibleName='Senha';$pass.UseSystemPasswordChar=$true
 $button=New-Object System.Windows.Forms.Button;$button.Left=20;$button.Top=160;$button.Width=160;$button.Text=$configText;$button.AccessibleName=$configText;$button.Add_Click({$form.Text='Clicked ${safe}'})
-$form.Controls.AddRange(@($name,$echo,$pass,$button));$form.WindowState=[System.Windows.Forms.FormWindowState]::Minimized;[void]$form.ShowDialog()
+$form.Controls.AddRange(@($name,$echo,$pass,$button));$form.WindowState=[System.Windows.Forms.FormWindowState]::${safeState};[void]$form.ShowDialog()
 `;
   const child=spawn('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-Command','-'],{stdio:['pipe','ignore','pipe'],windowsHide:false}); child.stdin.end(script,'utf8'); return child;
 }
@@ -43,11 +44,36 @@ test('Windows Hands restores/focuses and drives UI Automation sem senha', { skip
   await assert.rejects(()=>uiTypeText('segredo','Senha'),/PC_UI_PASSWORD_FIELD_BLOCKED/);
 });
 
-test('Browser Agent executa DOM snapshot/click/type/back/forward/reload com verificação', { skip: process.platform !== 'win32', timeout: 45000 }, async t => {
+test('Windows Hands focuses maximized windows and resolves exact title among similar windows', { skip: process.platform !== 'win32', timeout: 30000 }, async t => {
+  const prefix=`SEXTA Similar ${Date.now()}`;
+  const titleA=`${prefix} Alpha`;
+  const titleB=`${prefix} Beta`;
+  const fixtureA=startUiFixture(titleA,'Maximized');
+  const fixtureB=startUiFixture(titleB,'Normal');
+  t.after(()=>{for(const child of [fixtureA,fixtureB]){try{child.kill();}catch{}}});
+  await waitFor(async()=>{
+    const windows=(await windowList(30)).windows;
+    return windows.some(win=>win.title===titleA)&&windows.some(win=>win.title===titleB);
+  });
+  const focusedA=await focusWindow(titleA);
+  assert.equal(focusedA.verified,true);
+  assert.equal(focusedA.title,titleA);
+  assert.equal(focusedA.restored,false);
+  assert.ok(focusedA.ambiguousMatches>=1);
+  assert.equal((await activeWindow()).title,titleA);
+  const focusedB=await focusWindow(titleB);
+  assert.equal(focusedB.verified,true);
+  assert.equal(focusedB.title,titleB);
+  assert.equal((await activeWindow()).title,titleB);
+});
+
+test('Browser Agent executa tabs/select/snapshot/click/type/back/forward/reload com verificação', { skip: process.platform !== 'win32', timeout: 50000 }, async t => {
   const server=http.createServer((req,res)=>{res.setHeader('Content-Type','text/html; charset=utf-8');if(req.url==='/two'){res.end('<!doctype html><title>Página 2</title><main>SEGUNDA-PAGINA</main>');return;}res.end(`<!doctype html><title>Página 1</title><main><input aria-label="Nome" value=""><input aria-label="Senha" type="password" value="nao-expor"><button id="toggle">Alternar</button><span id="state">estado-0</span><a href="/two">Próxima página</a><script>document.querySelector('#toggle').onclick=()=>{window.__toggle=(window.__toggle||0)+1;document.querySelector('#state').textContent='estado-'+window.__toggle}</script></main>`);});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve)); t.after(()=>server.close()); const {port}=server.address();
   const cfg={browser:{debugPort:9333+Math.floor(Math.random()*200),profileDir:`${process.env.RUNNER_TEMP||process.env.TEMP}\\sexta-browser-${Date.now()}`}}; const root=`http://127.0.0.1:${port}/`;
   const opened=await browserOpen(cfg,root); assert.equal(opened.verified,true); assert.equal(opened.after.url,root);
+  const tabState=await browserTabs(cfg); assert.ok(tabState.tabs.length>=1); const currentTab=tabState.tabs.find(tab=>tab.id===opened.tabId)||tabState.tabs.find(tab=>tab.selected); assert.ok(currentTab);
+  const selected=await browserSelectTab(cfg,currentTab.index); assert.equal(selected.selected,true); assert.equal(selected.verified,true); assert.equal(selected.id,currentTab.id);
   let snap=await browserSnapshot(cfg); const password=snap.elements.find(el=>el.password); assert.ok(password); assert.doesNotMatch(String(password.text),/nao-expor/);
   const nameInput=snap.elements.find(el=>el.tag==='input'&&!el.password); assert.ok(nameInput); const typed=await browserType(cfg,nameInput.index,'Lucas'); assert.equal(typed.verified,true); await assert.rejects(()=>browserClick(cfg,nameInput.index),/PC_BROWSER_SNAPSHOT_REQUIRED|PC_BROWSER_STALE_SNAPSHOT/);
   snap=await browserSnapshot(cfg); const toggle=snap.elements.find(el=>el.text==='Alternar'); assert.ok(toggle); const clicked=await browserClick(cfg,toggle.index); assert.equal(clicked.verified,true);
