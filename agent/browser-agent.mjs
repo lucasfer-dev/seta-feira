@@ -55,6 +55,7 @@ async function resolveTarget(port, preferredId = '', expectedUrl = '') {
 async function pageTarget(port) { return resolveTarget(port); }
 async function activateTarget(port, id) {
   const targetId = String(id || ''); if (!targetId) throw new Error('PC_BROWSER_TAB_ID_REQUIRED');
+  if (selectedTargetId === targetId) { setSelectedTarget(port, targetId); return true; }
   const response = await fetch(`http://127.0.0.1:${port}/json/activate/${encodeURIComponent(targetId)}`, { signal: AbortSignal.timeout(1800) });
   if (!response.ok) throw new Error(`PC_BROWSER_TAB_ACTIVATE_${response.status}`); setSelectedTarget(port, targetId); return true;
 }
@@ -76,7 +77,7 @@ async function browserState(port, preferredTargetId = '') {
   return { ...(parseEval(raw) || {}), targetId: target.id };
 }
 async function stableBrowserState(port, targetId = '', timeoutMs = 1800) {
-  const deadline = Date.now() + timeoutMs; let last = {};
+  const deadline = Date.now() + timeoutMs; let last = {}; let lastError = '';
   while (Date.now() < deadline) {
     try {
       const state = await browserState(port, targetId);
@@ -84,11 +85,11 @@ async function stableBrowserState(port, targetId = '', timeoutMs = 1800) {
         if (last.url === state.url && last.timeOrigin === state.timeOrigin) return state;
         last = state;
       }
-    } catch {}
+    } catch (error) { lastError = String(error?.message || error); }
     await sleep(90);
   }
   if (last?.url) return last;
-  throw new Error('PC_BROWSER_STATE_UNAVAILABLE');
+  throw new Error(`PC_BROWSER_STATE_UNAVAILABLE${lastError ? `:${lastError}` : ''}`);
 }
 function stateChanged(before = {}, after = {}) { return before.url !== after.url || before.title !== after.title || before.timeOrigin !== after.timeOrigin || before.textMarker !== after.textMarker || before.active !== after.active; }
 async function waitForStateChange(port, before, timeoutMs = 2800, targetId = '') {
