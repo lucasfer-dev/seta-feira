@@ -175,8 +175,22 @@ jobs:
           ! grep -Eq "Page\.setDownloadBehavior|DOM\.setFileInputFiles" agent/browser-agent.mjs
       - name: Check audio resampler
         run: node --check public/audio-resampler.js
-      - name: Test voice contracts and tool safety
-        run: node --test tests/*.test.mjs
+      - name: Test agent contracts
+        run: node --test tests/agent-auth.test.mjs tests/agent-runtime.test.mjs tests/app-resolver.test.mjs
+      - name: Test Android policy
+        run: node --test tests/android-hands-policy.test.mjs
+      - name: Test audio contracts
+        run: node --test tests/audio-resampler.test.mjs tests/voice-output-jitter-guard.test.mjs tests/voice-output-ring-buffer.test.mjs
+      - name: Test desktop contracts
+        run: node --test tests/desktop-native-pairing.test.mjs tests/pc-command-protocol.test.mjs tests/pc-desktop-policy.test.mjs tests/reliability-windows-access.test.mjs tests/screen-permission-fallback.test.mjs
+      - name: Test intelligence contracts
+        run: node --test tests/mcp-client.test.mjs tests/personality-contract.test.mjs tests/tool-policy.test.mjs tests/v4-1-operational.test.mjs tests/v4-contracts.test.mjs
+      - name: Test vision fallback
+        run: node --test tests/local-vision-fallback.test.mjs
+      - name: Test voice contracts
+        run: node --test tests/voice-core-v10-contract.test.mjs tests/voice-tool-continuation-playback.test.mjs
+      - name: Test web DOM contract
+        run: node --test tests/web-dom-contract.test.mjs
       - name: Check legacy shell syntax
         run: node --check public/sexta-shell-v2.js
       - name: Check audio worklets
