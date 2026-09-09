@@ -37,7 +37,13 @@ function runPowerShell(script, timeout = 8000) {
   });
 }
 
-function psString(value = '') { return `'${String(value).replace(/'/g, "''")}'`; }
+function psString(value = '') {
+  const text = String(value);
+  // PowerShell 5.1 may decode redirected stdin before InputEncoding is applied.
+  // Render non-ASCII values as UTF-16 code units, preserving Portuguese literally.
+  if (/[^\x20-\x7e]/.test(text)) return `(-join [char[]]@(${text.split('').map(c => c.charCodeAt(0)).join(',')}))`;
+  return `'${text.replace(/'/g, "''")}'`;
+}
 function parseJson(text, fallback = {}) {
   try { return JSON.parse(String(text || '').trim()); } catch { throw new Error('PC_WINDOWS_INVALID_RESPONSE'); }
 }

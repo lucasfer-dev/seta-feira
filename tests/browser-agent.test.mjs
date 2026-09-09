@@ -7,6 +7,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import * as browser from '../agent/browser-agent.mjs';
+import { fileURLToPath } from 'node:url';
+import heartbeatHandler from '../api/device-heartbeat.js';
+import pollHandler from '../api/agent-poll.js';
+import resultHandler from '../api/agent-result.js';
+import { getDevices } from '../lib/core.mjs';
+import { executePcDesktopTool } from '../lib/pc-desktop-tools.mjs';
 
 const executable = process.env.SEXTA_TEST_BROWSER;
 const delay = ms => new Promise(r => setTimeout(r, ms));
@@ -19,7 +25,8 @@ const page = `<!doctype html><title>SEXTA fixture</title><h1>Home</h1>
 <button onclick="document.querySelector('#settings').remove()">Alterar</button>`;
 
 test('real CDP: observe, act, verify; stale IDs and sensitive controls fail closed', {skip: !executable && 'Set SEXTA_TEST_BROWSER to a real Chrome/Edge/Chromium executable', timeout: 90000}, async t => {
-  const server = http.createServer((req,res)=>{res.setHeader('Content-Type','text/html; charset=utf-8'); res.end(req.url==='/second'?'<title>Second</title><h1>Envista</h1>':page);});
+  const routes = new Map([['/api/device-heartbeat',heartbeatHandler],['/api/agent-poll',pollHandler],['/api/agent-result',resultHandler]]);
+  const server = http.createServer((req,res)=>{const route=routes.get(new URL(req.url,'http://localhost').pathname);if(route){route(req,res).catch(e=>{res.statusCode=500;res.end(e.message);});return;}res.setHeader('Content-Type','text/html; charset=utf-8'); res.end(req.url==='/second'?'<title>Second</title><h1>Envista</h1>':page);});
   await new Promise(r=>server.listen(0,'127.0.0.1',r));
   const port = await freePort();
   const profile = await fs.mkdtemp(path.join(os.tmpdir(),'sexta-cdp-test-'));
@@ -56,4 +63,28 @@ test('real CDP: observe, act, verify; stale IDs and sensitive controls fail clos
   const reloaded=ok(await browser.browserReload(cfg));assert.notEqual(reloaded.before.documentId,reloaded.after.documentId);
   ok(await browser.browserBack(cfg));snap=ok(await browser.browserSnapshot(cfg));
   assert.equal((await browser.browserClick(cfg,id('Nada'))).ok,false,'a dispatched no-op is not success');
+  await t.test('real Web Core queue -> authenticated poll -> PC Agent -> CDP -> result', async () => {
+    // Mount production API handlers and launch the production Agent. No fake command acknowledgments.
+    const configPath=path.join(profile,'agent-config.json');
+    const statePath=path.join(profile,'agent-state.json');
+    await fs.writeFile(configPath,JSON.stringify(cfg));
+    await fs.writeFile(statePath,JSON.stringify({autonomy:'autonomous',privacy:{hardware:false}}));
+    const deviceId=`test-agent-${process.pid}`;
+    const agent=spawn(process.execPath,[fileURLToPath(new URL('../agent/agent-v3.mjs',import.meta.url))],{
+      env:{...process.env,SEXTA_BASE_URL:url.slice(0,-1),SEXTA_DEVICE_ID:deviceId,SEXTA_AGENT_CONFIG:configPath,SEXTA_AGENT_STATE:statePath,SEXTA_AGENT_AUDIT:path.join(profile,'audit.log'),SEXTA_SECURE_VAULT:path.join(profile,'vault.json')},stdio:'ignore'
+    });
+    try {
+      let online=false;
+      for(let i=0;i<70;i++){online=(await getDevices()).some(d=>d.device_id===deviceId&&d.online);if(online)break;await delay(100);}
+      assert.ok(online,'Agent must heartbeat through production handler');
+      const run=(name,args={})=>executePcDesktopTool(name,args,{agentInternal:true});
+      ok(await run('pc_browser_open',{url}));
+      let observed=ok(await run('pc_browser_snapshot')).result;
+      const field=observed.elements.find(e=>e.id==='search').index;
+      ok(await run('pc_browser_type',{index:field,text:'Lucas'}));
+      observed=ok(await run('pc_browser_snapshot')).result;
+      const failed=await run('pc_browser_click',{index:observed.elements.find(e=>e.text==='Pagar').index});
+      assert.equal(failed.ok,false);assert.equal(failed.state,'failed');assert.equal(failed.result.verified,false);
+    } finally { agent.kill(); }
+  });
 });
