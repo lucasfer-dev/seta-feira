@@ -5,36 +5,41 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>SEXTA Presence</title>
 <style>
-  *{box-sizing:border-box} html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;font-family:Segoe UI,system-ui,sans-serif;color:white}
-  .island{width:100%;height:100%;border:1px solid rgba(255,255,255,.11);border-radius:22px;background:rgba(8,12,20,.88);backdrop-filter:blur(18px);display:flex;align-items:center;gap:12px;padding:10px 14px;box-shadow:0 12px 30px rgba(0,0,0,.32);user-select:none;cursor:pointer}
-  .orb{position:relative;width:42px;height:42px;min-width:42px;border-radius:50%;border:1px solid rgba(103,232,249,.5);box-shadow:0 0 24px rgba(103,232,249,.22),inset 0 0 18px rgba(103,232,249,.12);transition:.22s ease}
-  .orb:before,.orb:after{content:"";position:absolute;inset:6px;border-radius:50%;border:1px solid rgba(103,232,249,.36)}
-  .orb:after{inset:13px;background:rgba(103,232,249,.55);border:0;box-shadow:0 0 16px rgba(103,232,249,.5)}
-  .text{min-width:0}.name{font-size:10px;letter-spacing:.16em;color:rgba(255,255,255,.46);text-transform:uppercase}.state{font-size:13px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sub{font-size:10px;color:rgba(255,255,255,.4);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  body[data-state="listening"] .orb{transform:scale(1.06);box-shadow:0 0 30px rgba(103,232,249,.38),inset 0 0 20px rgba(103,232,249,.16)}
-  body[data-state="thinking"] .orb:before{animation:spin 1.1s linear infinite;border-style:dashed}
-  body[data-state="speaking"] .orb:after{animation:pulse .48s ease-in-out infinite alternate}
-  body[data-state="acting"] .orb{border-color:rgba(167,139,250,.75);box-shadow:0 0 30px rgba(167,139,250,.3)}
-  body[data-state="reconnecting"] .orb{animation:pulse .8s ease-in-out infinite alternate}
-  body[data-state="error"] .orb{border-color:rgba(248,113,113,.8);box-shadow:0 0 28px rgba(248,113,113,.34)}
-  @keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{to{transform:scale(1.18);opacity:.72}}
+  *{box-sizing:border-box}
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;font-family:Inter,"Segoe UI",system-ui,sans-serif;color:#eef9fc}
+  .island{position:relative;width:100%;height:100%;display:flex;align-items:center;gap:12px;padding:9px 13px;border:1px solid rgba(141,234,255,.14);border-radius:20px;background:linear-gradient(145deg,rgba(7,12,18,.93),rgba(5,9,14,.88));backdrop-filter:blur(20px);box-shadow:0 14px 34px rgba(0,0,0,.35),inset 0 0 24px rgba(141,234,255,.02);user-select:none;cursor:pointer;transition:.18s ease}
+  .island:hover{border-color:rgba(141,234,255,.28);transform:translateY(-1px)}
+  .orb{position:relative;width:42px;height:42px;min-width:42px;border-radius:50%;display:grid;place-items:center;border:1px solid rgba(141,234,255,.26);box-shadow:0 0 24px rgba(73,191,220,.14),inset 0 0 18px rgba(0,0,0,.65)}
+  .orb:before{content:"";position:absolute;inset:-5px;border-radius:50%;border:1px dashed rgba(141,234,255,.14)}
+  .eye{width:52%;height:8%;border-radius:50%;background:#8deaff;box-shadow:0 0 8px rgba(141,234,255,.88),0 0 18px rgba(141,234,255,.26);transition:.16s ease}
+  .text{min-width:0;flex:1}.name{display:flex;align-items:center;gap:7px;font:700 9px/1 "Courier New",monospace;letter-spacing:.18em;color:rgba(224,242,247,.42)}
+  .name i{width:5px;height:5px;border-radius:50%;background:#6ee7b7;box-shadow:0 0 8px rgba(110,231,183,.6)}
+  .state{font-size:13px;font-weight:600;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sub{font-size:9px;color:rgba(224,242,247,.38);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  body[data-state="listening"] .orb,body[data-state="user_speaking"] .orb{box-shadow:0 0 30px rgba(73,191,220,.28),inset 0 0 18px rgba(0,0,0,.65)}
+  body[data-state="user_speaking"] .eye{width:68%;height:12%}
+  body[data-state="thinking"] .orb:before{animation:spin 1.2s linear infinite;border-color:rgba(141,234,255,.35)}
+  body[data-state="speaking"] .eye{animation:pulse .6s ease-in-out infinite alternate}
+  body[data-state="acting"] .island,body[data-state="tool"] .island{border-color:rgba(255,182,91,.25)}
+  body[data-state="acting"] .orb,body[data-state="tool"] .orb{border-color:rgba(255,182,91,.4);box-shadow:0 0 26px rgba(255,182,91,.16)}
+  body[data-state="acting"] .eye,body[data-state="tool"] .eye{background:#ffb65b;box-shadow:0 0 10px rgba(255,182,91,.6)}
+  body[data-state="reconnecting"] .orb:before{animation:spin .9s linear infinite}
+  body[data-state="error"] .island{border-color:rgba(255,113,107,.3)}
+  body[data-state="error"] .eye{background:#ff716b;box-shadow:0 0 10px rgba(255,113,107,.6)}
+  @keyframes spin{to{transform:rotate(360deg)}}@keyframes pulse{to{transform:scaleX(1.22);opacity:.7}}
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
 <body data-state="standby">
-  <div class="island" id="island" role="button" aria-label="Abrir SEXTA">
-    <div class="orb"></div>
-    <div class="text"><div class="name">SEXTA</div><div class="state" id="state">Pronta</div><div class="sub" id="sub">Clique para abrir</div></div>
+  <div class="island" id="island" role="button" tabindex="0" aria-label="Abrir SEXTA">
+    <div class="orb"><div class="eye"></div></div>
+    <div class="text"><div class="name"><i></i>SEXTA / PRESENCE</div><div class="state" id="state">Pronta</div><div class="sub" id="sub">Clique para abrir</div></div>
   </div>
 <script>
 (() => {
-  const labels={standby:'Pronta',listening:'Ouvindo…',thinking:'Pensando…',speaking:'Falando…',acting:'Executando…',reconnecting:'Reconectando…',error:'Atenção necessária'};
-  const stateEl=document.querySelector('#state'); const sub=document.querySelector('#sub');
-  window.sextaDesktop?.presence?.onUpdate?.(detail=>{
-    const state=String(detail?.state||'standby'); document.body.dataset.state=state; stateEl.textContent=labels[state]||state;
-    sub.textContent=detail?.tool?String(detail.tool).replace(/^pc_|^android_/,'').replaceAll('_',' '):'Clique para abrir';
-  });
-  document.querySelector('#island')?.addEventListener('click',()=>window.sextaDesktop?.overlay?.open?.());
+  const labels={standby:'Pronta',off:'Pronta',connecting:'Conectando…',listening:'Ouvindo…',user_speaking:'Ouvindo você…',thinking:'Pensando…',speaking:'Respondendo…',acting:'Executando…',tool:'Executando…',reconnecting:'Reconectando…',recovering:'Reconectando…',error:'Atenção necessária'};
+  const stateEl=document.querySelector('#state'); const sub=document.querySelector('#sub'); const island=document.querySelector('#island');
+  window.sextaDesktop?.presence?.onUpdate?.(detail=>{const state=String(detail?.state||'standby');document.body.dataset.state=state;stateEl.textContent=labels[state]||state;sub.textContent=detail?.tool?String(detail.tool).replace(/^pc_|^android_/,'').replaceAll('_',' '):'Clique para abrir';});
+  const open=()=>window.sextaDesktop?.overlay?.open?.();island?.addEventListener('click',open);island?.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();open();}});
 })();
 </script>
 </body>
