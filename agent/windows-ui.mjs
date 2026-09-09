@@ -46,11 +46,19 @@ const uiPrelude = String.raw`
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName WindowsBase
+Add-Type -AssemblyName UIAutomationClientsideProviders
+[System.Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly([UIAutomationClientsideProviders.UIAutomationClientSideProviders].Assembly.GetName())
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 public static class SextaWin32 {
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s,int n);
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h,int index);
+  public static bool Password(int handle) {
+    var name=new System.Text.StringBuilder(256);var h=new IntPtr(handle);GetClassName(h,name,256);
+    return name.ToString().IndexOf("edit",StringComparison.OrdinalIgnoreCase)>=0 && (GetWindowLong(h,-16)&32)!=0;
+  }
 }
 "@
 $handle = [SextaWin32]::GetForegroundWindow()
@@ -58,6 +66,7 @@ if ($handle -eq [IntPtr]::Zero) { throw 'PC_UI_NO_FOREGROUND_WINDOW' }
 $root = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
 if ($null -eq $root) { throw 'PC_UI_ROOT_UNAVAILABLE' }
 $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+function Test-SextaPassword($node) { return ($node.Current.IsPassword -or [SextaWin32]::Password($node.Current.NativeWindowHandle)) }
 `;
 
 const windowPrelude = String.raw`
@@ -157,7 +166,7 @@ $readErrors = New-Object System.Collections.ArrayList
 function Walk-Sexta([System.Windows.Automation.AutomationElement]$node, [int]$depth) {
   if ($null -eq $node -or $items.Count -ge ${max} -or $depth -gt 12) { return }
   try {
-    $isPassword = [bool]$node.Current.IsPassword
+    $isPassword = [bool](Test-SextaPassword $node)
     $rect = $node.Current.BoundingRectangle
     $name = if ($isPassword) { '[password]' } else { [string]$node.Current.Name }
     [void]$items.Add([pscustomobject]@{
@@ -213,8 +222,8 @@ if ($null -eq $match) { $match = $fuzzy }
 if ($null -eq $match) { throw 'PC_UI_CONTROL_NOT_FOUND' }
 $name = [string]$match.Current.Name
 if ([SextaWin32]::GetForegroundWindow() -ne $handle) { throw 'PC_UI_FOREGROUND_CHANGED' }
-if ($match.Current.IsPassword) { throw 'PC_UI_PASSWORD_FIELD_BLOCKED' }
-if (${psString(SENSITIVE.source)} -and $name -match ${psString(SENSITIVE.source)}) { throw 'PC_UI_SENSITIVE_CONTROL_BLOCKED' }
+if ((Test-SextaPassword $match)) { throw 'PC_UI_PASSWORD_FIELD_BLOCKED' }
+if (${psString(SENSITIVE.source)} -and ($name + ' ' + [string]$match.Current.AutomationId) -match ${psString(SENSITIVE.source)}) { throw 'PC_UI_SENSITIVE_CONTROL_BLOCKED' }
 $done = $false; $via = ''
 try { $p = $match.GetCurrentPattern([System.Windows.Automation.InvokePatternIdentifiers]::Pattern); if ($p) { $p.Invoke(); $done=$true; $via='invoke' } } catch {}
 if (-not $done) { try { $p = $match.GetCurrentPattern([System.Windows.Automation.SelectionItemPatternIdentifiers]::Pattern); if ($p) { $p.Select(); $done=$true; $via='selection' } } catch {} }
@@ -257,21 +266,25 @@ if ([string]::IsNullOrWhiteSpace($needle)) {
   try { $match = [System.Windows.Automation.AutomationElement]::FocusedElement } catch {}
 }
 if ($null -eq $match -or -not [string]::IsNullOrWhiteSpace($needle)) {
-  $queue = New-Object System.Collections.Queue; $queue.Enqueue($root); $count=0
+  $queue = New-Object System.Collections.Queue; $queue.Enqueue($root); $count=0; $fuzzy=$null
   while ($queue.Count -gt 0 -and $count -lt 700 -and $null -eq $match) {
     $node=[System.Windows.Automation.AutomationElement]$queue.Dequeue(); $count++
     try {
       $type=[string]$node.Current.ControlType.ProgrammaticName; $name=([string]$node.Current.Name).ToLowerInvariant(); $id=([string]$node.Current.AutomationId).ToLowerInvariant()
-      if ($type -eq 'ControlType.Edit' -and ([string]::IsNullOrWhiteSpace($needle) -or $name.Contains($needle) -or $id.Contains($needle))) { $match=$node; break }
+      if ($type -eq 'ControlType.Edit' -or $type -eq 'ControlType.Document') {
+        if ([string]::IsNullOrWhiteSpace($needle) -or $name -eq $needle -or $id -eq $needle) {$match=$node;break}
+        if ($null -eq $fuzzy -and ($name.Contains($needle) -or $id.Contains($needle))) {$fuzzy=$node}
+      }
     } catch {}
     $child=$walker.GetFirstChild($node); while ($null -ne $child) { $queue.Enqueue($child); $child=$walker.GetNextSibling($child) }
   }
 }
+if ($null -eq $match) {$match=$fuzzy}
 if ($null -eq $match) { throw 'PC_UI_EDIT_NOT_FOUND' }
 $ancestor=$match;$inside=$false
 for($i=0;$i -lt 30 -and $null -ne $ancestor;$i++){if($ancestor.Equals($root)){$inside=$true;break};$ancestor=$walker.GetParent($ancestor)}
 if(-not $inside){throw 'PC_UI_TARGET_OUTSIDE_WINDOW'}
-$isPassword=[bool]$match.Current.IsPassword
+$isPassword=[bool](Test-SextaPassword $match)
 if ($isPassword) { throw 'PC_UI_PASSWORD_FIELD_BLOCKED' }
 if (-not $match.Current.IsEnabled -or [string]$match.Current.ControlType.ProgrammaticName -notmatch 'ControlType.Edit|ControlType.Document') { throw 'PC_UI_NOT_EDITABLE' }
 if ([SextaWin32]::GetForegroundWindow() -ne $handle) { throw 'PC_UI_FOREGROUND_CHANGED' }
@@ -282,7 +295,7 @@ $before=if($p){[string]$p.Current.Value}else{''}
 $via='value'
 if($p){$p.SetValue($value)}else{
  $match.SetFocus()
- if(-not $match.Current.HasKeyboardFocus -or $match.Current.IsPassword){throw 'PC_UI_FOCUS_FAILED'}
+ if(-not $match.Current.HasKeyboardFocus -or (Test-SextaPassword $match)){throw 'PC_UI_FOCUS_FAILED'}
  Add-Type -AssemblyName System.Windows.Forms
  # Literal per-character escaping prevents text from becoming a SendKeys shortcut.
  $escaped= -join ($value.ToCharArray() | ForEach-Object {if('+^%~()[]{}'.Contains([string]$_)){'{'+[string]$_+'}'}elseif([int]$_ -lt 32){throw 'PC_UI_CONTROL_CHARACTER_BLOCKED'}else{[string]$_}})
@@ -293,7 +306,7 @@ if($p){$p.SetValue($value)}else{
 $verified=$false;$after=''
 for($i=0;$i -lt 8 -and -not $verified;$i++){
  Start-Sleep -Milliseconds 100
- if($match.Current.IsPassword){throw 'PC_UI_PASSWORD_FIELD_BLOCKED'}
+ if((Test-SextaPassword $match)){throw 'PC_UI_PASSWORD_FIELD_BLOCKED'}
  if($p){$after=[string]$p.Current.Value}else{
   try{$tp=$match.GetCurrentPattern([System.Windows.Automation.TextPatternIdentifiers]::Pattern);$after=$tp.DocumentRange.GetText(4001).TrimEnd([char]13,[char]10)}catch{throw 'PC_UI_INPUT_UNVERIFIABLE'}
  }
@@ -338,7 +351,7 @@ async function hotkey(shortcut) {
   if (!send) throw new Error('PC_UI_HOTKEY_NOT_ALLOWED');
   const script = uiPrelude + String.raw`
 $focused=[System.Windows.Automation.AutomationElement]::FocusedElement
-if($focused -and $focused.Current.IsPassword){throw 'PC_UI_PASSWORD_FIELD_BLOCKED'}
+if($focused -and (Test-SextaPassword $focused)){throw 'PC_UI_PASSWORD_FIELD_BLOCKED'}
 if([SextaWin32]::GetForegroundWindow() -ne $handle){throw 'PC_UI_FOREGROUND_CHANGED'}
 Add-Type -AssemblyName System.Windows.Forms
 [System.Windows.Forms.SendKeys]::SendWait(${psString(send)})
