@@ -89,7 +89,7 @@ using System.Text;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 public class SextaWindow {
- public long handle; public uint pid; public string title; public bool minimized; public bool maximized; public bool active;
+ public long handle; public uint pid; public string title; public string process; public bool minimized; public bool maximized; public bool active;
 }
 public static class SextaFocus {
  public delegate bool EnumProc(IntPtr h, IntPtr p);
@@ -109,7 +109,7 @@ public static class SextaFocus {
  public static SextaWindow[] List() {
   var result = new List<SextaWindow>();
   EnumWindows((h,p)=>{ var text=new StringBuilder(1024); GetWindowText(h,text,text.Capacity);
-   if(IsWindowVisible(h)&&text.Length>0) {uint pid;GetWindowThreadProcessId(h,out pid);result.Add(new SextaWindow {handle=h.ToInt64(),pid=pid,title=text.ToString(),minimized=IsIconic(h),maximized=IsZoomed(h),active=h==GetForegroundWindow()});} return true;},IntPtr.Zero);
+   if(IsWindowVisible(h)&&text.Length>0) {uint pid;GetWindowThreadProcessId(h,out pid);string process="";try{using(var app=System.Diagnostics.Process.GetProcessById((int)pid)){process=app.ProcessName;}}catch{}result.Add(new SextaWindow {process=process,handle=h.ToInt64(),pid=pid,title=text.ToString(),minimized=IsIconic(h),maximized=IsZoomed(h),active=h==GetForegroundWindow()});} return true;},IntPtr.Zero);
   return result.ToArray();
  }
  public static bool Focus(long handle) {
@@ -166,7 +166,7 @@ if ($matches.Count -ne 1) {
  }
  $after=([SextaFocus]::List() | Where-Object active | Select-Object -First 1)
  $focused=$focused -and $null -ne $after -and $after.handle -eq $selected.handle -and -not $after.minimized
- [pscustomobject]@{ok=[bool]$focused;state=$(if($focused){'completed'}else{'failed'});action='window_focus';verified=[bool]$focused;focused=[bool]$focused;before=$before;after=$after;target=$selected;error=$(if(-not $focused){'PC_WINDOW_FOCUS_DENIED'}else{$null});reason=$(if(-not $focused){'PC_WINDOW_FOCUS_DENIED'}else{$null});observedState=$after} | ConvertTo-Json -Depth 6 -Compress
+ [pscustomobject]@{ok=[bool]$focused;state=$(if($focused){'completed'}else{'failed'});action='window_focus';verified=[bool]$focused;focused=[bool]$focused;title=$selected.title;pid=$selected.pid;process=$selected.process;before=$before;after=$after;target=$selected;error=$(if(-not $focused){'PC_WINDOW_FOCUS_DENIED'}else{$null});reason=$(if(-not $focused){'PC_WINDOW_FOCUS_DENIED'}else{$null});observedState=$after} | ConvertTo-Json -Depth 6 -Compress
 }
 `, 12000));
 }
@@ -185,6 +185,7 @@ function Walk-Sexta([System.Windows.Automation.AutomationElement]$node, [int]$de
     [void]$items.Add([pscustomobject]@{
       value = $(if(-not $isPassword){try{$vp=$node.GetCurrentPattern([System.Windows.Automation.ValuePatternIdentifiers]::Pattern);[string]$vp.Current.Value}catch{''}}else{'[password]'});
       toggle = $(try{$tp=$node.GetCurrentPattern([System.Windows.Automation.TogglePatternIdentifiers]::Pattern);[string]$tp.Current.ToggleState}catch{''});
+      expanded = $(try{$ep=$node.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePatternIdentifiers]::Pattern);[string]$ep.Current.ExpandCollapseState}catch{''});
       selected = $(try{$sp=$node.GetCurrentPattern([System.Windows.Automation.SelectionItemPatternIdentifiers]::Pattern);$sp.Current.IsSelected}catch{$false});
       scroll = $(try{$sp=$node.GetCurrentPattern([System.Windows.Automation.ScrollPatternIdentifiers]::Pattern);$sp.Current.VerticalScrollPercent}catch{-1});
       index = $items.Count; depth = $depth; name = $name; automationId = [string]$node.Current.AutomationId;
@@ -238,10 +239,21 @@ if ([SextaWin32]::GetForegroundWindow() -ne $handle) { throw 'PC_UI_FOREGROUND_C
 if ((Test-SextaPassword $match)) { throw 'PC_UI_PASSWORD_FIELD_BLOCKED' }
 if (${psString(SENSITIVE.source)} -and ($name + ' ' + [string]$match.Current.AutomationId) -match ${psString(SENSITIVE.source)}) { throw 'PC_UI_SENSITIVE_CONTROL_BLOCKED' }
 $done = $false; $via = ''
-try { $p = $match.GetCurrentPattern([System.Windows.Automation.InvokePatternIdentifiers]::Pattern); if ($p) { $p.Invoke(); $done=$true; $via='invoke' } } catch {}
-if (-not $done) { try { $p = $match.GetCurrentPattern([System.Windows.Automation.SelectionItemPatternIdentifiers]::Pattern); if ($p) { $p.Select(); $done=$true; $via='selection' } } catch {} }
-if (-not $done) { try { $p=$match.GetCurrentPattern([System.Windows.Automation.TogglePatternIdentifiers]::Pattern); if($p){$p.Toggle();$done=$true;$via='toggle'} } catch {} }
-if (-not $done) { try { $p = $match.GetCurrentPattern([System.Windows.Automation.LegacyIAccessiblePatternIdentifiers]::Pattern); if ($p) { $p.DoDefaultAction(); $done=$true; $via='legacy' } } catch {} }
+# Acquire a supported pattern first. Never replay a possibly executed action after an invocation error.
+foreach($kind in @('invoke','selection','toggle','expand','legacy')) {
+ $patternId=switch($kind){
+  'invoke'{[System.Windows.Automation.InvokePatternIdentifiers]::Pattern}
+  'selection'{[System.Windows.Automation.SelectionItemPatternIdentifiers]::Pattern}
+  'toggle'{[System.Windows.Automation.TogglePatternIdentifiers]::Pattern}
+  'expand'{[System.Windows.Automation.ExpandCollapsePatternIdentifiers]::Pattern}
+  'legacy'{[System.Windows.Automation.LegacyIAccessiblePatternIdentifiers]::Pattern}
+ }
+ $p=$null
+ if($match.TryGetCurrentPattern($patternId,[ref]$p)){
+  switch($kind){'invoke'{$p.Invoke()};'selection'{$p.Select()};'toggle'{$p.Toggle()};'expand'{$p.Expand()};'legacy'{$p.DoDefaultAction()}}
+  $done=$true;$via=$kind;break
+ }
+}
 if (-not $done) {
  if ([SextaWin32]::GetForegroundWindow() -ne $handle) { throw 'PC_UI_FOREGROUND_CHANGED' }
  $r=$match.Current.BoundingRectangle
@@ -425,6 +437,16 @@ async function verifiedUiAction(action, operation) {
     return { ok: false, state: 'failed', action, verified: false, error: error.message, reason: error.message, before, observedState: after || {} };
   }
 }
-export async function uiClickText(text) { return verifiedUiAction('ui_click_text', () => clickText(text)); }
+export async function uiClickText(text) {
+  return verifiedUiAction('ui_click_text', async () => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try { return await clickText(text); }
+      catch (error) {
+        if (!/PC_UI_CONTROL_NOT_FOUND/.test(error.message) || attempt === 2) throw error;
+        await new Promise(resolve => setTimeout(resolve, 150));
+      }
+    }
+  });
+}
 export async function uiScroll(direction, amount) { return verifiedUiAction('ui_scroll', () => scroll(direction, amount)); }
 export async function uiHotkey(shortcut) { return verifiedUiAction('ui_hotkey', () => hotkey(shortcut)); }

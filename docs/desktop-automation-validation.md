@@ -16,6 +16,10 @@ O campo `status: loaded` indica carregamento verificado, não código HTTP nem a
 
 Os índices de elementos devem vir do snapshot mais recente, inclusive do novo snapshot retornado por click/type. Não reutilize índices anteriores. URLs sem protocolo recebem `https://`; outros protocolos e credenciais embutidas são bloqueados.
 
+## Evidência de integração
+
+Os runners do GitHub executaram Chrome e Edge reais, e Windows UI Automation com Windows Forms. Também foi exercitado o transporte de produção: declaração desktop → fila Web Core → endpoint autenticado de poll → processo PC Agent → CDP → endpoint de resultado. O teste confirma que um bloqueio sensível volta como falha, sem `completed` inventado. As execuções ficam vinculadas ao PR #47.
+
 ## Testes executáveis
 
 ```powershell
