@@ -18,7 +18,7 @@ test('Windows real UIA: window enumeration, partial focus, minimized restore, cl
  for(let i=0;i<10;i++){windows=await ui.windowList(30);if(windows.windows.some(w=>w.title.includes(title)))break;await delay(200);}
  const window=windows.windows.find(w=>w.title.includes(title));assert.ok(window);
  let focus=await ui.focusWindow(title);assert.equal(focus.verified,true,JSON.stringify(focus));
- let tree=await ui.uiTree(180);assert.ok(tree.nodes.some(n=>n.name==='Pesquisar'));assert.doesNotMatch(JSON.stringify(tree),/SECRET-NEVER-EXPOSE/);
+ let tree=await ui.uiTree(180);assert.ok(tree.nodes.some(n=>n.name==='Pesquisar'),JSON.stringify(tree));assert.doesNotMatch(JSON.stringify(tree),/SECRET-NEVER-EXPOSE/);
  const typed=await ui.uiTypeText('Lucas','Pesquisar');assert.equal(typed.verified,true,JSON.stringify(typed));
  await assert.rejects(()=>ui.uiTypeText('blocked','Senha'),/PASSWORD/);
  const click=await ui.uiClickText('Configurações');assert.equal(click.verified,true,JSON.stringify(click));

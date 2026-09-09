@@ -283,7 +283,7 @@ async function elementAction(cfg, action, index, text) {
       if(${SENSITIVE}.test(label)) return {error:'PC_BROWSER_SENSITIVE_CONTROL_BLOCKED'};
       if(${JSON.stringify(action)}==='browser_click') {
         if(!label.trim()) return {error:'PC_BROWSER_UNLABELED_CONTROL_BLOCKED'};
-        if(el.type==='submit'||el.type==='image'||(el.tagName==='BUTTON'&&el.form&&el.type!=='button')||el.hasAttribute('download')) return {error:'PC_BROWSER_SENSITIVE_CONTROL_BLOCKED'};
+        if((el.form&&(el.type==='submit'||el.type==='image'||(el.tagName==='BUTTON'&&el.type!=='button')))||el.hasAttribute('download')) return {error:'PC_BROWSER_SENSITIVE_CONTROL_BLOCKED'};
         if(el.tagName==='A'&&!/^https?:$/.test(new URL(el.href).protocol)) return {error:'PC_BROWSER_URL_BLOCKED'};
         el.scrollIntoView({block:'center'}); el.click(); return {acted:true};
       }

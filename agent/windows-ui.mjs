@@ -45,6 +45,7 @@ function parseJson(text, fallback = {}) {
 const uiPrelude = String.raw`
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+Add-Type -AssemblyName WindowsBase
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -152,6 +153,7 @@ export async function uiTree(maxNodes = 120) {
   const max = Math.max(20, Math.min(180, Number(maxNodes) || 120));
   const script = uiPrelude + String.raw`
 $items = New-Object System.Collections.ArrayList
+$readErrors = New-Object System.Collections.ArrayList
 function Walk-Sexta([System.Windows.Automation.AutomationElement]$node, [int]$depth) {
   if ($null -eq $node -or $items.Count -ge ${max} -or $depth -gt 12) { return }
   try {
@@ -169,7 +171,7 @@ function Walk-Sexta([System.Windows.Automation.AutomationElement]$node, [int]$de
       boundingRectangle = @{x=$rect.X;y=$rect.Y;width=$rect.Width;height=$rect.Height};
       x = [int]$rect.X; y = [int]$rect.Y; width = [int]$rect.Width; height = [int]$rect.Height
     })
-  } catch {}
+  } catch { [void]$readErrors.Add($_.Exception.Message) }
   $child = $walker.GetFirstChild($node)
   while ($null -ne $child -and $items.Count -lt ${max}) {
     Walk-Sexta $child ($depth + 1)
@@ -177,7 +179,7 @@ function Walk-Sexta([System.Windows.Automation.AutomationElement]$node, [int]$de
   }
 }
 Walk-Sexta $root 0
-[pscustomobject]@{ window = [string]$root.Current.Name; nodes = @($items); count = $items.Count } | ConvertTo-Json -Depth 5 -Compress
+[pscustomobject]@{ window = [string]$root.Current.Name; nodes = @($items); count = $items.Count; readErrors=@($readErrors) } | ConvertTo-Json -Depth 5 -Compress
 `;
   return parseJson(await runPowerShell(script, 10000), {});
 }
