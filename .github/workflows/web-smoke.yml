@@ -204,3 +204,9 @@ jobs:
           node --check api/health.js
           grep -q "4.1.0-operational" api/health.js
           grep -q "cronStrongAuth" api/health.js
+      - name: Test all modules
+        run: node --test tests/*.test.mjs
+      - name: Real Chrome CDP integration
+        env:
+          SEXTA_TEST_BROWSER: /usr/bin/google-chrome
+        run: node --test tests/browser-agent.test.mjs
