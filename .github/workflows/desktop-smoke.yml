@@ -76,6 +76,7 @@ jobs:
           node --check api/sync.js
           node --check apps/desktop-electron/secure-main.cjs
           node --check apps/desktop-electron/main.cjs
+          node --check apps/desktop-electron/windows-habitat.cjs
           node --check apps/desktop-electron/preload.cjs
       - name: Verify Windows automation and v4.1 assemblies
         shell: powershell
@@ -118,10 +119,13 @@ jobs:
           if (-not $pkg.scripts.dist) { throw 'Desktop dist script missing' }
           if (-not $pkg.dependencies.'electron-updater') { throw 'electron-updater missing' }
           if (-not $pkg.build.publish) { throw 'GitHub update provider missing' }
+          if (-not ($pkg.build.files -contains 'windows-habitat.cjs')) { throw 'Windows habitat module missing from Desktop package' }
           $agentResource = @($pkg.build.extraResources | Where-Object { $_.to -eq 'agent' } | Select-Object -First 1)
           if (-not $agentResource -or -not ($agentResource.filter -contains 'app-resolver.mjs')) { throw 'Installed-app resolver missing from Desktop package' }
           if (-not (Test-Path apps/desktop-electron/fallback.html)) { throw 'Offline fallback missing' }
           if (-not (Test-Path .github/workflows/desktop-release.yml)) { throw 'Desktop release workflow missing' }
           Select-String -Path apps/desktop-electron/main.cjs -Pattern "autoDownload = false","scheduleAgentRestart","scheduleWakeRestart","system:pair-agent","SEXTA_AGENT_STATE","fallback.html" | Out-Null
-          Select-String -Path apps/desktop-electron/secure-main.cjs -Pattern "TRUSTED_ORIGIN","will-navigate","setPermissionRequestHandler" | Out-Null
+          Select-String -Path apps/desktop-electron/secure-main.cjs -Pattern "TRUSTED_ORIGIN","will-navigate","setPermissionRequestHandler","windows-habitat.cjs" | Out-Null
+          Select-String -Path apps/desktop-electron/windows-habitat.cjs -Pattern "globalShortcut.register","CommandOrControl+Shift+Space","habitat:command","habitat:voice-toggle","PALETTE_BOUNDS" | Out-Null
+          Select-String -Path apps/desktop-electron/preload.cjs -Pattern "habitat:toggle-palette","habitat:command","habitat:voice-toggle","habitat:open-main" | Out-Null
           Write-Host "Desktop operational config OK: $($pkg.version)"
