@@ -2,10 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let browserProcess = null;
 let selectedTargetId = null;
+const snapshots = new Map();
 
 function browserPort(cfg = {}) {
   return Math.max(1025, Math.min(65534, Number(cfg.browser?.debugPort) || 9223));
@@ -47,8 +49,7 @@ function executableCandidates(cfg = {}) {
 }
 
 function resolveBrowserExecutable(cfg = {}) {
-  const candidates = executableCandidates(cfg);
-  for (const candidate of candidates) {
+  for (const candidate of executableCandidates(cfg)) {
     if (/[/\\]/.test(candidate)) {
       if (fs.existsSync(candidate)) return candidate;
     } else {
@@ -106,14 +107,7 @@ async function pageTarget(port) {
   if (!pages.length) throw new Error('PC_BROWSER_NO_PAGE');
   const persisted = selectedTargetId || readPersistedSelection(port);
   const selected = persisted ? pages.find(item => item.id === persisted) : null;
-  // Em processos duplicados/recém-reiniciados, não deixe uma about:blank roubar o
-  // foco de uma página útil. A seleção também é persistida por porta para que
-  // Browser Agent e Agent local compartilhem a mesma aba preferida.
-  const target = (selected && usefulPage(selected))
-    ? selected
-    : pages.find(usefulPage)
-      || selected
-      || pages[0];
+  const target = (selected && usefulPage(selected)) ? selected : pages.find(usefulPage) || selected || pages[0];
   setSelectedTarget(port, target.id);
   return target;
 }
@@ -137,7 +131,7 @@ async function cdpCall(port, method, params = {}) {
     const timer = setTimeout(() => {
       try { ws.close(); } catch {}
       reject(new Error(`PC_BROWSER_CDP_TIMEOUT:${method}`));
-    }, 6000);
+    }, 7000);
     ws.addEventListener('open', () => ws.send(JSON.stringify({ id, method, params })));
     ws.addEventListener('error', () => {
       clearTimeout(timer);
@@ -155,15 +149,6 @@ async function cdpCall(port, method, params = {}) {
   });
 }
 
-const interactiveExpression = `(() => {
-  const visible = el => {
-    const s = getComputedStyle(el); const r = el.getBoundingClientRect();
-    return s.display !== 'none' && s.visibility !== 'hidden' && Number(s.opacity || 1) > 0 && r.width > 0 && r.height > 0;
-  };
-  const nodes = [...document.querySelectorAll('a,button,input,textarea,select,[role="button"],[role="link"],[role="checkbox"],[role="tab"],[contenteditable="true"]')].filter(visible).slice(0, 160);
-  return nodes;
-})()`;
-
 function parseEval(result) {
   const value = result?.result?.value;
   if (typeof value === 'string') {
@@ -176,34 +161,78 @@ async function evaluate(port, expression, returnByValue = true) {
   return cdpCall(port, 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue, userGesture: true });
 }
 
-async function waitForReady(port, timeoutMs = 4500) {
+async function browserState(port) {
+  const raw = await evaluate(port, `(() => JSON.stringify({
+    url: location.href,
+    title: document.title,
+    readyState: document.readyState,
+    timeOrigin: performance.timeOrigin || 0,
+    historyLength: history.length,
+    textMarker: String(document.body?.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 1800),
+    active: (() => { const e=document.activeElement; return e ? [e.tagName,e.id,e.getAttribute('name'),e.getAttribute('aria-label')].filter(Boolean).join('|') : ''; })()
+  }))())`);
+  return parseEval(raw) || {};
+}
+
+function stateChanged(before = {}, after = {}) {
+  return before.url !== after.url || before.title !== after.title || before.timeOrigin !== after.timeOrigin || before.textMarker !== after.textMarker || before.active !== after.active;
+}
+
+async function waitForReady(port, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
+  let last = {};
   while (Date.now() < deadline) {
     try {
-      const state = parseEval(await evaluate(port, 'document.readyState'));
-      if (state === 'complete' || state === 'interactive') return state;
+      last = await browserState(port);
+      if (last.readyState === 'complete' || last.readyState === 'interactive') return last;
     } catch {}
     await sleep(120);
   }
-  return 'timeout';
+  return last;
 }
 
-const SENSITIVE = /\b(?:send|submit|pay|purchase|buy|checkout|confirm|delete|remove|publish|post|transfer|wire|enviar|pagar|comprar|finalizar|confirmar|excluir|remover|publicar|transferir|assinar|subscribe|ok|yes|sim|accept|aceitar|allow|permitir)\b/i;
+async function waitForStateChange(port, before, timeoutMs = 2600) {
+  const deadline = Date.now() + timeoutMs;
+  let after = before;
+  while (Date.now() < deadline) {
+    try {
+      after = await browserState(port);
+      if (stateChanged(before, after)) return { changed: true, after };
+    } catch {}
+    await sleep(100);
+  }
+  try { after = await browserState(port); } catch {}
+  return { changed: stateChanged(before, after), after };
+}
+
+function normalizeHttpUrl(rawUrl) {
+  const input = String(rawUrl || '').trim();
+  if (!input) throw new Error('PC_BROWSER_URL_REQUIRED');
+  const candidate = /^[a-z][a-z0-9+.-]*:/i.test(input) ? input : `https://${input}`;
+  const url = new URL(candidate);
+  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('PC_BROWSER_URL_BLOCKED');
+  return url;
+}
+
+const SENSITIVE = /\b(?:send|submit|pay|purchase|buy|checkout|confirm|delete|remove|publish|post|transfer|wire|enviar|pagar|comprar|finalizar|confirmar|excluir|remover|publicar|transferir|assinar|subscribe)\b/i;
+
+function invalidateSnapshot(targetId) {
+  if (targetId) snapshots.delete(String(targetId));
+}
 
 export async function browserOpen(cfg, rawUrl) {
-  const url = new URL(String(rawUrl || ''));
-  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('PC_BROWSER_URL_BLOCKED');
+  const url = normalizeHttpUrl(rawUrl);
   const port = await ensureBrowser(cfg);
-  const before = await pageTarget(port);
-  setSelectedTarget(port, before.id);
+  const target = await pageTarget(port);
+  const before = await browserState(port).catch(() => ({ url: target.url, title: target.title }));
+  invalidateSnapshot(target.id);
   await cdpCall(port, 'Page.enable').catch(() => {});
   const result = await cdpCall(port, 'Page.navigate', { url: url.toString() });
-  await waitForReady(port, 5000);
-  await activateTarget(port, before.id).catch(() => {});
-  const pages = await pageTargets(port);
-  const target = pages.find(page => page.id === before.id) || await pageTarget(port);
-  setSelectedTarget(port, target.id);
-  return { opened: url.toString(), frameId: result.frameId || null, tabId: target.id, port, profile: browserProfile(cfg) };
+  const after = await waitForReady(port, 7000);
+  await activateTarget(port, target.id).catch(() => {});
+  const verified = Boolean(after.url && (after.url === url.toString() || after.url.startsWith(url.origin)));
+  if (!verified) throw new Error(`PC_BROWSER_NAVIGATION_NOT_VERIFIED:${after.url || 'unknown'}`);
+  return { opened: after.url, requestedUrl: url.toString(), frameId: result.frameId || null, tabId: target.id, port, profile: browserProfile(cfg), verified, before, after };
 }
 
 export async function browserTabs(cfg) {
@@ -226,80 +255,144 @@ export async function browserSelectTab(cfg, index) {
   const target = pages[i];
   if (!target) throw new Error('PC_BROWSER_TAB_NOT_FOUND');
   await activateTarget(port, target.id);
-  return { selected: true, index: i, id: target.id, title: String(target.title || '').slice(0, 240), url: String(target.url || '').slice(0, 1000) };
+  const afterPages = await pageTargets(port);
+  const selected = afterPages.find(page => page.id === target.id);
+  if (!selected) throw new Error('PC_BROWSER_TAB_SELECTION_NOT_VERIFIED');
+  return { selected: true, verified: selectedTargetId === target.id, index: i, id: target.id, title: String(selected.title || '').slice(0, 240), url: String(selected.url || '').slice(0, 1000) };
 }
 
 export async function browserSnapshot(cfg) {
   const port = await ensureBrowser(cfg);
   const target = await pageTarget(port);
+  const token = crypto.randomBytes(8).toString('hex');
+  const encodedToken = JSON.stringify(token);
   const expression = `(() => {
-    const visible = el => { const s=getComputedStyle(el), r=el.getBoundingClientRect(); return s.display!=='none'&&s.visibility!=='hidden'&&Number(s.opacity||1)>0&&r.width>0&&r.height>0; };
+    const token=${encodedToken};
+    const visible=el=>{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&Number(s.opacity||1)>0&&r.width>0&&r.height>0;};
     const nodes=[...document.querySelectorAll('a,button,input,textarea,select,[role="button"],[role="link"],[role="checkbox"],[role="tab"],[contenteditable="true"]')].filter(visible).slice(0,140);
-    const elements=nodes.map((el,index)=>({
-      index, tag:el.tagName.toLowerCase(), role:el.getAttribute('role')||'', type:el.getAttribute('type')||'',
-      text:String(el.innerText||el.value||el.getAttribute('aria-label')||el.getAttribute('title')||el.getAttribute('placeholder')||'').replace(/\\s+/g,' ').trim().slice(0,240),
-      name:String(el.getAttribute('name')||'').slice(0,120), id:String(el.id||'').slice(0,120), disabled:Boolean(el.disabled),
-      href:el.tagName==='A'?String(el.href||'').slice(0,500):''
-    }));
+    const elements=nodes.map((el,index)=>{
+      const type=String(el.getAttribute('type')||'').toLowerCase();
+      const password=type==='password';
+      const ref=token+':'+index;
+      el.setAttribute('data-sexta-ref',ref);
+      const safeValue=password?'':String(el.value||'');
+      const text=String(el.innerText||safeValue||el.getAttribute('aria-label')||el.getAttribute('title')||el.getAttribute('placeholder')||'').replace(/\\s+/g,' ').trim().slice(0,240);
+      return {index,ref,tag:el.tagName.toLowerCase(),role:el.getAttribute('role')||'',type,password,text,name:String(el.getAttribute('name')||'').slice(0,120),id:String(el.id||'').slice(0,120),disabled:Boolean(el.disabled),href:el.tagName==='A'?String(el.href||'').slice(0,500):''};
+    });
     return JSON.stringify({title:document.title,url:location.href,text:String(document.body?.innerText||'').replace(/\\n{3,}/g,'\\n\\n').slice(0,14000),elements});
   })()`;
-  const raw = await evaluate(port, expression);
-  return { ...(parseEval(raw) || {}), tabId: target.id };
+  const data = parseEval(await evaluate(port, expression)) || {};
+  snapshots.set(target.id, { token, url: data.url, elements: Array.isArray(data.elements) ? data.elements : [], createdAt: Date.now() });
+  return { ...data, tabId: target.id, snapshotId: token };
 }
 
-async function browserElementMeta(port, index) {
+async function snapshotElement(port, index) {
+  const target = await pageTarget(port);
+  const snapshot = snapshots.get(target.id);
+  if (!snapshot) throw new Error('PC_BROWSER_SNAPSHOT_REQUIRED');
+  const current = await browserState(port);
+  if (current.url !== snapshot.url) {
+    invalidateSnapshot(target.id);
+    throw new Error('PC_BROWSER_STALE_SNAPSHOT');
+  }
   const i = Math.max(0, Math.floor(Number(index) || 0));
-  const expression = `(() => { const nodes=${interactiveExpression}; const el=nodes[${i}]; if(!el) return JSON.stringify({found:false}); return JSON.stringify({found:true,tag:el.tagName.toLowerCase(),type:el.getAttribute('type')||'',text:String(el.innerText||el.value||el.getAttribute('aria-label')||el.getAttribute('title')||el.getAttribute('placeholder')||'').replace(/\\s+/g,' ').trim().slice(0,300),disabled:Boolean(el.disabled)}); })()`;
-  return parseEval(await evaluate(port, expression));
+  const saved = snapshot.elements.find(element => Number(element.index) === i);
+  if (!saved?.ref) throw new Error('PC_BROWSER_ELEMENT_NOT_FOUND');
+  const ref = JSON.stringify(saved.ref);
+  const expression = `(() => { const el=document.querySelector('[data-sexta-ref='+CSS.escape(${ref})+']'); if(!el) return JSON.stringify({found:false}); const type=String(el.getAttribute('type')||'').toLowerCase(); const password=type==='password'; const safeValue=password?'':String(el.value||''); return JSON.stringify({found:true,ref:${ref},tag:el.tagName.toLowerCase(),type,password,text:String(el.innerText||safeValue||el.getAttribute('aria-label')||el.getAttribute('title')||el.getAttribute('placeholder')||'').replace(/\\s+/g,' ').trim().slice(0,300),disabled:Boolean(el.disabled)}); })()`;
+  const meta = parseEval(await evaluate(port, expression));
+  if (!meta?.found) {
+    invalidateSnapshot(target.id);
+    throw new Error('PC_BROWSER_STALE_SNAPSHOT');
+  }
+  return { target, snapshot, index: i, saved, meta };
 }
 
 export async function browserClick(cfg, index) {
   const port = await ensureBrowser(cfg);
-  const meta = await browserElementMeta(port, index);
-  if (!meta?.found) throw new Error('PC_BROWSER_ELEMENT_NOT_FOUND');
+  const { target, saved, meta, index: i } = await snapshotElement(port, index);
   if (meta.disabled) throw new Error('PC_BROWSER_ELEMENT_DISABLED');
   if (!String(meta.text || '').trim()) throw new Error('PC_BROWSER_UNLABELED_CONTROL_BLOCKED');
   if (SENSITIVE.test(String(meta.text || ''))) throw new Error('PC_BROWSER_SENSITIVE_CONTROL_BLOCKED');
-  const i = Math.max(0, Math.floor(Number(index) || 0));
-  const expression = `(() => { const nodes=${interactiveExpression}; const el=nodes[${i}]; if(!el) return false; el.scrollIntoView({block:'center',inline:'center'}); el.focus(); el.click(); return true; })()`;
-  const clicked = parseEval(await evaluate(port, expression));
-  await sleep(220);
-  return { clicked: Boolean(clicked), index: i, element: meta };
+  const before = await browserState(port);
+  const ref = JSON.stringify(saved.ref);
+  const clicked = parseEval(await evaluate(port, `(() => { const el=document.querySelector('[data-sexta-ref='+CSS.escape(${ref})+']'); if(!el) return false; el.scrollIntoView({block:'center',inline:'center'}); el.focus(); el.click(); return true; })()`));
+  invalidateSnapshot(target.id);
+  if (!clicked) throw new Error('PC_BROWSER_CLICK_FAILED');
+  const observed = await waitForStateChange(port, before, 2800);
+  return { clicked: true, index: i, element: meta, verified: observed.changed, before, after: observed.after, verification: observed.changed ? 'state_changed' : 'action_dispatched_no_observable_change', snapshotInvalidated: true };
 }
 
 export async function browserType(cfg, index, text) {
   const port = await ensureBrowser(cfg);
-  const meta = await browserElementMeta(port, index);
-  if (!meta?.found) throw new Error('PC_BROWSER_ELEMENT_NOT_FOUND');
+  const { target, saved, meta, index: i } = await snapshotElement(port, index);
   if (meta.disabled) throw new Error('PC_BROWSER_ELEMENT_DISABLED');
-  if (String(meta.type || '').toLowerCase() === 'password') throw new Error('PC_BROWSER_PASSWORD_FIELD_BLOCKED');
+  if (meta.password || String(meta.type || '').toLowerCase() === 'password') throw new Error('PC_BROWSER_PASSWORD_FIELD_BLOCKED');
   const value = String(text || '').slice(0, 4000);
-  const i = Math.max(0, Math.floor(Number(index) || 0));
+  const ref = JSON.stringify(saved.ref);
   const encoded = JSON.stringify(value);
-  const expression = `(() => { const nodes=${interactiveExpression}; const el=nodes[${i}]; if(!el) return false; el.scrollIntoView({block:'center'}); el.focus(); const value=${encoded}; if(el.isContentEditable){el.textContent=value;} else { const proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype; const d=Object.getOwnPropertyDescriptor(proto,'value'); if(d?.set) d.set.call(el,value); else el.value=value; } el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); return true; })()`;
-  const typed = parseEval(await evaluate(port, expression));
-  return { typed: Boolean(typed), index: i, length: value.length, element: meta };
+  const result = parseEval(await evaluate(port, `(() => {
+    const el=document.querySelector('[data-sexta-ref='+CSS.escape(${ref})+']'); if(!el) return JSON.stringify({found:false});
+    el.scrollIntoView({block:'center'}); el.focus(); const value=${encoded};
+    if(el.isContentEditable){el.textContent=value;}
+    else if(el.tagName==='SELECT') { const option=[...el.options].find(o=>o.value===value||o.text===value); if(!option) return JSON.stringify({found:true,typed:false}); el.value=option.value; }
+    else { const proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype; const d=Object.getOwnPropertyDescriptor(proto,'value'); if(d?.set) d.set.call(el,value); else el.value=value; }
+    el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true}));
+    const actual=el.isContentEditable?String(el.textContent||''):String(el.value||''); return JSON.stringify({found:true,typed:true,verified:actual===value,length:actual.length});
+  })()`));
+  invalidateSnapshot(target.id);
+  if (!result?.found) throw new Error('PC_BROWSER_STALE_SNAPSHOT');
+  if (!result.typed || !result.verified) throw new Error('PC_BROWSER_TYPE_NOT_VERIFIED');
+  return { typed: true, verified: true, index: i, length: value.length, element: meta, snapshotInvalidated: true };
+}
+
+async function navigationHistory(port) {
+  return cdpCall(port, 'Page.getNavigationHistory');
+}
+
+async function navigateHistory(cfg, delta) {
+  const port = await ensureBrowser(cfg);
+  const target = await pageTarget(port);
+  const before = await browserState(port);
+  const history = await navigationHistory(port);
+  const entries = Array.isArray(history.entries) ? history.entries : [];
+  const nextIndex = Number(history.currentIndex) + delta;
+  const entry = entries[nextIndex];
+  if (!entry) throw new Error(delta < 0 ? 'PC_BROWSER_NO_BACK_HISTORY' : 'PC_BROWSER_NO_FORWARD_HISTORY');
+  invalidateSnapshot(target.id);
+  await cdpCall(port, 'Page.navigateToHistoryEntry', { entryId: entry.id });
+  const deadline = Date.now() + 6500;
+  let after = before;
+  while (Date.now() < deadline) {
+    await sleep(100);
+    try {
+      after = await browserState(port);
+      if (after.url === entry.url && (after.readyState === 'interactive' || after.readyState === 'complete')) break;
+    } catch {}
+  }
+  const verified = after.url === entry.url && after.url !== before.url;
+  if (!verified) throw new Error('PC_BROWSER_HISTORY_NAVIGATION_NOT_VERIFIED');
+  return { verified, before, after, entry: { id: entry.id, url: entry.url, title: entry.title || '' }, snapshotInvalidated: true };
 }
 
 export async function browserBack(cfg) {
-  const port = await ensureBrowser(cfg);
-  parseEval(await evaluate(port, `(() => { history.back(); return true; })()`));
-  await sleep(350);
-  return { back: true };
+  return { back: true, ...(await navigateHistory(cfg, -1)) };
 }
 
 export async function browserForward(cfg) {
-  const port = await ensureBrowser(cfg);
-  parseEval(await evaluate(port, `(() => { history.forward(); return true; })()`));
-  await sleep(350);
-  return { forward: true };
+  return { forward: true, ...(await navigateHistory(cfg, 1)) };
 }
 
 export async function browserReload(cfg) {
   const port = await ensureBrowser(cfg);
+  const target = await pageTarget(port);
+  const before = await browserState(port);
+  invalidateSnapshot(target.id);
   await cdpCall(port, 'Page.reload', { ignoreCache: false });
-  await waitForReady(port, 5000);
-  return { reloaded: true };
+  const after = await waitForReady(port, 7000);
+  const verified = after.url === before.url && after.timeOrigin !== before.timeOrigin;
+  if (!verified) throw new Error('PC_BROWSER_RELOAD_NOT_VERIFIED');
+  return { reloaded: true, verified, before, after, snapshotInvalidated: true };
 }
 
 export function browserStatus(cfg = {}) {
