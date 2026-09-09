@@ -115,15 +115,16 @@ jobs:
           node --check apps/desktop-electron/preload.cjs
       - name: Check SEXTA web HUD v4
         run: |
+          node --check public/sexta-shell-v4.js
           node --check public/sexta-shell-v3.js
           node --check public/proactivity-engine.js
           node --check public/sexta-v4-intelligence.js
-          grep -q "sexta-shell-v3.js" public/app.js
-          grep -q "sexta-v3.css" public/styles.css
+          grep -q "sexta-shell-v4.js" public/app.js
+          grep -q "sexta-v4.css" public/styles.css
           grep -q "proactivity-engine.js" public/index.html
           grep -q "sexta-v4-intelligence.js" public/index.html
-          grep -q "FIRST CONTACT" public/sexta-shell-v3.js
-          grep -q "AUTONOMY LEVEL" public/sexta-shell-v3.js
+          grep -q "s4CommandTrigger" public/sexta-shell-v4.js
+          grep -q "s4PaletteInput" public/sexta-shell-v4.js
           grep -q "INTELLIGENCE V4" public/sexta-v4-intelligence.js
       - name: Check Android Hands preparation
         run: node --check apps/android-capacitor/scripts/prepare-hands.mjs
