@@ -1,0 +1,47 @@
+.s4-system-sheet.hidden{display:none!important}
+.s4-system-sheet{position:fixed;inset:0;z-index:210;display:grid;place-items:center;padding:20px}
+.s4-system-backdrop{position:absolute;inset:0;border:0;background:rgba(1,3,5,.7);backdrop-filter:blur(10px)}
+.s4-system-panel{position:relative;z-index:1;width:min(760px,100%);max-height:min(86vh,820px);overflow:auto;border:1px solid rgba(141,234,255,.15);border-radius:22px;background:rgba(7,12,18,.97);box-shadow:0 36px 120px rgba(0,0,0,.65)}
+.s4-system-head{position:sticky;top:0;z-index:2;display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:20px;border-bottom:1px solid rgba(255,255,255,.06);background:rgba(7,12,18,.94);backdrop-filter:blur(18px)}
+.s4-system-head p{margin:0 0 5px;color:var(--s4-cyan);font:700 8px/1 "Courier New",monospace;letter-spacing:.19em}
+.s4-system-head h2{margin:0;font-size:24px;letter-spacing:-.03em}
+.s4-system-head span{display:block;margin-top:6px;color:var(--s4-muted);font-size:11px}
+.s4-system-close{width:34px;height:34px;border:1px solid rgba(255,255,255,.07);border-radius:10px;background:rgba(255,255,255,.02);color:var(--s4-muted);cursor:pointer;font-size:20px}
+.s4-system-close:hover{color:#fff;border-color:var(--s4-line-strong)}
+.s4-system-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px}
+.s4-system-card{padding:15px;border:1px solid rgba(255,255,255,.055);border-radius:15px;background:rgba(255,255,255,.018)}
+.s4-system-card.full{grid-column:1/-1}
+.s4-system-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:11px}
+.s4-system-card-head strong{font:700 9px/1 "Courier New",monospace;letter-spacing:.15em;color:var(--s4-text)}
+.s4-system-card-head span{font:700 9px/1 "Courier New",monospace;color:var(--s4-cyan)}
+.s4-system-card-head button,.s4-pair-row button,.s4-segments button{border:1px solid rgba(255,255,255,.075);border-radius:9px;background:rgba(255,255,255,.02);color:var(--s4-muted);cursor:pointer;font:700 9px/1 "Courier New",monospace;letter-spacing:.08em}
+.s4-system-card-head button{height:28px;padding:0 9px}
+.s4-system-card p{margin:0 0 12px;color:var(--s4-muted);font-size:11px;line-height:1.5}
+.s4-system-card>small{display:block;margin-top:9px;color:var(--s4-dim);font-size:9px;line-height:1.45}
+.s4-pair-row{display:flex;align-items:center;gap:10px}
+.s4-pair-row code{flex:1;display:grid;place-items:center;min-height:42px;border:1px solid rgba(141,234,255,.12);border-radius:10px;background:rgba(141,234,255,.025);color:var(--s4-cyan);font:700 15px/1 "Courier New",monospace;letter-spacing:.18em}
+.s4-pair-row button{height:42px;padding:0 12px}
+.s4-segments{display:flex;gap:6px}
+.s4-segments button{flex:1;min-height:36px;padding:0 8px}
+.s4-segments button.active{border-color:rgba(141,234,255,.34);background:rgba(141,234,255,.08);color:#fff}
+.s4-segments button.danger{border-color:rgba(255,113,107,.18);color:#ff9792}
+.s4-toggle-row{min-height:50px;display:flex;align-items:center;justify-content:space-between;gap:14px;border-top:1px solid rgba(255,255,255,.045)}
+.s4-toggle-row:first-of-type{border-top:0}
+.s4-toggle-row span b{display:block;font-size:11px}
+.s4-toggle-row span small{display:block;margin-top:3px;color:var(--s4-dim);font-size:9px}
+.s4-toggle-row input{width:36px;height:20px;accent-color:var(--s4-cyan);cursor:pointer}
+.s4-decision-list{display:grid;gap:6px}
+.s4-decision-list>p{margin:0;color:var(--s4-dim)}
+.s4-decision-list article{padding:10px 11px;border:1px solid rgba(255,182,91,.09);border-radius:10px;background:rgba(255,182,91,.025)}
+.s4-decision-list article strong{display:block;font-size:10px}
+.s4-decision-list article small{display:block;margin-top:4px;color:var(--s4-muted);font-size:9px;line-height:1.4}
+.s4-system-command{margin-top:2px;border-top:1px solid rgba(255,255,255,.045)}
+@media (max-width:650px){
+  .s4-system-sheet{padding:8px}
+  .s4-system-panel{max-height:94vh;border-radius:18px}
+  .s4-system-grid{grid-template-columns:1fr}
+  .s4-system-card.full{grid-column:1}
+  .s4-system-head{padding:16px}
+  .s4-pair-row{align-items:stretch;flex-direction:column}
+  .s4-pair-row button{width:100%}
+}
