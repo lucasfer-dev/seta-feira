@@ -134,8 +134,9 @@ export async function browserTabs(cfg) {
 export async function browserSelectTab(cfg,index) {
   const port=await ensureBrowser(cfg); const i=Math.max(0,Math.floor(Number(index)||0)); const listing=tabListings.get(port); const pages=await pageTargets(port);
   const targetId=listing?.ids?.[i] || pages[i]?.id || ''; if(!targetId)throw new Error('PC_BROWSER_TAB_NOT_FOUND'); const target=pages.find(page=>page.id===targetId); if(!target)throw new Error('PC_BROWSER_STALE_TAB_LIST');
-  invalidateSnapshot(target.id); await activateTarget(port,target.id); const selected=(await pageTargets(port)).find(page=>page.id===target.id); if(!selected||selectedTargetId!==target.id)throw new Error('PC_BROWSER_TAB_SELECTION_NOT_VERIFIED');
-  return{selected:true,verified:true,index:i,id:target.id,title:String(selected.title||'').slice(0,240),url:String(selected.url||'').slice(0,1000)};
+  const wasSelected=selectedTargetId===target.id; invalidateSnapshot(target.id); if(!wasSelected){await activateTarget(port,target.id);await sleep(140);}else{setSelectedTarget(port,target.id);}
+  const selected=(await pageTargets(port)).find(page=>page.id===target.id); if(!selected||selectedTargetId!==target.id)throw new Error('PC_BROWSER_TAB_SELECTION_NOT_VERIFIED');
+  return{selected:true,verified:true,index:i,id:target.id,title:String(selected.title||'').slice(0,240),url:String(selected.url||'').slice(0,1000),reused:wasSelected};
 }
 export async function browserSnapshot(cfg) {
   const port=await ensureBrowser(cfg); const target=await pageTarget(port); const state=await stableBrowserState(port,target.id,3000); const token=crypto.randomBytes(8).toString('hex'); const encodedToken=JSON.stringify(token);
