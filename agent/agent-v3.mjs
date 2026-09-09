@@ -185,7 +185,7 @@ async function execute(command) {
     return { copied: true, length: value.length };
   }
   if (action === 'window_list') return windowList(payload.limit);
-  if (action === 'window_focus') return focusWindow(payload.title);
+  if (action === 'window_focus') return focusWindow(payload.title, payload.handle);
   if (action === 'ui_tree') return uiTree(payload.maxNodes);
   if (action === 'ui_click_text') return uiClickText(payload.text);
   if (action === 'ui_type_text') return uiTypeText(payload.text, payload.target);
@@ -255,12 +255,13 @@ while (true) {
       try {
         audit({ commandId: command.id, action: command.action, status: 'running', ok: true });
         const result = await execute(command);
-        audit({ commandId: command.id, action: command.action, status: 'done', ok: true, details: { state: publicRuntimeState() } });
+        if (result?.ok === false || result?.verified === false) throw Object.assign(new Error(result.reason || result.error || 'PC_ACTION_UNVERIFIED'), { result });
+        audit({ commandId: command.id, action: command.action, status: 'done', ok: true, details: { verified: result?.verified, state: publicRuntimeState() } });
         await post('/api/agent-result', { commandId: command.id, deviceId: DEVICE_ID, action: command.action, status: 'done', ok: true, result, message: 'Executado pelo agente Windows.' });
         if (command.action === 'agent_control') lastBeat = 0;
       } catch (error) {
         audit({ commandId: command.id, action: command.action, status: 'failed', ok: false, details: { message: error.message } });
-        await post('/api/agent-result', { commandId: command.id, deviceId: DEVICE_ID, action: command.action, status: 'failed', ok: false, result: { error: error.message }, message: error.message });
+        await post('/api/agent-result', { commandId: command.id, deviceId: DEVICE_ID, action: command.action, status: 'failed', ok: false, result: error.result || { ok: false, state: 'failed', verified: false, error: error.message, reason: error.message }, message: error.message });
       }
     }
   } catch (error) { console.error('[SEXTA Agent]', error.message); }

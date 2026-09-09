@@ -129,3 +129,12 @@ jobs:
           Select-String -Path apps/desktop-electron/windows-habitat.cjs -Pattern "globalShortcut.register","CommandOrControl+Shift+Space","habitat:command","habitat:voice-toggle","PALETTE_BOUNDS" | Out-Null
           Select-String -Path apps/desktop-electron/preload.cjs -Pattern "habitat:toggle-palette","habitat:command","habitat:voice-toggle","habitat:open-main" | Out-Null
           Write-Host "Desktop operational config OK: $($pkg.version)"
+      - name: Real Windows UI Automation integration
+        shell: pwsh
+        run: node --test tests/windows-ui.test.mjs tests/pc-observe-verify.test.mjs
+      - name: Real Edge CDP integration
+        shell: pwsh
+        run: |
+          $env:SEXTA_TEST_BROWSER = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          if (-not (Test-Path $env:SEXTA_TEST_BROWSER)) { throw 'Edge executable unavailable' }
+          node --test tests/browser-agent.test.mjs
