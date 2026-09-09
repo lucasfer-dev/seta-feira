@@ -1,6 +1,6 @@
 {
   "name": "sexta-desktop",
-  "version": "2.1.6",
+  "version": "2.2.0",
   "private": true,
   "main": "secure-main.cjs",
   "scripts": {
@@ -23,6 +23,7 @@
     "files": [
       "secure-main.cjs",
       "main.cjs",
+      "windows-habitat.cjs",
       "preload.cjs",
       "overlay.html",
       "fallback.html"
