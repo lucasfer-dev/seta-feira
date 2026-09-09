@@ -46,7 +46,7 @@ test('Windows Hands nao usa PowerShell Bypass ou EncodedCommand', () => {
   const windowsUi = read('agent/windows-ui.mjs');
   assert.doesNotMatch(windowsUi, /ExecutionPolicy[^\n]*Bypass/i);
   assert.doesNotMatch(windowsUi, /EncodedCommand/i);
-  assert.match(windowsUi, /'-Command', '-'/);
+  assert.match(windowsUi, /['"]-Command['"]\s*,\s*['"]-['"]/);
 });
 
 test('visao possui fallback, cooldown e cache anti-overload', () => {
