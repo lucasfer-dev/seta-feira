@@ -20,7 +20,7 @@ async function browserActOnFreshElement(cfg, findElement, action, attempts = 3) 
     try { return { snapshot, element, result: await action(element, snapshot) }; }
     catch (error) {
       lastError = error;
-      if (!/PC_BROWSER_STALE_SNAPSHOT|PC_BROWSER_STATE_UNAVAILABLE/.test(String(error?.message || error))) throw error;
+      if (!/PC_BROWSER_STALE_SNAPSHOT|PC_BROWSER_STATE_UNAVAILABLE|PC_BROWSER_TARGET_GONE/.test(String(error?.message || error))) throw error;
       await sleep(180);
     }
   }
@@ -29,19 +29,31 @@ async function browserActOnFreshElement(cfg, findElement, action, attempts = 3) 
 function startUiFixture(title, state = 'Minimized') {
   const safe = title.replace(/'/g, "''");
   const safeState = ['Minimized', 'Maximized', 'Normal'].includes(state) ? state : 'Normal';
+  const title64 = Buffer.from(title, 'utf8').toString('base64');
   const config64 = Buffer.from('Configurações', 'utf8').toString('base64');
   const script = `
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName PresentationFramework
+Add-Type -AssemblyName PresentationCore
+Add-Type -AssemblyName WindowsBase
+$titleText=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${title64}'))
 $configText=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${config64}'))
-$form=New-Object System.Windows.Forms.Form;$form.Text='${safe}';$form.Width=500;$form.Height=300
-$name=New-Object System.Windows.Forms.TextBox;$name.Left=20;$name.Top=30;$name.Width=260;$name.AccessibleName='Nome'
-$echo=New-Object System.Windows.Forms.Label;$echo.Left=20;$echo.Top=70;$echo.Width=300;$echo.Text='typed:';$name.Add_TextChanged({$echo.Text='typed:'+$name.Text})
-$pass=New-Object System.Windows.Forms.TextBox;$pass.Left=20;$pass.Top=110;$pass.Width=260;$pass.AccessibleName='Senha';$pass.UseSystemPasswordChar=$true
-$button=New-Object System.Windows.Forms.Button;$button.Left=20;$button.Top=160;$button.Width=160;$button.Text=$configText;$button.AccessibleName=$configText;$button.Add_Click({$form.Text='Clicked ${safe}'})
-$form.Controls.AddRange(@($name,$echo,$pass,$button));$form.WindowState=[System.Windows.Forms.FormWindowState]::${safeState};[void]$form.ShowDialog()
+$window=New-Object System.Windows.Window
+$window.Title=$titleText;$window.Width=500;$window.Height=320;$window.WindowStartupLocation='CenterScreen'
+$panel=New-Object System.Windows.Controls.StackPanel;$panel.Margin='24'
+$nameLabel=New-Object System.Windows.Controls.TextBlock;$nameLabel.Text='Nome';$nameLabel.Margin='0,0,0,4'
+$name=New-Object System.Windows.Controls.TextBox;$name.Width=280;$name.HorizontalAlignment='Left';$name.Margin='0,0,0,12'
+[System.Windows.Automation.AutomationProperties]::SetName($name,'Nome')
+$echo=New-Object System.Windows.Controls.TextBlock;$echo.Text='typed:';$echo.Margin='0,0,0,12';$name.Add_TextChanged({$echo.Text='typed:'+$name.Text})
+$passLabel=New-Object System.Windows.Controls.TextBlock;$passLabel.Text='Senha';$passLabel.Margin='0,0,0,4'
+$pass=New-Object System.Windows.Controls.PasswordBox;$pass.Width=280;$pass.HorizontalAlignment='Left';$pass.Margin='0,0,0,18'
+[System.Windows.Automation.AutomationProperties]::SetName($pass,'Senha')
+$button=New-Object System.Windows.Controls.Button;$button.Content=$configText;$button.Width=180;$button.HorizontalAlignment='Left'
+[System.Windows.Automation.AutomationProperties]::SetName($button,$configText)
+$button.Add_Click({$window.Title='Clicked '+$titleText})
+[void]$panel.Children.Add($nameLabel);[void]$panel.Children.Add($name);[void]$panel.Children.Add($echo);[void]$panel.Children.Add($passLabel);[void]$panel.Children.Add($pass);[void]$panel.Children.Add($button)
+$window.Content=$panel;$window.WindowState='${safeState}';$window.Add_ContentRendered({$name.Focus()|Out-Null});[void]$window.ShowDialog()
 `;
-  const child=spawn('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-Command','-'],{stdio:['pipe','ignore','pipe'],windowsHide:false}); child.stdin.end(script,'utf8'); return child;
+  const child=spawn('powershell.exe',['-NoLogo','-NoProfile','-NonInteractive','-STA','-Command','-'],{stdio:['pipe','ignore','pipe'],windowsHide:false}); child.stdin.end(script,'utf8'); return child;
 }
 
 test('Windows Hands restores/focuses and drives UI Automation sem senha', { skip: process.platform !== 'win32', timeout: 45000 }, async t => {
