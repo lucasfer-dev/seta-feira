@@ -1,0 +1,40 @@
+name: Windows Hands Real
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agent/browser-agent.mjs'
+      - 'agent/windows-ui.mjs'
+      - 'tests/pc-hands-real-windows.test.mjs'
+      - 'tests/browser-agent-contract.test.mjs'
+      - '.github/workflows/windows-hands-real.yml'
+  pull_request:
+    paths:
+      - 'agent/browser-agent.mjs'
+      - 'agent/windows-ui.mjs'
+      - 'tests/pc-hands-real-windows.test.mjs'
+      - 'tests/browser-agent-contract.test.mjs'
+      - '.github/workflows/windows-hands-real.yml'
+
+jobs:
+  real-windows-hands:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Parse canonical agents
+        shell: pwsh
+        run: |
+          node --check agent/windows-ui.mjs
+          node --check agent/browser-agent.mjs
+          node --check tests/pc-hands-real-windows.test.mjs
+      - name: Browser DOM contract
+        shell: pwsh
+        run: node --test tests/browser-agent-contract.test.mjs
+      - name: Real Windows UI Automation and CDP flow
+        shell: pwsh
+        run: node --test tests/pc-hands-real-windows.test.mjs
