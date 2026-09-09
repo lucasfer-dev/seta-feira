@@ -47,11 +47,15 @@ Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName WindowsBase
 Add-Type -AssemblyName UIAutomationClientsideProviders
-[System.Windows.Automation.ClientSettings]::RegisterClientSideProviders([UIAutomationClientsideProviders.UIAutomationClientSideProviders]::ClientSideProviderDescriptionTable)
-Add-Type @"
+Add-Type -ReferencedAssemblies @([System.Windows.Automation.AutomationElement].Assembly.Location,[System.Windows.Automation.ControlType].Assembly.Location,[UIAutomationClientsideProviders.UIAutomationClientSideProviders].Assembly.Location) -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 public static class SextaWin32 {
+  // Initialize from a compiled frame: the legacy proxy loader cannot inspect
+  // PowerShell dynamic frames whose MethodBase.ReflectedType is null.
+  public static void InitializeUi() {
+    System.Windows.Automation.ClientSettings.RegisterClientSideProviders(UIAutomationClientsideProviders.UIAutomationClientSideProviders.ClientSideProviderDescriptionTable);
+  }
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s,int n);
   [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h,int index);
@@ -61,6 +65,7 @@ public static class SextaWin32 {
   }
 }
 "@
+[SextaWin32]::InitializeUi()
 $handle = [SextaWin32]::GetForegroundWindow()
 if ($handle -eq [IntPtr]::Zero) { throw 'PC_UI_NO_FOREGROUND_WINDOW' }
 $root = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
