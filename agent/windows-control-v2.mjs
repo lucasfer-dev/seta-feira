@@ -51,14 +51,14 @@ function Get-SextaWindows {
       [void][SextaWindowNative]::GetWindowText($h,$sb,$sb.Capacity)
       $title=$sb.ToString().Trim()
       if([string]::IsNullOrWhiteSpace($title)){return $true}
-      $pid=[uint32]0
-      [void][SextaWindowNative]::GetWindowThreadProcessId($h,[ref]$pid)
-      $p=Get-Process -Id $pid -ErrorAction SilentlyContinue
+      $processId=[uint32]0
+      [void][SextaWindowNative]::GetWindowThreadProcessId($h,[ref]$processId)
+      $p=Get-Process -Id $processId -ErrorAction SilentlyContinue
       $r=New-Object SextaWindowNative+RECT
       [void][SextaWindowNative]::GetWindowRect($h,[ref]$r)
       $visible=[SextaWindowNative]::IsWindowVisible($h)
       [void]$items.Add([pscustomobject]@{
-        hwnd=$h.ToInt64(); pid=[int]$pid; process=if($p){$p.ProcessName}else{''}; title=$title;
+        hwnd=$h.ToInt64(); pid=[int]$processId; process=if($p){$p.ProcessName}else{''}; title=$title;
         active=($h -eq $fg); visible=[bool]$visible; minimized=[SextaWindowNative]::IsIconic($h); maximized=[SextaWindowNative]::IsZoomed($h);
         x=$r.Left; y=$r.Top; width=($r.Right-$r.Left); height=($r.Bottom-$r.Top)
       })
@@ -115,10 +115,10 @@ function Focus-SextaHwnd([IntPtr]$h){
     [void][SextaWindowNative]::SetForegroundWindow($h)
   }
   try {
-    $pid=[uint32]0
-    [void][SextaWindowNative]::GetWindowThreadProcessId($h,[ref]$pid)
+    $processId=[uint32]0
+    [void][SextaWindowNative]::GetWindowThreadProcessId($h,[ref]$processId)
     $ws=New-Object -ComObject WScript.Shell
-    [void]$ws.AppActivate([int]$pid)
+    [void]$ws.AppActivate([int]$processId)
   } catch {}
   for($i=0;$i -lt 8;$i++){
     if([SextaWindowNative]::GetForegroundWindow() -eq $h){return ($wasMin -or -not $wasVisible)}
@@ -213,12 +213,12 @@ export async function closeWindowNative(title, hwnd = 0) {
   const handle = Number(hwnd) || 0;
   const script = String.raw`
 $w=Find-SextaWindow (Get-SextaUtf8 'SEXTA_TITLE') ${handle}
-$h=[IntPtr][long]$w.hwnd;$title=$w.title;$pid=$w.pid;$proc=$w.process
+$h=[IntPtr][long]$w.hwnd;$title=$w.title;$processId=[int]$w.pid;$proc=$w.process
 [void][SextaWindowNative]::PostMessage($h,0x0010,[IntPtr]::Zero,[IntPtr]::Zero)
 $closed=$false
 for($i=0;$i -lt 40;$i++){Start-Sleep -Milliseconds 100;if(-not [SextaWindowNative]::IsWindow($h)){$closed=$true;break}}
 if(-not $closed){throw 'PC_WINDOW_CLOSE_NOT_VERIFIED'}
-$remaining=@(Get-SextaWindows | Where-Object { $_.pid -eq $pid })
-[pscustomobject]@{ok=$true;action='close';verified=$true;closed=$true;hwnd=$h.ToInt64();pid=$pid;process=$proc;title=$title;remainingProcessWindows=$remaining.Count}|ConvertTo-Json -Compress`;
+$remaining=@(Get-SextaWindows | Where-Object { $_.pid -eq $processId })
+[pscustomobject]@{ok=$true;action='close';verified=$true;closed=$true;hwnd=$h.ToInt64();pid=$processId;process=$proc;title=$title;remainingProcessWindows=$remaining.Count}|ConvertTo-Json -Compress`;
   return parseJson(await runPowerShell(script, 8000, { TITLE: needle }), {});
 }
