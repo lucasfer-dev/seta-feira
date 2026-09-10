@@ -6,21 +6,41 @@ on:
     paths:
       - 'agent/browser-agent.mjs'
       - 'agent/windows-ui.mjs'
+      - 'agent/windows-ui-actions.mjs'
+      - 'agent/windows-control-v2.mjs'
+      - 'agent/app-resolver.mjs'
+      - 'agent/agent-v3.mjs'
+      - 'agent/runtime-state.mjs'
+      - 'lib/pc-desktop-tools.mjs'
+      - 'lib/pc-command-protocol.mjs'
+      - 'lib/tool-policy.mjs'
+      - 'lib/tool-core.mjs'
       - 'tests/pc-hands-real-windows.test.mjs'
       - 'tests/browser-agent-contract.test.mjs'
+      - 'tests/windows-control-v2-contract.test.mjs'
       - '.github/workflows/windows-hands-real.yml'
   pull_request:
     paths:
       - 'agent/browser-agent.mjs'
       - 'agent/windows-ui.mjs'
+      - 'agent/windows-ui-actions.mjs'
+      - 'agent/windows-control-v2.mjs'
+      - 'agent/app-resolver.mjs'
+      - 'agent/agent-v3.mjs'
+      - 'agent/runtime-state.mjs'
+      - 'lib/pc-desktop-tools.mjs'
+      - 'lib/pc-command-protocol.mjs'
+      - 'lib/tool-policy.mjs'
+      - 'lib/tool-core.mjs'
       - 'tests/pc-hands-real-windows.test.mjs'
       - 'tests/browser-agent-contract.test.mjs'
+      - 'tests/windows-control-v2-contract.test.mjs'
       - '.github/workflows/windows-hands-real.yml'
 
 jobs:
   real-windows-hands:
     runs-on: windows-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,11 +50,22 @@ jobs:
         shell: pwsh
         run: |
           node --check agent/windows-ui.mjs
-          node --check agent/browser-agent.mjs
+          node --check agent/windows-ui-actions.mjs
+          node --check agent/windows-control-v2.mjs
+          node --check agent/app-resolver.mjs
+          node --check agent/agent-v3.mjs
+          node --check lib/pc-desktop-tools.mjs
+          node --check lib/pc-command-protocol.mjs
+          node --check lib/tool-policy.mjs
+          node --check lib/tool-core.mjs
           node --check tests/pc-hands-real-windows.test.mjs
-      - name: Browser DOM contract
+      - name: Contracts
         shell: pwsh
-        run: node --test tests/browser-agent-contract.test.mjs
-      - name: Real Windows UI Automation and CDP flow
+        run: |
+          node --test tests/browser-agent-contract.test.mjs
+          node --test tests/windows-control-v2-contract.test.mjs
+          node --test tests/pc-desktop-policy.test.mjs
+          node tests/app-resolver.test.mjs
+      - name: Real Windows UI Automation, window management and CDP flow
         shell: pwsh
         run: node --test tests/pc-hands-real-windows.test.mjs
