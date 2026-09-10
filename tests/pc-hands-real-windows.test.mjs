@@ -3,7 +3,9 @@ import http from 'node:http';
 import { spawn } from 'node:child_process';
 import test from 'node:test';
 import { browserBack, browserClick, browserForward, browserOpen, browserReload, browserSelectTab, browserSnapshot, browserTabs, browserType } from '../agent/browser-agent.mjs';
-import { activeWindow, focusWindow, uiClickText, uiTree, uiTypeText, windowList } from '../agent/windows-ui.mjs';
+import { activeWindow, uiClickText, uiTree, uiTypeText } from '../agent/windows-ui.mjs';
+import { closeWindowNative, focusWindowNative, listWindows, moveResizeWindow, setWindowState } from '../agent/windows-control-v2.mjs';
+import { uiAction } from '../agent/windows-ui-actions.mjs';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function waitFor(fn, { timeout = 15000, interval = 120 } = {}) {
@@ -27,7 +29,6 @@ async function browserActOnFreshElement(cfg, findElement, action, attempts = 3) 
   throw lastError || new Error('PC_BROWSER_SEMANTIC_RETRY_EXHAUSTED');
 }
 function startUiFixture(title, state = 'Minimized') {
-  const safe = title.replace(/'/g, "''");
   const safeState = ['Minimized', 'Maximized', 'Normal'].includes(state) ? state : 'Normal';
   const title64 = Buffer.from(title, 'utf8').toString('base64');
   const config64 = Buffer.from('Configurações', 'utf8').toString('base64');
@@ -43,12 +44,15 @@ $panel=New-Object System.Windows.Controls.StackPanel;$panel.Margin='24'
 $nameLabel=New-Object System.Windows.Controls.TextBlock;$nameLabel.Text='Nome';$nameLabel.Margin='0,0,0,4'
 $name=New-Object System.Windows.Controls.TextBox;$name.Width=280;$name.HorizontalAlignment='Left';$name.Margin='0,0,0,12'
 [System.Windows.Automation.AutomationProperties]::SetName($name,'Nome')
+[System.Windows.Automation.AutomationProperties]::SetAutomationId($name,'NameInput')
 $echo=New-Object System.Windows.Controls.TextBlock;$echo.Text='typed:';$echo.Margin='0,0,0,12';$name.Add_TextChanged({$echo.Text='typed:'+$name.Text})
 $passLabel=New-Object System.Windows.Controls.TextBlock;$passLabel.Text='Senha';$passLabel.Margin='0,0,0,4'
 $pass=New-Object System.Windows.Controls.PasswordBox;$pass.Width=280;$pass.HorizontalAlignment='Left';$pass.Margin='0,0,0,18'
 [System.Windows.Automation.AutomationProperties]::SetName($pass,'Senha')
+[System.Windows.Automation.AutomationProperties]::SetAutomationId($pass,'PasswordInput')
 $button=New-Object System.Windows.Controls.Button;$button.Content=$configText;$button.Width=180;$button.HorizontalAlignment='Left'
 [System.Windows.Automation.AutomationProperties]::SetName($button,$configText)
+[System.Windows.Automation.AutomationProperties]::SetAutomationId($button,'SettingsButton')
 $button.Add_Click({$window.Title='Clicked '+$titleText})
 [void]$panel.Children.Add($nameLabel);[void]$panel.Children.Add($name);[void]$panel.Children.Add($echo);[void]$panel.Children.Add($passLabel);[void]$panel.Children.Add($pass);[void]$panel.Children.Add($button)
 $window.Content=$panel;$window.WindowState='${safeState}';$window.Add_ContentRendered({$name.Focus()|Out-Null});[void]$window.ShowDialog()
@@ -58,8 +62,8 @@ $window.Content=$panel;$window.WindowState='${safeState}';$window.Add_ContentRen
 
 test('Windows Hands restores/focuses and drives UI Automation sem senha', { skip: process.platform !== 'win32', timeout: 45000 }, async t => {
   const unique=`SEXTA Hands ${Date.now()}`; const fixture=startUiFixture(unique); t.after(()=>{try{fixture.kill();}catch{}});
-  await waitFor(async()=> (await windowList(30)).windows.some(win=>String(win.title).includes(unique)));
-  const focused=await focusWindow(unique); assert.equal(focused.focused,true); assert.equal(focused.verified,true); assert.equal(focused.restored,true);
+  await waitFor(async()=> (await listWindows(80)).windows.some(win=>String(win.title).includes(unique)));
+  const focused=await focusWindowNative(unique); assert.equal(focused.verified,true); assert.equal(focused.restored,true);
   const active=await activeWindow(); assert.ok(String(active.title).includes(unique));
   const tree=await uiTree(180);
   const diagnostic=JSON.stringify({window:tree.window,count:tree.count,enumerated:tree.enumerated,provider:tree.provider,nodes:(tree.nodes||[]).slice(0,60)});
@@ -71,6 +75,58 @@ test('Windows Hands restores/focuses and drives UI Automation sem senha', { skip
   await assert.rejects(()=>uiTypeText('segredo','[password]'),/PC_UI_PASSWORD_FIELD_BLOCKED/);
 });
 
+test('Window Control v2 minimizes, restores, maximizes, moves and closes a real HWND', { skip: process.platform !== 'win32', timeout: 60000 }, async t => {
+  const title=`SEXTA Window Control ${Date.now()}`;
+  const fixture=startUiFixture(title,'Normal');
+  t.after(()=>{try{fixture.kill();}catch{}});
+  const initial=await waitFor(async()=> (await listWindows(80)).windows.find(win=>win.title===title));
+  assert.ok(initial.hwnd);
+
+  const minimized=await setWindowState(title,'minimize',initial.hwnd);
+  assert.equal(minimized.verified,true);
+  assert.equal(minimized.minimized,true);
+
+  const restored=await focusWindowNative(title,initial.hwnd);
+  assert.equal(restored.verified,true);
+  assert.equal(restored.restored,true);
+  assert.equal(restored.afterHwnd,initial.hwnd);
+
+  const maximized=await setWindowState(title,'maximize',initial.hwnd);
+  assert.equal(maximized.verified,true);
+  assert.equal(maximized.maximized,true);
+
+  await setWindowState(title,'restore',initial.hwnd);
+  const moved=await moveResizeWindow(title,{hwnd:initial.hwnd,x:120,y:90,width:640,height:420});
+  assert.equal(moved.verified,true);
+  assert.ok(Math.abs(moved.x-120)<=3);
+  assert.ok(Math.abs(moved.y-90)<=3);
+  assert.ok(Math.abs(moved.width-640)<=6);
+  assert.ok(Math.abs(moved.height-420)<=6);
+
+  const closed=await closeWindowNative(title,initial.hwnd);
+  assert.equal(closed.verified,true);
+  assert.equal(closed.closed,true);
+  await waitFor(async()=>!(await listWindows(80)).windows.some(win=>win.hwnd===initial.hwnd));
+});
+
+test('Generic UIA action targets AutomationId and blocks credentials', { skip: process.platform !== 'win32', timeout: 45000 }, async t => {
+  const title=`SEXTA UI Action ${Date.now()}`;
+  const fixture=startUiFixture(title,'Normal');
+  t.after(()=>{try{fixture.kill();}catch{}});
+  await waitFor(async()=> (await listWindows(80)).windows.some(win=>win.title===title));
+  await focusWindowNative(title);
+
+  const set=await uiAction({action:'set_value',automationId:'NameInput',controlType:'Edit',value:'Jarvis'});
+  assert.equal(set.verified,true);
+  await waitFor(async()=> (await uiTree(180)).nodes.some(node=>node.name==='typed:Jarvis'));
+
+  const invoked=await uiAction({action:'invoke',automationId:'SettingsButton',controlType:'Button'});
+  assert.equal(invoked.ok,true);
+  await waitFor(async()=>String((await activeWindow()).title).startsWith('Clicked '));
+
+  await assert.rejects(()=>uiAction({action:'set_value',automationId:'PasswordInput',value:'segredo'}),/PC_UI_PASSWORD_FIELD_BLOCKED/);
+});
+
 test('Windows Hands focuses maximized windows and resolves exact title among similar windows', { skip: process.platform !== 'win32', timeout: 45000 }, async t => {
   const prefix=`SEXTA Similar ${Date.now()}`;
   const titleA=`${prefix} Alpha`;
@@ -79,16 +135,15 @@ test('Windows Hands focuses maximized windows and resolves exact title among sim
   const fixtureB=startUiFixture(titleB,'Normal');
   t.after(()=>{for(const child of [fixtureA,fixtureB]){try{child.kill();}catch{}}});
   await waitFor(async()=>{
-    const windows=(await windowList(30)).windows;
+    const windows=(await listWindows(80)).windows;
     return windows.some(win=>win.title===titleA)&&windows.some(win=>win.title===titleB);
   });
-  const focusedA=await focusWindow(titleA);
+  const focusedA=await focusWindowNative(titleA);
   assert.equal(focusedA.verified,true);
   assert.equal(focusedA.title,titleA);
   assert.equal(focusedA.restored,false);
-  assert.ok(focusedA.ambiguousMatches>=1);
   assert.equal((await activeWindow()).title,titleA);
-  const focusedB=await focusWindow(titleB);
+  const focusedB=await focusWindowNative(titleB);
   assert.equal(focusedB.verified,true);
   assert.equal(focusedB.title,titleB);
   assert.equal((await activeWindow()).title,titleB);
