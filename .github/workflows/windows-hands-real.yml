@@ -10,10 +10,13 @@ on:
       - 'agent/windows-hotkey.mjs'
       - 'agent/windows-ui-actions.mjs'
       - 'agent/windows-control-v2.mjs'
+      - 'agent/windows-control-v2-legacy.mjs'
+      - 'agent/windows-focus-v2.mjs'
       - 'agent/app-resolver.mjs'
       - 'agent/agent-v3.mjs'
       - 'agent/runtime-state.mjs'
       - 'lib/pc-desktop-tools.mjs'
+      - 'lib/pc-desktop-tools-legacy.mjs'
       - 'lib/pc-command-protocol.mjs'
       - 'lib/tool-policy.mjs'
       - 'lib/tool-core.mjs'
@@ -30,10 +33,13 @@ on:
       - 'agent/windows-hotkey.mjs'
       - 'agent/windows-ui-actions.mjs'
       - 'agent/windows-control-v2.mjs'
+      - 'agent/windows-control-v2-legacy.mjs'
+      - 'agent/windows-focus-v2.mjs'
       - 'agent/app-resolver.mjs'
       - 'agent/agent-v3.mjs'
       - 'agent/runtime-state.mjs'
       - 'lib/pc-desktop-tools.mjs'
+      - 'lib/pc-desktop-tools-legacy.mjs'
       - 'lib/pc-command-protocol.mjs'
       - 'lib/tool-policy.mjs'
       - 'lib/tool-core.mjs'
@@ -60,9 +66,12 @@ jobs:
           node --check agent/windows-hotkey.mjs
           node --check agent/windows-ui-actions.mjs
           node --check agent/windows-control-v2.mjs
+          node --check agent/windows-control-v2-legacy.mjs
+          node --check agent/windows-focus-v2.mjs
           node --check agent/app-resolver.mjs
           node --check agent/agent-v3.mjs
           node --check lib/pc-desktop-tools.mjs
+          node --check lib/pc-desktop-tools-legacy.mjs
           node --check lib/pc-command-protocol.mjs
           node --check lib/tool-policy.mjs
           node --check lib/tool-core.mjs
