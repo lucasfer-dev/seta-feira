@@ -44,6 +44,8 @@
           "windows-hotkey.mjs",
           "windows-ui-actions.mjs",
           "windows-control-v2.mjs",
+          "windows-control-v2-legacy.mjs",
+          "windows-focus-v2.mjs",
           "hardware.mjs",
           "secure-vault.mjs",
           "wake-word.mjs",
