@@ -5,6 +5,58 @@ import { buildPersonalityContract } from '../public/sexta-personality.js';
 const LEGACY_LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-2.5-flash-native-audio-preview-12-2025';
 const MODERN_LIVE_MODEL = process.env.GEMINI_LIVE_MODEL_31 || 'gemini-3.1-flash-live-preview';
 const LIVE_VOICE = process.env.GEMINI_LIVE_VOICE || 'Sulafat';
+const LIVE_FUNCTION_BUDGET = 28;
+
+const DESKTOP_LIVE_PC_TOOLS = new Set([
+  'pc_open_app',
+  'pc_open_project',
+  'pc_open_url',
+  'pc_system_info',
+  'pc_codex_task',
+  'pc_codex_status',
+  'pc_window_focus',
+  'pc_window_close',
+  'pc_window_state',
+  'pc_window_move_resize',
+  'pc_agent_task'
+]);
+
+const ANDROID_LIVE_PC_TOOLS = new Set([
+  'pc_codex_task',
+  'pc_codex_status'
+]);
+
+const LIVE_TOOL_PRIORITY = [
+  'pc_agent_task',
+  'pc_window_close',
+  'pc_window_focus',
+  'pc_window_state',
+  'pc_window_move_resize',
+  'pc_open_app',
+  'pc_open_url',
+  'pc_open_project',
+  'pc_system_info',
+  'pc_codex_task',
+  'pc_codex_status',
+  'android_open_app',
+  'android_open_settings',
+  'android_set_volume',
+  'android_adjust_volume',
+  'android_flashlight',
+  'android_media',
+  'android_notifications',
+  'android_reply_notification',
+  'android_device_info',
+  'memory_list',
+  'google_calendar_list',
+  'google_unread_email',
+  'google_drive_search',
+  'google_contacts_search',
+  'whatsapp_send_message',
+  'google_send_email',
+  'google_calendar_create'
+];
+const LIVE_TOOL_PRIORITY_INDEX = new Map(LIVE_TOOL_PRIORITY.map((name, index) => [name, index]));
 
 const NON_BLOCKING_LIVE_TOOLS = new Set([
   'android_open_app',
@@ -18,6 +70,33 @@ const NON_BLOCKING_LIVE_TOOLS = new Set([
   'pc_open_url',
   'pc_codex_task'
 ]);
+
+function compactLiveDeclarations(declarations = [], origin = '') {
+  const filtered = declarations.filter(declaration => {
+    const name = String(declaration?.name || '');
+    if (!name) return false;
+    if (origin === 'desktop') {
+      if (name.startsWith('android_')) return false;
+      if (name.startsWith('pc_')) return DESKTOP_LIVE_PC_TOOLS.has(name);
+    }
+    if (origin === 'android' && name.startsWith('pc_')) {
+      return ANDROID_LIVE_PC_TOOLS.has(name);
+    }
+    return true;
+  });
+
+  return filtered
+    .map((declaration, order) => ({ declaration, order }))
+    .sort((a, b) => {
+      const aName = String(a.declaration?.name || '');
+      const bName = String(b.declaration?.name || '');
+      const aPriority = LIVE_TOOL_PRIORITY_INDEX.has(aName) ? LIVE_TOOL_PRIORITY_INDEX.get(aName) : 1000;
+      const bPriority = LIVE_TOOL_PRIORITY_INDEX.has(bName) ? LIVE_TOOL_PRIORITY_INDEX.get(bName) : 1000;
+      return aPriority - bPriority || a.order - b.order;
+    })
+    .slice(0, LIVE_FUNCTION_BUDGET)
+    .map(item => item.declaration);
+}
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
@@ -49,7 +128,7 @@ export default async function handler(req, res) {
   const deviceRule = origin === 'android'
     ? 'DISPOSITIVO ATUAL: Android. Para ações no aparelho atual, prefira SEMPRE ferramentas android_. Só use pc_ se o usuário disser explicitamente PC, computador, Windows ou notebook. EXCEÇÃO: pc_codex_task e pc_codex_status podem ser usados no Android quando o usuário pedir Codex/programação; eles apenas delegam a tarefa ao agente Windows.'
     : origin === 'desktop'
-      ? 'DISPOSITIVO ATUAL: PC/desktop. Para ações no computador atual, prefira ferramentas pc_. Só use android_ se o usuário disser explicitamente celular, Android ou telefone.'
+      ? 'DISPOSITIVO ATUAL: PC/desktop. Para abrir, focar, minimizar, maximizar, mover e fechar janelas, use as ferramentas pc_ diretas disponíveis. Para tarefas internas ou multi-etapas em programas e navegador, prefira pc_agent_task; ele observa, age e verifica usando as ferramentas detalhadas fora da sessão Live. Só use android_ quando a conversa estiver no Android.'
       : 'DISPOSITIVO ATUAL: navegador. Escolha Android ou PC apenas quando o pedido ou o contexto indicar claramente o dispositivo. pc_codex_task pode ser usado para delegar programação ao agente Windows.';
 
   const liveRule = [
@@ -85,13 +164,21 @@ export default async function handler(req, res) {
     turnCoverage: 'TURN_INCLUDES_ONLY_ACTIVITY'
   };
 
-  const liveDeclarations = await getLiveToolDeclarations();
+  const allLiveDeclarations = await getLiveToolDeclarations();
+  const liveDeclarations = compactLiveDeclarations(allLiveDeclarations, origin);
   const functionDeclarations = liveDeclarations.map(declaration => (
     SUPPORTS_25_NON_BLOCKING && NON_BLOCKING_LIVE_TOOLS.has(declaration.name)
       ? { ...declaration, behavior: 'NON_BLOCKING' }
       : declaration
   ));
   const tools = [{ functionDeclarations }];
+  console.info('[SEXTA Live] tool profile', JSON.stringify({
+    origin: origin || 'browser',
+    model: LIVE_MODEL,
+    totalAvailable: allLiveDeclarations.length,
+    liveCount: functionDeclarations.length,
+    names: functionDeclarations.map(item => item.name)
+  }));
 
   const inputAudioTranscription = {
     languageCodes: ['pt-BR'],
@@ -152,6 +239,8 @@ export default async function handler(req, res) {
       setupLocked: true,
       actionRouter: 'sexta-tool-core',
       toolCount: functionDeclarations.length,
+      totalToolCount: allLiveDeclarations.length,
+      toolProfile: origin === 'desktop' ? 'desktop-compact-v1' : origin === 'android' ? 'android-compact-v1' : 'browser-compact-v1',
       clientVersion: clientVersion || 'legacy',
       liveGeneration: IS_GEMINI_31_LIVE ? '3.1' : '2.5',
       vadMode: manualVad ? 'manual' : hybridVad ? 'hybrid' : 'automatic',
