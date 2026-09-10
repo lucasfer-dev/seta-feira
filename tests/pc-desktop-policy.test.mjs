@@ -6,6 +6,7 @@ import { PC_DESKTOP_TOOL_DECLARATIONS } from '../lib/pc-desktop-tools.mjs';
 
 const browser = fs.readFileSync(new URL('../agent/browser-agent.mjs', import.meta.url), 'utf8');
 const windowsUi = fs.readFileSync(new URL('../agent/windows-ui.mjs', import.meta.url), 'utf8');
+const windowsHotkey = fs.readFileSync(new URL('../agent/windows-hotkey.mjs', import.meta.url), 'utf8');
 const windowsUiActions = fs.readFileSync(new URL('../agent/windows-ui-actions.mjs', import.meta.url), 'utf8');
 const windowControl = fs.readFileSync(new URL('../agent/windows-control-v2.mjs', import.meta.url), 'utf8');
 const toolCore = fs.readFileSync(new URL('../lib/tool-core.mjs', import.meta.url), 'utf8');
@@ -68,6 +69,13 @@ test('browser and Windows generic hands block sensitive final controls and passw
   assert.match(windowsUiActions, /Test-Sensitive/);
   assert.doesNotMatch(windowsUi, /Start-Process\s+.+-Verb\s+RunAs/i);
   assert.doesNotMatch(windowsUiActions, /ExecutionPolicy.*Bypass/i);
+});
+
+test('ui_hotkey uses native SendInput and reports elevation mismatch', () => {
+  assert.match(windowsHotkey, /SendInput/);
+  assert.match(windowsHotkey, /PC_UI_PRIVILEGE_MISMATCH:TARGET_ELEVATED/);
+  assert.match(windowsHotkey, /PC_UI_HOTKEY_SENDINPUT_FAILED/);
+  assert.doesNotMatch(windowsHotkey, /System\.Windows\.Forms\.SendKeys/);
 });
 
 test('desktop agent exposes full app-control primitives without arbitrary shell tool', () => {
