@@ -82,8 +82,20 @@ public static class SextaHotkeyNative {
   const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
   [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public InputUnion U; }
-  [StructLayout(LayoutKind.Explicit)] public struct InputUnion { [FieldOffset(0)] public KEYBDINPUT ki; }
-  [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo; }
+  [StructLayout(LayoutKind.Explicit)] public struct InputUnion {
+    [FieldOffset(0)] public MOUSEINPUT mi;
+    [FieldOffset(0)] public KEYBDINPUT ki;
+    [FieldOffset(0)] public HARDWAREINPUT hi;
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT {
+    public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo;
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT {
+    public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public UIntPtr dwExtraInfo;
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct HARDWAREINPUT {
+    public uint uMsg; public ushort wParamL; public ushort wParamH;
+  }
   [StructLayout(LayoutKind.Sequential)] public struct TOKEN_ELEVATION { public int TokenIsElevated; }
 
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -99,6 +111,10 @@ public static class SextaHotkeyNative {
     {"CTRL",0x11},{"SHIFT",0x10},{"ALT",0x12},{"TAB",0x09},{"ESC",0x1B},{"LEFT",0x25},{"RIGHT",0x27},{"F5",0x74},
     {"A",0x41},{"C",0x43},{"F",0x46},{"L",0x4C},{"Z",0x5A}
   };
+
+  static int lastSendError = 0;
+  public static int InputSize() { return Marshal.SizeOf(typeof(INPUT)); }
+  public static int LastSendError() { return lastSendError; }
 
   static bool IsExtended(ushort vk) { return vk == 0x25 || vk == 0x27; }
   static INPUT Input(ushort vk, bool up) {
@@ -129,6 +145,7 @@ public static class SextaHotkeyNative {
   }
 
   public static int SendCombo(string[] names) {
+    lastSendError = 0;
     if (names == null || names.Length == 0) return 0;
     var virtualKeys = new List<ushort>();
     foreach (var name in names) {
@@ -140,7 +157,10 @@ public static class SextaHotkeyNative {
     foreach (var vk in virtualKeys) inputs.Add(Input(vk, false));
     for (int i = virtualKeys.Count - 1; i >= 0; i--) inputs.Add(Input(virtualKeys[i], true));
     uint sent = SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf(typeof(INPUT)));
-    if (sent != inputs.Count) return -(int)sent;
+    if (sent != inputs.Count) {
+      lastSendError = Marshal.GetLastWin32Error();
+      return -(int)sent;
+    }
     return (int)sent;
   }
 }
@@ -152,10 +172,10 @@ $targetElevated=[SextaHotkeyNative]::TargetElevated($foreground)
 if($targetElevated -and -not $currentElevated){throw 'PC_UI_PRIVILEGE_MISMATCH:TARGET_ELEVATED'}
 $keys=@(${keyArray})
 $sent=[SextaHotkeyNative]::SendCombo($keys)
-if($sent -le 0){throw ('PC_UI_HOTKEY_SENDINPUT_FAILED:'+(-1*$sent))}
+if($sent -le 0){$err=[SextaHotkeyNative]::LastSendError();$size=[SextaHotkeyNative]::InputSize();throw ('PC_UI_HOTKEY_SENDINPUT_FAILED:win32='+$err+',inputSize='+$size+',sent='+$sent)}
 Start-Sleep -Milliseconds 40
 $after=[SextaHotkeyNative]::GetForegroundWindow()
-[pscustomobject]@{sent=$true;verified=$true;shortcut='${key.replace(/'/g, "''")}';via='SendInput';inputEvents=$sent;foregroundHwnd=$foreground.ToInt64();afterHwnd=$after.ToInt64();targetElevated=$targetElevated;agentElevated=$currentElevated}|ConvertTo-Json -Compress
+[pscustomobject]@{sent=$true;verified=$true;shortcut='${key.replace(/'/g, "''")}';via='SendInput';inputEvents=$sent;inputSize=[SextaHotkeyNative]::InputSize();foregroundHwnd=$foreground.ToInt64();afterHwnd=$after.ToInt64();targetElevated=$targetElevated;agentElevated=$currentElevated}|ConvertTo-Json -Compress
 `;
   return parseJson(await runPowerShell(script));
 }
