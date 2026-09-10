@@ -1,1 +1,0 @@
-This branch adds `windows-control-v2.mjs` as the canonical HWND management layer. Agent wiring must map window_list/window_focus/window_close/window_state/window_move_resize to this module before merge.
