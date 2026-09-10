@@ -1,1 +1,0 @@
-Pending: wire agent-v3.mjs and lib/pc-desktop-tools.mjs. This marker will be deleted after wiring.
