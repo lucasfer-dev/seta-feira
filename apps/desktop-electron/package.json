@@ -42,6 +42,7 @@
           "windows-ui.mjs",
           "windows-ui-legacy.mjs",
           "windows-hotkey.mjs",
+          "windows-type-v2.mjs",
           "windows-ui-actions.mjs",
           "windows-control-v2.mjs",
           "windows-control-v2-legacy.mjs",
