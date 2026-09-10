@@ -15,6 +15,9 @@ on:
       - 'api/agent-*.js'
       - 'api/sync.js'
       - 'tests/pc-desktop-policy.test.mjs'
+      - 'tests/windows-control-v2-contract.test.mjs'
+      - 'tests/pc-control-safety-contract.test.mjs'
+      - 'tests/pc-command-protocol.test.mjs'
       - 'tests/agent-*.test.mjs'
       - 'tests/app-resolver.test.mjs'
       - 'tests/desktop-native-pairing.test.mjs'
@@ -35,6 +38,9 @@ on:
       - 'api/agent-*.js'
       - 'api/sync.js'
       - 'tests/pc-desktop-policy.test.mjs'
+      - 'tests/windows-control-v2-contract.test.mjs'
+      - 'tests/pc-control-safety-contract.test.mjs'
+      - 'tests/pc-command-protocol.test.mjs'
       - 'tests/agent-*.test.mjs'
       - 'tests/app-resolver.test.mjs'
       - 'tests/desktop-native-pairing.test.mjs'
@@ -62,6 +68,8 @@ jobs:
           node --check agent/setup.mjs
           node --check agent/control-local.mjs
           node --check agent/windows-ui.mjs
+          node --check agent/windows-ui-actions.mjs
+          node --check agent/windows-control-v2.mjs
           node --check agent/browser-agent.mjs
           node --check agent/hardware.mjs
           node --check agent/secure-vault.mjs
@@ -74,11 +82,12 @@ jobs:
           node --check lib/agent-auth.mjs
           node --check api/pc-vision-analyze.js
           node --check api/sync.js
+          node --check tests/windows-control-v2-contract.test.mjs
           node --check apps/desktop-electron/secure-main.cjs
           node --check apps/desktop-electron/main.cjs
           node --check apps/desktop-electron/windows-habitat.cjs
           node --check apps/desktop-electron/preload.cjs
-      - name: Verify Windows automation and v4.1 assemblies
+      - name: Verify Windows automation and v4.2 assemblies
         shell: powershell
         run: |
           Add-Type -AssemblyName UIAutomationClient
@@ -92,28 +101,32 @@ jobs:
           Write-Host 'Windows UI Automation + DPAPI + Speech assemblies OK'
       - name: Run desktop and agent policy tests
         shell: pwsh
-        run: node --test tests/pc-desktop-policy.test.mjs tests/tool-policy.test.mjs tests/agent-runtime.test.mjs tests/agent-auth.test.mjs tests/app-resolver.test.mjs tests/desktop-native-pairing.test.mjs tests/v4-contracts.test.mjs tests/v4-1-operational.test.mjs
+        run: node --test tests/pc-desktop-policy.test.mjs tests/windows-control-v2-contract.test.mjs tests/pc-control-safety-contract.test.mjs tests/pc-command-protocol.test.mjs tests/tool-policy.test.mjs tests/agent-runtime.test.mjs tests/agent-auth.test.mjs tests/app-resolver.test.mjs tests/desktop-native-pairing.test.mjs tests/v4-contracts.test.mjs tests/v4-1-operational.test.mjs
       - name: Assert no generic shell or destructive browser primitive
         shell: pwsh
         run: |
-          Select-String -Path agent/agent-v3.mjs -Pattern "screen_analyze","browser_snapshot","browser_tabs","browser_reload","ui_tree","agent_control","hardware_status" | Out-Null
+          Select-String -Path agent/agent-v3.mjs -Pattern "screen_analyze","browser_snapshot","browser_tabs","browser_reload","ui_tree","ui_action","window_close","window_move_resize","agent_control","hardware_status" | Out-Null
           if (Select-String -Path agent/agent-v3.mjs -Pattern "action === 'shell'","action === 'exec'") { throw 'Generic shell action detected' }
           Select-String -Path agent/browser-agent.mjs -Pattern "PC_BROWSER_SENSITIVE_CONTROL_BLOCKED","PC_BROWSER_PASSWORD_FIELD_BLOCKED","browserTabs","browserSelectTab","browserForward","browserReload" | Out-Null
           if (Select-String -Path agent/browser-agent.mjs -Pattern "Page.setDownloadBehavior","DOM.setFileInputFiles","uploadFile") { throw 'Hidden download/upload primitive detected' }
           Select-String -Path agent/windows-ui.mjs -Pattern "PC_UI_SENSITIVE_CONTROL_BLOCKED","PC_UI_PASSWORD_FIELD_BLOCKED" | Out-Null
-          if (Select-String -Path agent/windows-ui.mjs -Pattern "ExecutionPolicy.*Bypass","EncodedCommand") { throw 'Defender-hostile PowerShell invocation detected' }
+          Select-String -Path agent/windows-ui-actions.mjs -Pattern "PC_UI_SENSITIVE_CONTROL_BLOCKED","PC_UI_PASSWORD_FIELD_BLOCKED","AutomationId","ValuePattern","SelectionItemPattern","ExpandCollapsePattern","screen-coordinate-fallback" | Out-Null
+          Select-String -Path agent/windows-control-v2.mjs -Pattern "EnumWindows","ShowWindowAsync","SetForegroundWindow","SetWindowPos","PostMessage","PC_WINDOW_CLOSE_NOT_VERIFIED" | Out-Null
+          if (Select-String -Path agent/windows-ui.mjs,agent/windows-ui-actions.mjs,agent/windows-control-v2.mjs -Pattern "ExecutionPolicy.*Bypass","EncodedCommand") { throw 'Defender-hostile PowerShell invocation detected' }
           Select-String -Path agent/windows-ui.mjs -SimpleMatch "'-Command', '-'" | Out-Null
-          Select-String -Path agent/app-resolver.mjs -Pattern "Get-StartApps","shell:AppsFolder","BLOCKED_EXECUTABLES","APP_NOT_FOUND" | Out-Null
+          Select-String -Path agent/windows-ui-actions.mjs -SimpleMatch "'-Command','-'" | Out-Null
+          Select-String -Path agent/windows-control-v2.mjs -SimpleMatch "'-Command', '-'" | Out-Null
+          Select-String -Path agent/app-resolver.mjs -Pattern "Get-StartApps","shell:AppsFolder","App Paths","BLOCKED_EXECUTABLES","APP_NOT_FOUND","APP_LAUNCH_NOT_VERIFIED" | Out-Null
           if (Select-String -Path agent/app-resolver.mjs -Pattern "shell:\s*true","-EncodedCommand","ExecutionPolicy.*Bypass") { throw 'Unsafe app resolver primitive detected' }
           Select-String -Path api/pc-vision-analyze.js -Pattern "GEMINI_VISION_FALLBACK_MODELS","vision_temporarily_unavailable","cacheHit","cooldowns" | Out-Null
-          Select-String -Path agent/runtime-state.mjs -Pattern "AUTONOMY_OBSERVER_READ_ONLY","AUTONOMOUS_MODE_REQUIRED","AGENT_PAUSED","PRIVACY_HARDWARE_DISABLED","4.1.0" | Out-Null
+          Select-String -Path agent/runtime-state.mjs -Pattern "AUTONOMY_OBSERVER_READ_ONLY","AUTONOMOUS_MODE_REQUIRED","AGENT_PAUSED","PRIVACY_HARDWARE_DISABLED","4.2.0" | Out-Null
           Select-String -Path agent/secure-vault.mjs -Pattern "ProtectedData","CurrentUser" | Out-Null
       - name: Validate desktop pairing, origin lock, recovery and updater
         shell: pwsh
         run: |
           $pkg = Get-Content apps/desktop-electron/package.json -Raw | ConvertFrom-Json
           try { $desktopVersion = [version]$pkg.version } catch { throw 'Desktop version must be valid semver' }
-          if ($desktopVersion -lt [version]'2.1.3') { throw 'Desktop version predates secure installed-app resolver' }
+          if ($desktopVersion -lt [version]'2.3.0') { throw 'Desktop version predates PC Control v2' }
           if ($pkg.main -ne 'secure-main.cjs') { throw 'Secure desktop entrypoint missing' }
           if (-not $pkg.build.nsis) { throw 'NSIS config missing' }
           if (-not $pkg.scripts.dist) { throw 'Desktop dist script missing' }
@@ -122,6 +135,8 @@ jobs:
           if (-not ($pkg.build.files -contains 'windows-habitat.cjs')) { throw 'Windows habitat module missing from Desktop package' }
           $agentResource = @($pkg.build.extraResources | Where-Object { $_.to -eq 'agent' } | Select-Object -First 1)
           if (-not $agentResource -or -not ($agentResource.filter -contains 'app-resolver.mjs')) { throw 'Installed-app resolver missing from Desktop package' }
+          if (-not ($agentResource.filter -contains 'windows-control-v2.mjs')) { throw 'Window control v2 missing from Desktop package' }
+          if (-not ($agentResource.filter -contains 'windows-ui-actions.mjs')) { throw 'Generic UIA action layer missing from Desktop package' }
           if (-not (Test-Path apps/desktop-electron/fallback.html)) { throw 'Offline fallback missing' }
           if (-not (Test-Path .github/workflows/desktop-release.yml)) { throw 'Desktop release workflow missing' }
           Select-String -Path apps/desktop-electron/main.cjs -Pattern "autoDownload = false","scheduleAgentRestart","scheduleWakeRestart","system:pair-agent","SEXTA_AGENT_STATE","fallback.html" | Out-Null
