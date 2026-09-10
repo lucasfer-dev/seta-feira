@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const AGENT_PROTOCOL_VERSION = '4.1.0';
+export const AGENT_PROTOCOL_VERSION = '4.2.0';
 const STATE_PATH = process.env.SEXTA_AGENT_STATE || fileURLToPath(new URL('./runtime-state.json', import.meta.url));
 
 const DEFAULTS = Object.freeze({
@@ -68,8 +68,8 @@ export function evaluateLocalAction(action, payload = {}, state = readRuntimeSta
   if (state.paused) return { allowed: false, reason: 'AGENT_PAUSED', state };
 
   if (!state.privacy.clipboard && ['read_clipboard', 'copy_text'].includes(name)) return { allowed: false, reason: 'PRIVACY_CLIPBOARD_DISABLED', state };
-  if (!state.privacy.screen && name === 'screen_analyze') return { allowed: false, reason: 'PRIVACY_SCREEN_DISABLED', state };
-  if (!state.privacy.uiAutomation && (name === 'window_list' || name === 'window_focus' || name.startsWith('ui_'))) return { allowed: false, reason: 'PRIVACY_UI_AUTOMATION_DISABLED', state };
+  if (!state.privacy.screen && ['screen_analyze', 'screen_click_point'].includes(name)) return { allowed: false, reason: 'PRIVACY_SCREEN_DISABLED', state };
+  if (!state.privacy.uiAutomation && (name.startsWith('window_') || name.startsWith('ui_'))) return { allowed: false, reason: 'PRIVACY_UI_AUTOMATION_DISABLED', state };
   if (!state.privacy.browser && name.startsWith('browser_')) return { allowed: false, reason: 'PRIVACY_BROWSER_DISABLED', state };
   if (!state.privacy.hardware && name === 'hardware_status') return { allowed: false, reason: 'PRIVACY_HARDWARE_DISABLED', state };
 

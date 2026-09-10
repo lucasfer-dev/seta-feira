@@ -3,9 +3,10 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+const pcDesktopSource = () => `${read('lib/pc-desktop-tools.mjs')}\n${read('lib/pc-desktop-tools-legacy.mjs')}`;
 
 test('pc_screen_analyze não pede nova permissão quando o provedor visual cai', () => {
-  const pc = read('lib/pc-desktop-tools.mjs');
+  const pc = pcDesktopSource();
   assert.match(pc, /visionProviderUnavailable/);
   assert.match(pc, /uiTreeFallback/);
   assert.match(pc, /permissionGranted: true/);
@@ -22,6 +23,6 @@ test('visão troca de modelo em timeout em vez de repetir modo compatível inuti
 });
 
 test('declaração informa ao modelo que autorização local já foi concedida', () => {
-  const pc = read('lib/pc-desktop-tools.mjs');
+  const pc = pcDesktopSource();
   assert.match(pc, /Quando esta ferramenta executa, a autorização local já foi concedida no PC Agent/);
 });

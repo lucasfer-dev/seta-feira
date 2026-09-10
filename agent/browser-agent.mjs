@@ -63,18 +63,47 @@ async function cdpCall(port, method, params = {}, preferredTargetId = '') {
   const target = await resolveTarget(port, preferredTargetId); const Ws = globalThis.WebSocket; if (!Ws) throw new Error('PC_BROWSER_WEBSOCKET_UNAVAILABLE');
   return new Promise((resolve, reject) => {
     const ws = new Ws(target.webSocketDebuggerUrl); const id = Math.floor(Math.random() * 1_000_000) + 1;
-    const timer = setTimeout(() => { try { ws.close(); } catch {}; reject(new Error(`PC_BROWSER_CDP_TIMEOUT:${method}`)); }, 8000);
+    let settled = false;
+    const finish = (fn, value) => { if (settled) return; settled = true; clearTimeout(timer); try { ws.close(); } catch {}; fn(value); };
+    const timer = setTimeout(() => finish(reject, new Error(`PC_BROWSER_CDP_TIMEOUT:${method}`)), 8000);
     ws.addEventListener('open', () => ws.send(JSON.stringify({ id, method, params })));
-    ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('PC_BROWSER_CDP_SOCKET_FAILED')); });
-    ws.addEventListener('message', event => { let message; try { message = JSON.parse(String(event.data || '')); } catch { return; } if (message.id !== id) return; clearTimeout(timer); try { ws.close(); } catch {}; if (message.error) reject(new Error(`PC_BROWSER_CDP_${message.error.code}:${message.error.message}`)); else resolve(message.result || {}); });
+    ws.addEventListener('error', () => finish(reject, new Error('PC_BROWSER_CDP_SOCKET_FAILED')));
+    ws.addEventListener('message', event => {
+      let message;
+      try { message = JSON.parse(String(event.data || '')); } catch { return; }
+      if (message.id !== id) return;
+      if (message.error) return finish(reject, new Error(`PC_BROWSER_CDP_${message.error.code}:${message.error.message}`));
+      finish(resolve, message.result || {});
+    });
   });
 }
-function parseEval(result) { const value = result?.result?.value; if (typeof value === 'string') { try { return JSON.parse(value); } catch { return value; } } return value; }
-async function evaluate(port, expression, returnByValue = true, preferredTargetId = '') { return cdpCall(port, 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue, userGesture: true }, preferredTargetId); }
+function parseEval(result) {
+  const remote = result?.result;
+  if (!remote || typeof remote !== 'object') return undefined;
+  if (!Object.prototype.hasOwnProperty.call(remote, 'value')) return undefined;
+  const value = remote.value;
+  if (typeof value === 'string') { try { return JSON.parse(value); } catch { return value; } }
+  return value;
+}
+function evaluationError(result = {}) {
+  const ex = result?.exceptionDetails;
+  if (!ex) return '';
+  const description = ex.exception?.description || ex.exception?.value || ex.text || 'JavaScript evaluation failed';
+  return String(description).replace(/\s+/g, ' ').slice(0, 500);
+}
+async function evaluate(port, expression, returnByValue = true, preferredTargetId = '') {
+  const result = await cdpCall(port, 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue, userGesture: true }, preferredTargetId);
+  const error = evaluationError(result);
+  if (error) throw new Error(`PC_BROWSER_EVAL_EXCEPTION:${error}`);
+  return result;
+}
 async function browserState(port, preferredTargetId = '') {
   const target = await resolveTarget(port, preferredTargetId);
-  const raw = await evaluate(port, `(() => JSON.stringify({url:location.href,title:document.title,readyState:document.readyState,timeOrigin:performance.timeOrigin||0,historyLength:history.length,textMarker:String(document.body?.innerText||'').replace(/\\s+/g,' ').trim().slice(0,1800),active:(()=>{const e=document.activeElement;return e?[e.tagName,e.id,e.getAttribute('name'),e.getAttribute('aria-label')].filter(Boolean).join('|'):'';})()}))())`, true, target.id);
-  return { ...(parseEval(raw) || {}), targetId: target.id };
+  const expression = `JSON.stringify({url:location.href,title:document.title,readyState:document.readyState,timeOrigin:performance.timeOrigin||0,historyLength:history.length,textMarker:String(document.body?.innerText||'').replace(/\\s+/g,' ').trim().slice(0,1800),active:(()=>{const e=document.activeElement;return e?[e.tagName,e.id,e.getAttribute('name'),e.getAttribute('aria-label')].filter(Boolean).join('|'):'';})()})`;
+  const raw = await evaluate(port, expression, true, target.id);
+  const state = parseEval(raw);
+  if (!state || typeof state !== 'object' || !state.url) throw new Error(`PC_BROWSER_STATE_INVALID:${raw?.result?.type || 'no-result'}`);
+  return { ...state, targetId: target.id };
 }
 async function stableBrowserState(port, targetId = '', timeoutMs = 1800) {
   const deadline = Date.now() + timeoutMs; let last = {}; let lastError = '';
@@ -115,15 +144,23 @@ async function waitForNavigation(port, { targetId = '', before = {}, expectedUrl
     } catch (error) { lastError = String(error?.message || error); }
     await sleep(120);
   }
-  if (!after.url && expectedUrl) { try { const target = await resolveTarget(port, currentTargetId, expectedUrl); after = { url: target.url, title: target.title || '', readyState: 'unknown', targetId: target.id, diagnosticError: lastError }; } catch {} }
+  if (!after.url && expectedUrl) {
+    try {
+      const target = await resolveTarget(port, currentTargetId, expectedUrl);
+      after = { url: target.url, title: target.title || '', readyState: 'unknown', targetId: target.id, diagnosticError: lastError };
+    } catch {}
+  }
   return after;
 }
 
 export async function browserOpen(cfg, rawUrl) {
   const url = normalizeHttpUrl(rawUrl); const port = await ensureBrowser(cfg); const target = await pageTarget(port); const before = await browserState(port, target.id).catch(() => ({ url: target.url, title: target.title, timeOrigin: 0, targetId: target.id })); invalidateSnapshot(target.id);
   await cdpCall(port, 'Page.enable', {}, target.id).catch(() => {}); const result = await cdpCall(port, 'Page.navigate', { url: url.toString() }, target.id);
-  const after = await waitForNavigation(port, { targetId: target.id, before, expectedUrl: url.toString(), timeoutMs: 9000 }); if (after.targetId) await activateTarget(port, after.targetId).catch(() => {});
-  const verified = Boolean(after.url && urlMatches(after.url, url.toString())); if (!verified) throw new Error(`PC_BROWSER_NAVIGATION_NOT_VERIFIED:${after.url || 'unknown'}${after.diagnosticError ? `:${after.diagnosticError}` : ''}`);
+  let after = await waitForNavigation(port, { targetId: target.id, before, expectedUrl: url.toString(), timeoutMs: 9000 });
+  if (after.targetId) await activateTarget(port, after.targetId).catch(() => {});
+  if (after.readyState === 'unknown') after = await stableBrowserState(port, after.targetId || target.id, 3500);
+  const verified = Boolean(after.url && urlMatches(after.url, url.toString()) && ['interactive','complete'].includes(after.readyState));
+  if (!verified) throw new Error(`PC_BROWSER_NAVIGATION_NOT_VERIFIED:${after.url || 'unknown'}${after.diagnosticError ? `:${after.diagnosticError}` : ''}`);
   return { opened: after.url, requestedUrl: url.toString(), frameId: result.frameId || null, tabId: after.targetId || target.id, port, profile: browserProfile(cfg), verified, before, after };
 }
 export async function browserTabs(cfg) {
@@ -137,12 +174,15 @@ export async function browserSelectTab(cfg,index) {
   const targetId=listing?.ids?.[i] || pages[i]?.id || ''; if(!targetId)throw new Error('PC_BROWSER_TAB_NOT_FOUND'); const target=pages.find(page=>page.id===targetId); if(!target)throw new Error('PC_BROWSER_STALE_TAB_LIST');
   const wasSelected=selectedTargetId===target.id; invalidateSnapshot(target.id); if(!wasSelected){await activateTarget(port,target.id);await sleep(140);}else{setSelectedTarget(port,target.id);}
   const selected=(await pageTargets(port)).find(page=>page.id===target.id); if(!selected||selectedTargetId!==target.id)throw new Error('PC_BROWSER_TAB_SELECTION_NOT_VERIFIED');
+  await stableBrowserState(port,target.id,2500);
   return{selected:true,verified:true,index:i,id:target.id,title:String(selected.title||'').slice(0,240),url:String(selected.url||'').slice(0,1000),reused:wasSelected};
 }
 export async function browserSnapshot(cfg) {
   const port=await ensureBrowser(cfg); const target=await pageTarget(port); const state=await stableBrowserState(port,target.id,3000); const token=crypto.randomBytes(8).toString('hex'); const encodedToken=JSON.stringify(token);
   const expression=`(() => {const token=${encodedToken};const visible=el=>{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&Number(s.opacity||1)>0&&r.width>0&&r.height>0;};const nodes=[...document.querySelectorAll('a,button,input,textarea,select,[role="button"],[role="link"],[role="checkbox"],[role="tab"],[contenteditable="true"]')].filter(visible).slice(0,140);const elements=nodes.map((el,index)=>{const type=String(el.getAttribute('type')||'').toLowerCase();const password=type==='password';const ref=token+':'+index;el.setAttribute('data-sexta-ref',ref);const safeValue=password?'':String(el.value||'');const text=String(el.innerText||safeValue||el.getAttribute('aria-label')||el.getAttribute('title')||el.getAttribute('placeholder')||'').replace(/\\s+/g,' ').trim().slice(0,240);return{index,ref,tag:el.tagName.toLowerCase(),role:el.getAttribute('role')||'',type,password,text,name:String(el.getAttribute('name')||'').slice(0,120),id:String(el.id||'').slice(0,120),disabled:Boolean(el.disabled),href:el.tagName==='A'?String(el.href||'').slice(0,500):''};});return JSON.stringify({title:document.title,url:location.href,text:String(document.body?.innerText||'').replace(/\\n{3,}/g,'\\n\\n').slice(0,14000),elements});})()`;
-  const data=parseEval(await evaluate(port,expression,true,target.id))||{}; snapshots.set(target.id,{token,url:data.url||state.url,timeOrigin:state.timeOrigin,elements:Array.isArray(data.elements)?data.elements:[],createdAt:Date.now()}); return{...data,tabId:target.id,snapshotId:token,documentTimeOrigin:state.timeOrigin};
+  const data=parseEval(await evaluate(port,expression,true,target.id));
+  if (!data || typeof data !== 'object' || !data.url) throw new Error('PC_BROWSER_SNAPSHOT_INVALID');
+  snapshots.set(target.id,{token,url:data.url||state.url,timeOrigin:state.timeOrigin,elements:Array.isArray(data.elements)?data.elements:[],createdAt:Date.now()}); return{...data,tabId:target.id,snapshotId:token,documentTimeOrigin:state.timeOrigin};
 }
 async function snapshotElement(port,index) {
   const target=await pageTarget(port); const snapshot=snapshots.get(target.id); if(!snapshot)throw new Error('PC_BROWSER_SNAPSHOT_REQUIRED'); const current=await stableBrowserState(port,target.id,2200);

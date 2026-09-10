@@ -1,6 +1,6 @@
 {
   "name": "sexta-desktop",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "main": "secure-main.cjs",
   "scripts": {
@@ -40,6 +40,13 @@
           "audit.mjs",
           "browser-agent.mjs",
           "windows-ui.mjs",
+          "windows-ui-legacy.mjs",
+          "windows-hotkey.mjs",
+          "windows-type-v2.mjs",
+          "windows-ui-actions.mjs",
+          "windows-control-v2.mjs",
+          "windows-control-v2-legacy.mjs",
+          "windows-focus-v2.mjs",
           "hardware.mjs",
           "secure-vault.mjs",
           "wake-word.mjs",

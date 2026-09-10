@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { focusWindowNative, listWindows } from './windows-control-v2.mjs';
 
 const CACHE_MS = 60_000;
 const BLOCKED_EXECUTABLES = new Set([
@@ -21,7 +22,11 @@ const APP_ALIASES = new Map([
   ['whatsapp', 'whatsapp'],
   ['discord', 'discord'],
   ['spotify', 'spotify'],
-  ['steam', 'steam']
+  ['steam', 'steam'],
+  ['explorer', 'file explorer'],
+  ['explorador', 'file explorer'],
+  ['bloco de notas', 'notepad'],
+  ['notepad', 'notepad']
 ]);
 
 let cached = { at: 0, apps: [] };
@@ -69,7 +74,7 @@ export function isSafeDiscoveredApp(app = {}) {
   const name = String(app?.name || '').trim();
   const appId = String(app?.appId || '').trim();
   if (!name || BLOCKED_DYNAMIC_APP.test(name) || BLOCKED_DYNAMIC_APP.test(appId)) return false;
-  if (app?.source === 'shortcut') return isSafeExecutable(app.target);
+  if (app?.source === 'shortcut' || app?.source === 'apppath') return isSafeExecutable(app.target);
   if (app?.source === 'startapp') return Boolean(appId) && !/[\r\n]/.test(appId);
   return false;
 }
@@ -111,14 +116,14 @@ function runPowerShell(script, timeout = 10_000) {
       try { child.kill(); } catch {}
       finish(reject, new Error('APP_DISCOVERY_TIMEOUT'));
     }, timeout);
-    child.stdout?.on('data', data => { out += data; });
-    child.stderr?.on('data', data => { err += data; });
+    child.stdout?.on('data', data => { out += data.toString('utf8'); });
+    child.stderr?.on('data', data => { err += data.toString('utf8'); });
     child.on('error', error => finish(reject, error));
     child.on('close', code => code === 0
       ? finish(resolve, String(out || '').trim())
       : finish(reject, new Error(String(err || out || `powershell exit ${code}`).trim())));
     child.stdin?.on('error', error => { if (error?.code !== 'EPIPE') finish(reject, error); });
-    child.stdin?.end(`${String(script || '')}\r\n`, 'utf8');
+    child.stdin?.end(`[Console]::OutputEncoding=[Text.Encoding]::UTF8;$OutputEncoding=[Text.Encoding]::UTF8\r\n${String(script || '')}\r\n`, 'utf8');
   });
 }
 
@@ -131,7 +136,6 @@ async function discoverInstalledApps() {
   if (Date.now() - cached.at < CACHE_MS && cached.apps.length) return cached.apps;
 
   const script = String.raw`
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $items = New-Object System.Collections.ArrayList
 try {
   foreach ($app in @(Get-StartApps)) {
@@ -148,7 +152,7 @@ $roots = @(
 ) | Where-Object { $_ -and (Test-Path $_) }
 try {
   $ws = New-Object -ComObject WScript.Shell
-  foreach ($lnk in @($roots | ForEach-Object { Get-ChildItem $_ -Filter *.lnk -Recurse -ErrorAction SilentlyContinue } | Select-Object -First 400)) {
+  foreach ($lnk in @($roots | ForEach-Object { Get-ChildItem $_ -Filter *.lnk -Recurse -ErrorAction SilentlyContinue } | Select-Object -First 600)) {
     try {
       $shortcut = $ws.CreateShortcut($lnk.FullName)
       $target = [string]$shortcut.TargetPath
@@ -158,6 +162,20 @@ try {
     } catch {}
   }
 } catch {}
+try {
+  foreach($base in @('HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths')) {
+    if(-not (Test-Path $base)){continue}
+    foreach($key in @(Get-ChildItem $base -ErrorAction SilentlyContinue | Select-Object -First 500)) {
+      try {
+        $target=[string](Get-ItemPropertyValue $key.PSPath '(default)' -ErrorAction Stop)
+        if($target -and [IO.Path]::GetExtension($target) -ieq '.exe' -and (Test-Path $target)) {
+          $name=[IO.Path]::GetFileNameWithoutExtension($target)
+          [void]$items.Add([pscustomobject]@{name=$name;source='apppath';appId='';target=$target})
+        }
+      } catch {}
+    }
+  }
+} catch {}
 @($items) | ConvertTo-Json -Depth 3 -Compress
 `;
 
@@ -165,7 +183,7 @@ try {
   const items = (Array.isArray(parsed) ? parsed : parsed ? [parsed] : [])
     .map(item => ({
       name: String(item?.name || '').trim().slice(0, 180),
-      source: item?.source === 'shortcut' ? 'shortcut' : 'startapp',
+      source: item?.source === 'shortcut' ? 'shortcut' : item?.source === 'apppath' ? 'apppath' : 'startapp',
       appId: String(item?.appId || '').trim().slice(0, 500),
       target: String(item?.target || '').trim()
     }))
@@ -188,28 +206,77 @@ function spawnDetached(command, args = []) {
   child.unref();
 }
 
-async function launchDiscovered(app) {
+function windowScore(requested, window = {}) {
+  const titleScore = scoreMatch(requested, window.title || '');
+  const processScore = scoreMatch(requested, window.process || '');
+  return Math.max(titleScore, processScore);
+}
+
+async function findOpenWindow(...names) {
+  try {
+    const snapshot = await listWindows(80);
+    const windows = Array.isArray(snapshot?.windows) ? snapshot.windows : [];
+    const ranked = windows.map(window => ({
+      window,
+      score: Math.max(...names.filter(Boolean).map(name => windowScore(name, window)), -1)
+    })).filter(item => item.score >= 60)
+      .sort((a, b) => b.score - a.score || Number(b.window.active) - Number(a.window.active));
+    return ranked[0]?.window || null;
+  } catch {
+    return null;
+  }
+}
+
+async function waitForVisibleWindow(names, timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const found = await findOpenWindow(...names);
+    if (found) return found;
+    await new Promise(resolve => setTimeout(resolve, 250));
+  }
+  return null;
+}
+
+async function focusExisting(requested) {
+  const existing = await findOpenWindow(requested, aliasName(requested));
+  if (!existing) return null;
+  const focus = await focusWindowNative(existing.title || requested, existing.hwnd);
+  return { opened: true, alreadyOpen: true, focused: true, verified: focus.verified === true, app: requested, window: focus, matchedBy: 'existing_window' };
+}
+
+async function launchDiscovered(app, requested) {
   if (!isSafeDiscoveredApp(app)) throw new Error('APP_TARGET_NOT_SAFE');
   if (app.source === 'startapp') {
     spawnDetached('explorer.exe', [`shell:AppsFolder\\${app.appId}`]);
-    return { opened: true, app: app.name, matchedBy: 'windows_start_apps' };
-  }
-  if (app.source === 'shortcut' && fs.existsSync(app.target)) {
+  } else if ((app.source === 'shortcut' || app.source === 'apppath') && fs.existsSync(app.target)) {
     spawnDetached(app.target, []);
-    return { opened: true, app: app.name, matchedBy: 'windows_shortcut' };
+  } else {
+    throw new Error('APP_TARGET_NOT_SAFE');
   }
-  throw new Error('APP_TARGET_NOT_SAFE');
+  const exeName = app.target ? path.win32.basename(app.target, path.win32.extname(app.target)) : '';
+  const visible = await waitForVisibleWindow([requested, app.name, exeName], 9000);
+  if (!visible) throw new Error('APP_LAUNCH_NOT_VERIFIED');
+  const focus = await focusWindowNative(visible.title || app.name, visible.hwnd);
+  return { opened: true, alreadyOpen: false, focused: true, verified: focus.verified === true, app: app.name, matchedBy: app.source === 'startapp' ? 'windows_start_apps' : app.source === 'apppath' ? 'windows_app_paths' : 'windows_shortcut', window: focus };
 }
 
 export async function launchApp(cfg = {}, requested = '') {
   const name = sanitizeRequestedApp(requested);
+
+  const existing = await focusExisting(name);
+  if (existing) return existing;
+
   const configured = resolveConfiguredApp(cfg.apps || {}, name);
   if (configured) {
     const command = String(configured.value.command || '').trim();
     const args = Array.isArray(configured.value.args) ? configured.value.args.map(String).slice(0, 20) : [];
     if (!command) throw new Error('APP_CONFIG_INVALID');
     spawnDetached(command, args);
-    return { opened: true, app: configured.key, matchedBy: 'configured_allowlist' };
+    const exeName = path.win32.basename(command, path.win32.extname(command));
+    const visible = await waitForVisibleWindow([name, configured.key, exeName], 9000);
+    if (!visible) throw new Error('APP_LAUNCH_NOT_VERIFIED');
+    const focus = await focusWindowNative(visible.title || configured.key, visible.hwnd);
+    return { opened: true, alreadyOpen: false, focused: true, verified: focus.verified === true, app: configured.key, matchedBy: 'configured_allowlist', window: focus };
   }
 
   const installed = await discoverInstalledApps();
@@ -223,10 +290,10 @@ export async function launchApp(cfg = {}, requested = '') {
       .map(item => item.name);
     throw new Error(`APP_NOT_FOUND${suggestions.length ? `: ${suggestions.join(', ')}` : ''}`);
   }
-  return launchDiscovered(match);
+  return launchDiscovered(match, name);
 }
 
 export async function listInstalledAppsForDiagnostics() {
   const apps = await discoverInstalledApps();
-  return apps.map(app => ({ name: app.name, source: app.source })).slice(0, 250);
+  return apps.map(app => ({ name: app.name, source: app.source })).slice(0, 400);
 }

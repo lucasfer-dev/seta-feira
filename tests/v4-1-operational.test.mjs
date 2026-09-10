@@ -45,10 +45,20 @@ test('Busca de memória prioriza relevância sem apagar nada', async () => {
   assert.ok(results[0].relevance > 0);
 });
 
-test('Desktop protocol v2 aceita navegação multi-aba e rejeita shell', () => {
-  assert.equal(PC_COMMAND_PROTOCOL_VERSION, 2);
-  for (const action of ['browser_tabs', 'browser_select_tab', 'browser_forward', 'browser_reload']) {
-    const encoded = encodeDesktopCommand(action, action === 'browser_select_tab' ? { index: 1 } : {});
+test('Desktop protocol v3 aceita controle de janelas, UI e navegação multi-aba sem shell', () => {
+  assert.equal(PC_COMMAND_PROTOCOL_VERSION, 3);
+  const cases = [
+    ['browser_tabs', {}],
+    ['browser_select_tab', { index: 1 }],
+    ['browser_forward', {}],
+    ['browser_reload', {}],
+    ['window_close', { title: 'Bloco de Notas' }],
+    ['window_state', { title: 'Bloco de Notas', state: 'minimize' }],
+    ['window_move_resize', { title: 'Bloco de Notas', x: 100, y: 100, width: 640, height: 480 }],
+    ['ui_action', { action: 'focus', name: 'Pesquisar' }]
+  ];
+  for (const [action, payload] of cases) {
+    const encoded = encodeDesktopCommand(action, payload);
     const decoded = decodeDesktopCommand(encoded.action, encoded.payload);
     assert.equal(decoded.action, action);
   }
