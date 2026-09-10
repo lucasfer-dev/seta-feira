@@ -15,9 +15,23 @@ function Get-SextaUtf8([string]$name){
 Add-Type @"
 using System;
 using System.Text;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 public static class SextaWindowNative {
   public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+  public sealed class WindowInfo {
+    public long Hwnd { get; set; }
+    public uint ProcessId { get; set; }
+    public string Title { get; set; }
+    public bool Visible { get; set; }
+    public bool Minimized { get; set; }
+    public bool Maximized { get; set; }
+    public int X { get; set; }
+    public int Y { get; set; }
+    public int Width { get; set; }
+    public int Height { get; set; }
+  }
   [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lp);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int max);
   [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
@@ -33,39 +47,51 @@ public static class SextaWindowNative {
   [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int cmd);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hWnd, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
   [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
-  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+
+  public static WindowInfo[] ListWindows() {
+    var items = new List<WindowInfo>();
+    EnumWindows((hWnd, lParam) => {
+      try {
+        if (!IsWindow(hWnd)) return true;
+        int length = GetWindowTextLength(hWnd);
+        if (length <= 0) return true;
+        var text = new StringBuilder(length + 2);
+        GetWindowText(hWnd, text, text.Capacity);
+        string title = text.ToString().Trim();
+        if (String.IsNullOrWhiteSpace(title)) return true;
+        uint processId;
+        GetWindowThreadProcessId(hWnd, out processId);
+        RECT rect;
+        GetWindowRect(hWnd, out rect);
+        items.Add(new WindowInfo {
+          Hwnd = hWnd.ToInt64(), ProcessId = processId, Title = title,
+          Visible = IsWindowVisible(hWnd), Minimized = IsIconic(hWnd), Maximized = IsZoomed(hWnd),
+          X = rect.Left, Y = rect.Top, Width = rect.Right - rect.Left, Height = rect.Bottom - rect.Top
+        });
+      } catch { }
+      return true;
+    }, IntPtr.Zero);
+    return items.ToArray();
+  }
 }
 "@
 function Get-SextaWindows {
   $items=New-Object System.Collections.ArrayList
-  $fg=[SextaWindowNative]::GetForegroundWindow()
-  $callback=[SextaWindowNative+EnumWindowsProc]{ param([IntPtr]$h,[IntPtr]$lp)
-    try {
-      if(-not [SextaWindowNative]::IsWindow($h)){return $true}
-      $len=[SextaWindowNative]::GetWindowTextLength($h)
-      if($len -le 0){return $true}
-      $sb=New-Object Text.StringBuilder ($len+2)
-      [void][SextaWindowNative]::GetWindowText($h,$sb,$sb.Capacity)
-      $title=$sb.ToString().Trim()
-      if([string]::IsNullOrWhiteSpace($title)){return $true}
-      $processId=[uint32]0
-      [void][SextaWindowNative]::GetWindowThreadProcessId($h,[ref]$processId)
+  $fg=[SextaWindowNative]::GetForegroundWindow().ToInt64()
+  foreach($native in @([SextaWindowNative]::ListWindows())){
+    try{
+      $processId=[int]$native.ProcessId
       $p=Get-Process -Id $processId -ErrorAction SilentlyContinue
-      $r=New-Object SextaWindowNative+RECT
-      [void][SextaWindowNative]::GetWindowRect($h,[ref]$r)
-      $visible=[SextaWindowNative]::IsWindowVisible($h)
       [void]$items.Add([pscustomobject]@{
-        hwnd=$h.ToInt64(); pid=[int]$processId; process=if($p){$p.ProcessName}else{''}; title=$title;
-        active=($h -eq $fg); visible=[bool]$visible; minimized=[SextaWindowNative]::IsIconic($h); maximized=[SextaWindowNative]::IsZoomed($h);
-        x=$r.Left; y=$r.Top; width=($r.Right-$r.Left); height=($r.Bottom-$r.Top)
+        hwnd=[long]$native.Hwnd; pid=$processId; process=if($p){$p.ProcessName}else{''}; title=[string]$native.Title;
+        active=([long]$native.Hwnd -eq $fg); visible=[bool]$native.Visible; minimized=[bool]$native.Minimized; maximized=[bool]$native.Maximized;
+        x=[int]$native.X; y=[int]$native.Y; width=[int]$native.Width; height=[int]$native.Height
       })
-    } catch {}
-    return $true
+    }catch{}
   }
-  [void][SextaWindowNative]::EnumWindows($callback,[IntPtr]::Zero)
   return @($items)
 }
 function Find-SextaWindow([string]$needle,[long]$preferredHwnd=0){
