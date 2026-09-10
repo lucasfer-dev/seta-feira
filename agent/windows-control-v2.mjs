@@ -78,18 +78,39 @@ public static class SextaWindowNative {
   }
 }
 "@
+function Add-SextaWindowItem($items,$seen,[IntPtr]$h,[int]$processId,[string]$processName,[string]$title){
+  if($h -eq [IntPtr]::Zero -or -not [SextaWindowNative]::IsWindow($h)){return}
+  $key=$h.ToInt64().ToString()
+  if($seen.ContainsKey($key)){return}
+  if([string]::IsNullOrWhiteSpace($title)){return}
+  $r=New-Object SextaWindowNative+RECT
+  [void][SextaWindowNative]::GetWindowRect($h,[ref]$r)
+  [void]$items.Add([pscustomobject]@{
+    hwnd=$h.ToInt64(); pid=$processId; process=$processName; title=$title.Trim();
+    active=($h -eq [SextaWindowNative]::GetForegroundWindow()); visible=[SextaWindowNative]::IsWindowVisible($h);
+    minimized=[SextaWindowNative]::IsIconic($h); maximized=[SextaWindowNative]::IsZoomed($h);
+    x=$r.Left; y=$r.Top; width=($r.Right-$r.Left); height=($r.Bottom-$r.Top)
+  })
+  $seen[$key]=$true
+}
 function Get-SextaWindows {
   $items=New-Object System.Collections.ArrayList
-  $fg=[SextaWindowNative]::GetForegroundWindow().ToInt64()
+  $seen=@{}
+  # Proven baseline: Process.MainWindowHandle reliably exposes standard Win32/WPF app windows.
+  foreach($p in @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle })){
+    try{
+      Add-SextaWindowItem $items $seen ([IntPtr]$p.MainWindowHandle) ([int]$p.Id) ([string]$p.ProcessName) ([string]$p.MainWindowTitle)
+    }catch{}
+  }
+  # Native enumeration extends coverage to secondary, hidden and non-main titled top-level HWNDs.
   foreach($native in @([SextaWindowNative]::ListWindows())){
     try{
+      $h=[IntPtr][long]$native.Hwnd
+      $key=$h.ToInt64().ToString()
+      if($seen.ContainsKey($key)){continue}
       $processId=[int]$native.ProcessId
       $p=Get-Process -Id $processId -ErrorAction SilentlyContinue
-      [void]$items.Add([pscustomobject]@{
-        hwnd=[long]$native.Hwnd; pid=$processId; process=if($p){$p.ProcessName}else{''}; title=[string]$native.Title;
-        active=([long]$native.Hwnd -eq $fg); visible=[bool]$native.Visible; minimized=[bool]$native.Minimized; maximized=[bool]$native.Maximized;
-        x=[int]$native.X; y=[int]$native.Y; width=[int]$native.Width; height=[int]$native.Height
-      })
+      Add-SextaWindowItem $items $seen $h $processId (if($p){[string]$p.ProcessName}else{''}) ([string]$native.Title)
     }catch{}
   }
   return @($items)
