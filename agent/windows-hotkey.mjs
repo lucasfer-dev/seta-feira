@@ -48,7 +48,7 @@ function runPowerShell(script, timeout = 8000) {
       if (code !== 0) return finish(reject, new Error(String(err || out || `powershell exit ${code}`).trim()));
       finish(resolve, String(out || '').trim());
     });
-    child.stdin.end(script, 'utf8');
+    child.stdin.end(`${script}\r\n`, 'utf8');
   });
 }
 
