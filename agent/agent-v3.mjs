@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { browserBack, browserClick, browserForward, browserOpen, browserReload, browserSelectTab, browserSnapshot, browserStatus, browserTabs, browserType } from './browser-agent.mjs';
-import { captureScreen, focusWindow, uiClickText, uiHotkey, uiScroll, uiTree, uiTypeText, windowList } from './windows-ui.mjs';
+import { captureScreen, uiClickText, uiHotkey, uiScroll, uiTree, uiTypeText } from './windows-ui.mjs';
+import { closeWindowNative, focusWindowNative, listWindows, moveResizeWindow, setWindowState } from './windows-control-v2.mjs';
 import { launchApp } from './app-resolver.mjs';
 import { audit } from './audit.mjs';
 import { hardwareSnapshot } from './hardware.mjs';
@@ -184,8 +185,11 @@ async function execute(command) {
     await new Promise((resolve, reject) => { const child = trackChild(spawn('clip.exe', [], { windowsHide: true })); child.on('error', reject); child.on('close', code => code === 0 ? resolve() : reject(new Error(`clip exit ${code}`))); child.stdin.end(value, 'utf8'); });
     return { copied: true, length: value.length };
   }
-  if (action === 'window_list') return windowList(payload.limit);
-  if (action === 'window_focus') return focusWindow(payload.title);
+  if (action === 'window_list') return listWindows(payload.limit);
+  if (action === 'window_focus') return focusWindowNative(payload.title, payload.hwnd);
+  if (action === 'window_close') return closeWindowNative(payload.title, payload.hwnd);
+  if (action === 'window_state') return setWindowState(payload.title, payload.state, payload.hwnd);
+  if (action === 'window_move_resize') return moveResizeWindow(payload.title, { ...payload, hwnd: payload.hwnd });
   if (action === 'ui_tree') return uiTree(payload.maxNodes);
   if (action === 'ui_click_text') return uiClickText(payload.text);
   if (action === 'ui_type_text') return uiTypeText(payload.text, payload.target);
@@ -210,7 +214,8 @@ async function execute(command) {
 
 const CAPABILITIES = [
   'open_url', 'open_app', 'open_project', 'git_status', 'get_system_info', 'hardware_status', 'read_clipboard', 'copy_text', 'codex_task',
-  'window_list', 'window_focus', 'ui_tree', 'ui_click_text', 'ui_type_text', 'ui_scroll', 'ui_hotkey', 'screen_analyze',
+  'window_list', 'window_focus', 'window_close', 'window_state', 'window_move_resize',
+  'ui_tree', 'ui_click_text', 'ui_type_text', 'ui_scroll', 'ui_hotkey', 'screen_analyze',
   'browser_open', 'browser_tabs', 'browser_select_tab', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_back', 'browser_forward', 'browser_reload', 'agent_control'
 ];
 
@@ -222,7 +227,7 @@ async function heartbeat() {
     deviceId: DEVICE_ID, name: cfg.deviceName || os.hostname(), kind: 'agent', capabilities: CAPABILITIES,
     context: {
       hostname: os.hostname(), platform: os.platform(), uptime: Math.round(os.uptime()), projects: Object.keys(cfg.projects || {}),
-      codexTask: true, pcAgent: true, pcVision: process.platform === 'win32', pcHands: process.platform === 'win32',
+      codexTask: true, pcAgent: true, pcVision: process.platform === 'win32', pcHands: process.platform === 'win32', pcWindowControlV2: process.platform === 'win32',
       browserAgent: browserStatus(cfg), codexActiveProjects: [...activeCodexProjects], agentProtocol: AGENT_PROTOCOL_VERSION,
       agentVersion: AGENT_PROTOCOL_VERSION, autonomy: runtime.autonomy, paused: runtime.paused, privacy: runtime.privacy,
       hardware, secureVault: { available: secureVault.available, version: secureVault.version, aliases: secureVault.aliases.length },
