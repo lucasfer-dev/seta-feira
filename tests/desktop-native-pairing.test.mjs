@@ -44,9 +44,14 @@ test('Desktop continua sem primitive shell/exec exposta ao renderer', () => {
 
 test('Windows Hands nao usa PowerShell Bypass ou EncodedCommand', () => {
   const windowsUi = read('agent/windows-ui.mjs');
-  assert.doesNotMatch(windowsUi, /ExecutionPolicy[^\n]*Bypass/i);
-  assert.doesNotMatch(windowsUi, /EncodedCommand/i);
-  assert.match(windowsUi, /['"]-Command['"]\s*,\s*['"]-['"]/);
+  const windowsUiLegacy = read('agent/windows-ui-legacy.mjs');
+  const windowsHotkey = read('agent/windows-hotkey.mjs');
+  const windowsHands = `${windowsUi}\n${windowsUiLegacy}\n${windowsHotkey}`;
+  assert.doesNotMatch(windowsHands, /ExecutionPolicy[^\n]*Bypass/i);
+  assert.doesNotMatch(windowsHands, /EncodedCommand/i);
+  assert.match(windowsHands, /['"]-Command['"]\s*,\s*['"]-['"]/);
+  assert.match(windowsHotkey, /SendInput/);
+  assert.doesNotMatch(windowsHotkey, /System\.Windows\.Forms\.SendKeys/);
 });
 
 test('visao possui fallback, cooldown e cache anti-overload', () => {
