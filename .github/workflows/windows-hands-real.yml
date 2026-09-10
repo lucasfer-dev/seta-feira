@@ -8,6 +8,7 @@ on:
       - 'agent/windows-ui.mjs'
       - 'agent/windows-ui-legacy.mjs'
       - 'agent/windows-hotkey.mjs'
+      - 'agent/windows-type-v2.mjs'
       - 'agent/windows-ui-actions.mjs'
       - 'agent/windows-control-v2.mjs'
       - 'agent/windows-control-v2-legacy.mjs'
@@ -31,6 +32,7 @@ on:
       - 'agent/windows-ui.mjs'
       - 'agent/windows-ui-legacy.mjs'
       - 'agent/windows-hotkey.mjs'
+      - 'agent/windows-type-v2.mjs'
       - 'agent/windows-ui-actions.mjs'
       - 'agent/windows-control-v2.mjs'
       - 'agent/windows-control-v2-legacy.mjs'
@@ -64,6 +66,7 @@ jobs:
           node --check agent/windows-ui.mjs
           node --check agent/windows-ui-legacy.mjs
           node --check agent/windows-hotkey.mjs
+          node --check agent/windows-type-v2.mjs
           node --check agent/windows-ui-actions.mjs
           node --check agent/windows-control-v2.mjs
           node --check agent/windows-control-v2-legacy.mjs
