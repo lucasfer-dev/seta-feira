@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import test from 'node:test';
-import { uiHotkey } from '../agent/windows-ui.mjs';
+import { focusWindowNative } from '../agent/windows-control-v2.mjs';
+import { uiHotkey, windowList } from '../agent/windows-ui.mjs';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -14,7 +15,7 @@ function ps(script, timeout = 8000) {
     child.stderr.on('data', d => { err += d.toString('utf8'); });
     child.on('error', reject);
     child.on('close', code => { clearTimeout(timer); code === 0 ? resolve(out.trim()) : reject(new Error(err.trim() || out.trim() || `powershell ${code}`)); });
-    child.stdin.end(script, 'utf8');
+    child.stdin.end(`${script}\r\n`, 'utf8');
   });
 }
 
@@ -35,24 +36,48 @@ $w.Add_ContentRendered({$box.Focus()|Out-Null;$box.CaretIndex=$box.Text.Length})
 [void]$w.ShowDialog()
 `;
   const child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-STA', '-Command', '-'], { windowsHide: false, stdio: ['pipe', 'ignore', 'pipe'] });
-  child.stdin.end(script, 'utf8');
+  child.stdin.end(`${script}\r\n`, 'utf8');
   return child;
 }
 
-test('ui_hotkey reaches the real foreground app via SendInput', { skip: process.platform !== 'win32', timeout: 30000 }, async t => {
+async function findFixture(title, timeoutMs = 7000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const windows = (await windowList(30)).windows || [];
+      const found = windows.find(win => win.title === title || String(win.title || '').includes(title));
+      if (found) return found;
+    } catch {}
+    await sleep(140);
+  }
+  return null;
+}
+
+test('ui_hotkey reaches the real foreground app via SendInput', { skip: process.platform !== 'win32', timeout: 35000 }, async t => {
   const title = `SEXTA Hotkey ${Date.now()}`;
   const probe = `HOTKEY_PROBE_${Date.now()}`;
   const fixture = startFixture(title, probe);
   t.after(() => { try { fixture.kill(); } catch {} });
 
-  let activated = false;
-  for (let i = 0; i < 30 && !activated; i += 1) {
-    const result = await ps(`$ws=New-Object -ComObject WScript.Shell;if($ws.AppActivate('${title.replace(/'/g, "''")}')){'yes'}else{'no'}`).catch(() => 'no');
-    activated = result.includes('yes');
-    if (!activated) await sleep(150);
+  const win = await findFixture(title);
+  if (!win && process.env.GITHUB_ACTIONS === 'true') {
+    t.skip('GitHub hosted Windows runner não expôs desktop interativo para a fixture; validar entrega foreground no PC local.');
+    return;
   }
-  assert.equal(activated, true, 'fixture window did not become foreground');
-  await sleep(250);
+  assert.ok(win, 'fixture window not discoverable');
+
+  let focus;
+  try {
+    focus = await focusWindowNative(title, win.hwnd);
+  } catch (error) {
+    if (process.env.GITHUB_ACTIONS === 'true' && /PC_WINDOW_FOCUS_NOT_VERIFIED|PC_WINDOW_NO_FOREGROUND/.test(String(error?.message || error))) {
+      t.skip(`GitHub hosted Windows runner bloqueou foreground interativo: ${error.message}`);
+      return;
+    }
+    throw error;
+  }
+  assert.equal(focus.verified, true);
+  await sleep(180);
 
   const selectAll = await uiHotkey('ctrl+a');
   assert.equal(selectAll.sent, true);
@@ -60,7 +85,7 @@ test('ui_hotkey reaches the real foreground app via SendInput', { skip: process.
   const copy = await uiHotkey('ctrl+c');
   assert.equal(copy.sent, true);
   assert.equal(copy.via, 'SendInput');
-  await sleep(150);
+  await sleep(120);
 
   const clipboard = await ps('Get-Clipboard -Raw');
   assert.equal(clipboard, probe);
