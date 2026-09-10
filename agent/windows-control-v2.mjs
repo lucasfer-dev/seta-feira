@@ -1,9 +1,15 @@
 import { spawn } from 'node:child_process';
 
 function encode(value = '') { return Buffer.from(String(value), 'utf8').toString('base64'); }
-function parseJson(text, fallback = {}) { try { return JSON.parse(String(text || '').trim()); } catch { return fallback; } }
+function parseJson(text, fallback = {}) {
+  const raw = String(text || '').trim();
+  if (!raw) return fallback;
+  try { return JSON.parse(raw); }
+  catch { throw new Error(`PC_WINDOWS_JSON_INVALID:${raw.slice(0, 900)}`); }
+}
 
 const psPrelude = String.raw`
+$ErrorActionPreference='Stop'
 $utf8=New-Object System.Text.UTF8Encoding($false)
 [Console]::OutputEncoding=$utf8
 $OutputEncoding=$utf8
@@ -96,13 +102,11 @@ function Add-SextaWindowItem($items,$seen,[IntPtr]$h,[int]$processId,[string]$pr
 function Get-SextaWindows {
   $items=New-Object System.Collections.ArrayList
   $seen=@{}
-  # Proven baseline: Process.MainWindowHandle reliably exposes standard Win32/WPF app windows.
   foreach($p in @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle })){
     try{
       Add-SextaWindowItem $items $seen ([IntPtr]$p.MainWindowHandle) ([int]$p.Id) ([string]$p.ProcessName) ([string]$p.MainWindowTitle)
     }catch{}
   }
-  # Native enumeration extends coverage to secondary, hidden and non-main titled top-level HWNDs.
   foreach($native in @([SextaWindowNative]::ListWindows())){
     try{
       $h=[IntPtr][long]$native.Hwnd
@@ -110,7 +114,9 @@ function Get-SextaWindows {
       if($seen.ContainsKey($key)){continue}
       $processId=[int]$native.ProcessId
       $p=Get-Process -Id $processId -ErrorAction SilentlyContinue
-      Add-SextaWindowItem $items $seen $h $processId (if($p){[string]$p.ProcessName}else{''}) ([string]$native.Title)
+      $processName=''
+      if($p){$processName=[string]$p.ProcessName}
+      Add-SextaWindowItem $items $seen $h $processId $processName ([string]$native.Title)
     }catch{}
   }
   return @($items)
