@@ -138,7 +138,7 @@ jobs:
 
           Select-String -Path agent/app-resolver.mjs -Pattern "Get-StartApps","shell:AppsFolder","App Paths","BLOCKED_EXECUTABLES","APP_NOT_FOUND","APP_LAUNCH_NOT_VERIFIED" | Out-Null
           if (Select-String -Path agent/app-resolver.mjs -Pattern "shell:\s*true","-EncodedCommand","ExecutionPolicy.*Bypass") { throw 'Unsafe app resolver primitive detected' }
-          Select-String -Path api/pc-vision-analyze.js -Pattern "GEMINI_VISION_FALLBACK_MODELS","vision_temporarily_unavailable","cacheHit","cooldowns" | Out-Null
+          Select-String -Path api/pc-vision-analyze.js -Pattern "GEMINI_VISION_FALLBACK_MODELS","semanticFallbackRecommended","visionAvailable","cacheHit","cooldowns","image/png" | Out-Null
           Select-String -Path agent/runtime-state.mjs -Pattern "AUTONOMY_OBSERVER_READ_ONLY","AUTONOMOUS_MODE_REQUIRED","AGENT_PAUSED","PRIVACY_HARDWARE_DISABLED","4.2.0" | Out-Null
           Select-String -Path agent/secure-vault.mjs -Pattern "ProtectedData","CurrentUser" | Out-Null
 
