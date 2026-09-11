@@ -21,6 +21,9 @@ namespace Sexta.NativeHands
         internal const uint KEYEVENTF_UNICODE = 0x0004;
         internal const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
         internal const uint MOUSEEVENTF_LEFTUP = 0x0004;
+        internal const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
+        internal const uint MOUSEEVENTF_RIGHTUP = 0x0010;
+        internal const uint MOUSEEVENTF_WHEEL = 0x0800;
         internal static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
         internal static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
 
