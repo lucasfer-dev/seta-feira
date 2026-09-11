@@ -54,12 +54,15 @@ test('Windows Hands nao usa PowerShell Bypass ou EncodedCommand', () => {
   assert.doesNotMatch(windowsHotkey, /System\.Windows\.Forms\.SendKeys/);
 });
 
-test('visao possui fallback, cooldown e cache anti-overload', () => {
+test('visao possui fallback semantico, cooldown e cache anti-overload', () => {
   const vision = read('api/pc-vision-analyze.js');
   assert.match(vision, /GEMINI_VISION_FALLBACK_MODELS/);
   assert.match(vision, /cooldowns/);
   assert.match(vision, /CACHE_TTL_MS/);
-  assert.match(vision, /vision_temporarily_unavailable/);
+  assert.match(vision, /visionAvailable: false/);
+  assert.match(vision, /semanticFallbackRecommended: true/);
+  assert.match(vision, /vision-provider-unavailable/);
+  assert.match(vision, /permissionIssue: false/);
   assert.match(vision, /cacheHit/);
 });
 
