@@ -87,7 +87,7 @@ function requestBody({ imageBase64, instruction, compatibilityMode = false }) {
   const body = {
     contents: [{ role: 'user', parts: [
       { text: instruction },
-      { inlineData: { mimeType: 'image/png', data: imageBase64 } }
+      { inlineData: { mimeType: 'image/jpeg', data: imageBase64 } }
     ] }]
   };
   if (!compatibilityMode) body.generationConfig = { responseMimeType: 'application/json' };
