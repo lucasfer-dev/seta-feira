@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'native/windows-hands/**'
       - 'agent/**'
       - 'apps/desktop-electron/**'
       - 'lib/pc-desktop-tools.mjs'
@@ -27,6 +28,7 @@ on:
       - '.github/workflows/desktop-release.yml'
   pull_request:
     paths:
+      - 'native/windows-hands/**'
       - 'agent/**'
       - 'apps/desktop-electron/**'
       - 'lib/pc-desktop-tools.mjs'
@@ -57,6 +59,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build Native Hands v3
+        shell: pwsh
+        run: ./native/windows-hands/build.ps1
+
       - name: Check desktop JavaScript
         shell: pwsh
         run: |
@@ -67,6 +77,7 @@ jobs:
           node --check agent/doctor.mjs
           node --check agent/setup.mjs
           node --check agent/control-local.mjs
+          node --check agent/windows-hands-native.mjs
           node --check agent/windows-ui.mjs
           node --check agent/windows-ui-actions.mjs
           node --check agent/windows-control-v2.mjs
@@ -87,8 +98,9 @@ jobs:
           node --check apps/desktop-electron/main.cjs
           node --check apps/desktop-electron/windows-habitat.cjs
           node --check apps/desktop-electron/preload.cjs
-      - name: Verify Windows automation and v4.2 assemblies
-        shell: powershell
+
+      - name: Verify Windows automation and native helper
+        shell: pwsh
         run: |
           Add-Type -AssemblyName UIAutomationClient
           Add-Type -AssemblyName UIAutomationTypes
@@ -98,45 +110,58 @@ jobs:
           Add-Type -AssemblyName System.Speech
           if (-not [System.Windows.Automation.AutomationElement]::RootElement) { throw 'UIAutomation unavailable' }
           if (-not [Security.Cryptography.ProtectedData]) { throw 'DPAPI unavailable' }
-          Write-Host 'Windows UI Automation + DPAPI + Speech assemblies OK'
+          if (-not (Test-Path native/windows-hands/bin/SextaHands.exe)) { throw 'Native Hands executable missing' }
+          Write-Host 'Windows UI Automation + Native Hands + DPAPI + Speech assemblies OK'
+
       - name: Run desktop and agent policy tests
         shell: pwsh
         run: node --test tests/pc-desktop-policy.test.mjs tests/windows-control-v2-contract.test.mjs tests/pc-control-safety-contract.test.mjs tests/pc-command-protocol.test.mjs tests/tool-policy.test.mjs tests/agent-runtime.test.mjs tests/agent-auth.test.mjs tests/app-resolver.test.mjs tests/desktop-native-pairing.test.mjs tests/v4-contracts.test.mjs tests/v4-1-operational.test.mjs
-      - name: Assert no generic shell or destructive browser primitive
+
+      - name: Assert native-first automation and safety boundaries
         shell: pwsh
         run: |
           Select-String -Path agent/agent-v3.mjs -Pattern "screen_analyze","browser_snapshot","browser_tabs","browser_reload","ui_tree","ui_action","window_close","window_move_resize","agent_control","hardware_status" | Out-Null
           if (Select-String -Path agent/agent-v3.mjs -Pattern "action === 'shell'","action === 'exec'") { throw 'Generic shell action detected' }
           Select-String -Path agent/browser-agent.mjs -Pattern "PC_BROWSER_SENSITIVE_CONTROL_BLOCKED","PC_BROWSER_PASSWORD_FIELD_BLOCKED","browserTabs","browserSelectTab","browserForward","browserReload" | Out-Null
           if (Select-String -Path agent/browser-agent.mjs -Pattern "Page.setDownloadBehavior","DOM.setFileInputFiles","uploadFile") { throw 'Hidden download/upload primitive detected' }
-          Select-String -Path agent/windows-ui.mjs -Pattern "PC_UI_SENSITIVE_CONTROL_BLOCKED","PC_UI_PASSWORD_FIELD_BLOCKED" | Out-Null
-          Select-String -Path agent/windows-ui-actions.mjs -Pattern "PC_UI_SENSITIVE_CONTROL_BLOCKED","PC_UI_PASSWORD_FIELD_BLOCKED","AutomationId","ValuePattern","SelectionItemPattern","ExpandCollapsePattern","screen-coordinate-fallback" | Out-Null
-          Select-String -Path agent/windows-control-v2.mjs -Pattern "EnumWindows","ShowWindowAsync","SetForegroundWindow","SetWindowPos","PostMessage","PC_WINDOW_CLOSE_NOT_VERIFIED" | Out-Null
-          if (Select-String -Path agent/windows-ui.mjs,agent/windows-ui-actions.mjs,agent/windows-control-v2.mjs -Pattern "ExecutionPolicy.*Bypass","EncodedCommand") { throw 'Defender-hostile PowerShell invocation detected' }
-          Select-String -Path agent/windows-ui.mjs -SimpleMatch "'-Command', '-'" | Out-Null
-          Select-String -Path agent/windows-ui-actions.mjs -SimpleMatch "'-Command','-'" | Out-Null
-          Select-String -Path agent/windows-control-v2.mjs -SimpleMatch "'-Command', '-'" | Out-Null
+
+          Select-String -Path agent/windows-hands-native.mjs -Pattern "SextaHands.exe","nativeHandsRequest","PC_HANDS_NATIVE_TIMEOUT","native-hands-v3" | Out-Null
+          Select-String -Path agent/windows-ui.mjs -Pattern "nativeHandsRequest","screen_capture","ui_click_text","ui_type_text","ui_scroll","ui_hotkey" | Out-Null
+          Select-String -Path agent/windows-ui-actions.mjs -Pattern "nativeHandsRequest","ui_action","screen_click_point" | Out-Null
+          Select-String -Path agent/windows-control-v2.mjs -Pattern "nativeHandsRequest","window_focus","window_close","window_move_resize","window_state" | Out-Null
+          if (Select-String -Path agent/windows-ui.mjs,agent/windows-ui-actions.mjs,agent/windows-control-v2.mjs -Pattern "spawn\('powershell.exe'","Add-Type","ExecutionPolicy.*Bypass","EncodedCommand") { throw 'Runtime Windows Hands regressed to dynamic PowerShell' }
+
+          Select-String -Path native/windows-hands/NativeMethods.cs -Pattern "EnumWindows","SetForegroundWindow","SetWindowPos","PostMessage","SendInput" | Out-Null
+          Select-String -Path native/windows-hands/UiService.cs -Pattern "AutomationElement","InvokePattern","ValuePattern","SelectionItemPattern","TogglePattern","PC_UI_PASSWORD_FIELD_BLOCKED","PC_UI_SENSITIVE_CONTROL_BLOCKED" | Out-Null
+          Select-String -Path native/windows-hands/WindowService.cs -Pattern "PC_WINDOW_CLOSE_NOT_VERIFIED","PC_WINDOW_MOVE_NOT_VERIFIED","PC_WINDOW_FOCUS_NOT_VERIFIED" | Out-Null
+          Select-String -Path native/windows-hands/ScreenService.cs -Pattern "CopyFromScreen","imageBase64","image/jpeg","PC_SCREEN_CAPTURE_TOO_LARGE" | Out-Null
+
           Select-String -Path agent/app-resolver.mjs -Pattern "Get-StartApps","shell:AppsFolder","App Paths","BLOCKED_EXECUTABLES","APP_NOT_FOUND","APP_LAUNCH_NOT_VERIFIED" | Out-Null
           if (Select-String -Path agent/app-resolver.mjs -Pattern "shell:\s*true","-EncodedCommand","ExecutionPolicy.*Bypass") { throw 'Unsafe app resolver primitive detected' }
-          Select-String -Path api/pc-vision-analyze.js -Pattern "GEMINI_VISION_FALLBACK_MODELS","vision_temporarily_unavailable","cacheHit","cooldowns" | Out-Null
+          Select-String -Path api/pc-vision-analyze.js -Pattern "GEMINI_VISION_FALLBACK_MODELS","semanticFallbackRecommended","visionAvailable","cacheHit","cooldowns","image/jpeg" | Out-Null
           Select-String -Path agent/runtime-state.mjs -Pattern "AUTONOMY_OBSERVER_READ_ONLY","AUTONOMOUS_MODE_REQUIRED","AGENT_PAUSED","PRIVACY_HARDWARE_DISABLED","4.2.0" | Out-Null
           Select-String -Path agent/secure-vault.mjs -Pattern "ProtectedData","CurrentUser" | Out-Null
-      - name: Validate desktop pairing, origin lock, recovery and updater
+
+      - name: Validate desktop packaging, pairing, recovery and updater
         shell: pwsh
         run: |
           $pkg = Get-Content apps/desktop-electron/package.json -Raw | ConvertFrom-Json
           try { $desktopVersion = [version]$pkg.version } catch { throw 'Desktop version must be valid semver' }
-          if ($desktopVersion -lt [version]'2.3.0') { throw 'Desktop version predates PC Control v2' }
+          if ($desktopVersion -lt [version]'2.4.0') { throw 'Desktop version predates Native Hands v3' }
           if ($pkg.main -ne 'secure-main.cjs') { throw 'Secure desktop entrypoint missing' }
           if (-not $pkg.build.nsis) { throw 'NSIS config missing' }
           if (-not $pkg.scripts.dist) { throw 'Desktop dist script missing' }
+          if (-not $pkg.scripts.'native:build') { throw 'Native Hands build script missing from desktop package' }
           if (-not $pkg.dependencies.'electron-updater') { throw 'electron-updater missing' }
           if (-not $pkg.build.publish) { throw 'GitHub update provider missing' }
           if (-not ($pkg.build.files -contains 'windows-habitat.cjs')) { throw 'Windows habitat module missing from Desktop package' }
           $agentResource = @($pkg.build.extraResources | Where-Object { $_.to -eq 'agent' } | Select-Object -First 1)
           if (-not $agentResource -or -not ($agentResource.filter -contains 'app-resolver.mjs')) { throw 'Installed-app resolver missing from Desktop package' }
-          if (-not ($agentResource.filter -contains 'windows-control-v2.mjs')) { throw 'Window control v2 missing from Desktop package' }
-          if (-not ($agentResource.filter -contains 'windows-ui-actions.mjs')) { throw 'Generic UIA action layer missing from Desktop package' }
+          if (-not ($agentResource.filter -contains 'windows-hands-native.mjs')) { throw 'Native Hands bridge missing from Desktop package' }
+          if (-not ($agentResource.filter -contains 'windows-control-v2.mjs')) { throw 'Window control wrapper missing from Desktop package' }
+          if (-not ($agentResource.filter -contains 'windows-ui-actions.mjs')) { throw 'Generic UIA action wrapper missing from Desktop package' }
+          $nativeResource = @($pkg.build.extraResources | Where-Object { $_.to -eq 'agent/native' } | Select-Object -First 1)
+          if (-not $nativeResource -or -not ($nativeResource.filter -contains 'SextaHands.exe')) { throw 'SextaHands.exe missing from Desktop extraResources' }
           if (-not (Test-Path apps/desktop-electron/fallback.html)) { throw 'Offline fallback missing' }
           if (-not (Test-Path .github/workflows/desktop-release.yml)) { throw 'Desktop release workflow missing' }
           Select-String -Path apps/desktop-electron/main.cjs -Pattern "autoDownload = false","scheduleAgentRestart","scheduleWakeRestart","system:pair-agent","SEXTA_AGENT_STATE","fallback.html" | Out-Null

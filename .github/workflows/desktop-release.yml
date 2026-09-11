@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'native/windows-hands/**'
       - 'agent/**'
       - 'apps/desktop-electron/**'
       - '.github/workflows/desktop-release.yml'
@@ -22,11 +23,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
       - name: Install desktop dependencies
         run: npm --prefix apps/desktop-electron install
       - name: Build NSIS installer and update metadata
         env:
-          # electron-builder signs automatically when these optional repository secrets exist.
           CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
         run: npm --prefix apps/desktop-electron run dist
@@ -35,6 +38,8 @@ jobs:
         run: |
           $installer = Get-ChildItem 'apps/desktop-electron/dist' -Filter '*.exe' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if (-not $installer) { throw 'SEXTA installer not found for Defender scan.' }
+          $native = Resolve-Path 'native/windows-hands/bin/SextaHands.exe'
+          if (-not $native) { throw 'Native Hands executable missing before Defender scan.' }
 
           $mpCandidates = @(
             "$env:ProgramFiles\Windows Defender\MpCmdRun.exe",
@@ -45,19 +50,21 @@ jobs:
             Write-Warning 'Microsoft Defender CLI unavailable on this runner; static Defender-safety contracts still run in Desktop Smoke.'
           } else {
             $started = Get-Date
+            & $mp -Scan -ScanType 3 -File $native -DisableRemediation
+            $nativeExit = $LASTEXITCODE
             & $mp -Scan -ScanType 3 -File $installer.FullName -DisableRemediation
             $scanExit = $LASTEXITCODE
+            if (-not (Test-Path $native)) { throw 'Microsoft Defender removed/quarantined SextaHands.exe.' }
             if (-not (Test-Path $installer.FullName)) { throw 'Microsoft Defender removed/quarantined the SEXTA installer.' }
 
-            $detections = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object {
-              $_.InitialDetectionTime -ge $started.AddMinutes(-2) -and (($_.Resources -join ' ') -match [regex]::Escape($installer.Name))
-            })
+            $detections = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object { $_.InitialDetectionTime -ge $started.AddMinutes(-2) })
             if ($detections.Count -gt 0) {
               $detections | Format-List * | Out-String | Write-Host
-              throw 'Microsoft Defender detected the SEXTA installer.'
+              throw 'Microsoft Defender detected SEXTA or Native Hands.'
             }
-            if ($scanExit -ne 0) { Write-Warning "Defender scanner exited with code $scanExit but reported no SEXTA detection." }
-            Write-Host "Defender scan completed for $($installer.Name)"
+            if ($nativeExit -ne 0) { Write-Warning "Native helper Defender scanner exited with code $nativeExit but reported no SEXTA detection." }
+            if ($scanExit -ne 0) { Write-Warning "Installer Defender scanner exited with code $scanExit but reported no SEXTA detection." }
+            Write-Host "Defender scan completed for $($installer.Name) and SextaHands.exe"
           }
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4

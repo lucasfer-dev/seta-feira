@@ -4,13 +4,14 @@ import fs from 'node:fs';
 import { evaluateToolPolicy, getToolPolicy } from '../lib/tool-policy.mjs';
 import { PC_DESKTOP_TOOL_DECLARATIONS } from '../lib/pc-desktop-tools.mjs';
 
-const browser = fs.readFileSync(new URL('../agent/browser-agent.mjs', import.meta.url), 'utf8');
-const windowsUi = fs.readFileSync(new URL('../agent/windows-ui.mjs', import.meta.url), 'utf8');
-const windowsHotkey = fs.readFileSync(new URL('../agent/windows-hotkey.mjs', import.meta.url), 'utf8');
-const windowsUiActions = fs.readFileSync(new URL('../agent/windows-ui-actions.mjs', import.meta.url), 'utf8');
-const windowControl = fs.readFileSync(new URL('../agent/windows-control-v2.mjs', import.meta.url), 'utf8');
-const toolCore = fs.readFileSync(new URL('../lib/tool-core.mjs', import.meta.url), 'utf8');
-const agent = fs.readFileSync(new URL('../agent/agent-v3.mjs', import.meta.url), 'utf8');
+const read = path => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+const browser = read('agent/browser-agent.mjs');
+const windowsUi = `${read('agent/windows-ui.mjs')}\n${read('native/windows-hands/UiService.cs')}\n${read('native/windows-hands/Safety.cs')}`;
+const windowsHotkey = `${read('agent/windows-hotkey.mjs')}\n${read('native/windows-hands/InputService.cs')}\n${read('native/windows-hands/NativeMethods.cs')}`;
+const windowsUiActions = `${read('agent/windows-ui-actions.mjs')}\n${read('native/windows-hands/UiService.cs')}\n${read('native/windows-hands/Safety.cs')}`;
+const windowControl = `${read('agent/windows-control-v2.mjs')}\n${read('native/windows-hands/WindowService.cs')}\n${read('native/windows-hands/NativeMethods.cs')}`;
+const toolCore = read('lib/tool-core.mjs');
+const agent = read('agent/agent-v3.mjs');
 
 test('desktop private reads require current-turn intent', () => {
   for (const tool of ['pc_screen_analyze', 'pc_ui_tree', 'pc_window_list', 'pc_browser_snapshot']) {
@@ -66,16 +67,16 @@ test('browser and Windows generic hands block sensitive final controls and passw
   assert.match(windowsUi, /PC_UI_PASSWORD_FIELD_BLOCKED/);
   assert.match(windowsUiActions, /PC_UI_SENSITIVE_CONTROL_BLOCKED/);
   assert.match(windowsUiActions, /PC_UI_PASSWORD_FIELD_BLOCKED/);
-  assert.match(windowsUiActions, /Test-Sensitive/);
-  assert.doesNotMatch(windowsUi, /Start-Process\s+.+-Verb\s+RunAs/i);
-  assert.doesNotMatch(windowsUiActions, /ExecutionPolicy.*Bypass/i);
+  assert.match(windowsUiActions, /Safety\.IsSensitive/);
+  assert.doesNotMatch(read('agent/windows-ui.mjs'), /Start-Process\s+.+-Verb\s+RunAs/i);
+  assert.doesNotMatch(read('agent/windows-ui-actions.mjs'), /ExecutionPolicy.*Bypass/i);
 });
 
-test('ui_hotkey uses native SendInput and reports elevation mismatch', () => {
+test('ui_hotkey uses native SendInput and reports elevation mismatch in the guarded fallback', () => {
   assert.match(windowsHotkey, /SendInput/);
   assert.match(windowsHotkey, /PC_UI_PRIVILEGE_MISMATCH:TARGET_ELEVATED/);
   assert.match(windowsHotkey, /PC_UI_HOTKEY_SENDINPUT_FAILED/);
-  assert.doesNotMatch(windowsHotkey, /System\.Windows\.Forms\.SendKeys/);
+  assert.doesNotMatch(read('agent/windows-hotkey.mjs'), /System\.Windows\.Forms\.SendKeys/);
 });
 
 test('desktop agent exposes full app-control primitives without arbitrary shell tool', () => {

@@ -1,13 +1,14 @@
 {
   "name": "sexta-desktop",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "private": true,
   "main": "secure-main.cjs",
   "scripts": {
     "dev": "electron .",
     "start": "electron .",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder --win nsis --publish never"
+    "native:build": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../native/windows-hands/build.ps1",
+    "pack": "npm run native:build && electron-builder --dir",
+    "dist": "npm run native:build && electron-builder --win nsis --publish never"
   },
   "dependencies": {
     "electron-updater": "6.8.9"
@@ -39,18 +40,28 @@
           "runtime-state.mjs",
           "audit.mjs",
           "browser-agent.mjs",
+          "windows-hands-native.mjs",
           "windows-ui.mjs",
           "windows-ui-legacy.mjs",
           "windows-hotkey.mjs",
           "windows-type-v2.mjs",
           "windows-ui-actions.mjs",
+          "windows-ui-actions-legacy.mjs",
           "windows-control-v2.mjs",
+          "windows-control-v2-fallback.mjs",
           "windows-control-v2-legacy.mjs",
           "windows-focus-v2.mjs",
           "hardware.mjs",
           "secure-vault.mjs",
           "wake-word.mjs",
           "app-resolver.mjs"
+        ]
+      },
+      {
+        "from": "../../native/windows-hands/bin",
+        "to": "agent/native",
+        "filter": [
+          "SextaHands.exe"
         ]
       }
     ],

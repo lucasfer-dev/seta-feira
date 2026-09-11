@@ -4,13 +4,17 @@ on:
   push:
     branches: [main]
     paths:
+      - 'native/windows-hands/**'
       - 'agent/browser-agent.mjs'
+      - 'agent/windows-hands-native.mjs'
       - 'agent/windows-ui.mjs'
       - 'agent/windows-ui-legacy.mjs'
       - 'agent/windows-hotkey.mjs'
       - 'agent/windows-type-v2.mjs'
       - 'agent/windows-ui-actions.mjs'
+      - 'agent/windows-ui-actions-legacy.mjs'
       - 'agent/windows-control-v2.mjs'
+      - 'agent/windows-control-v2-fallback.mjs'
       - 'agent/windows-control-v2-legacy.mjs'
       - 'agent/windows-focus-v2.mjs'
       - 'agent/app-resolver.mjs'
@@ -28,13 +32,17 @@ on:
       - '.github/workflows/windows-hands-real.yml'
   pull_request:
     paths:
+      - 'native/windows-hands/**'
       - 'agent/browser-agent.mjs'
+      - 'agent/windows-hands-native.mjs'
       - 'agent/windows-ui.mjs'
       - 'agent/windows-ui-legacy.mjs'
       - 'agent/windows-hotkey.mjs'
       - 'agent/windows-type-v2.mjs'
       - 'agent/windows-ui-actions.mjs'
+      - 'agent/windows-ui-actions-legacy.mjs'
       - 'agent/windows-control-v2.mjs'
+      - 'agent/windows-control-v2-fallback.mjs'
       - 'agent/windows-control-v2-legacy.mjs'
       - 'agent/windows-focus-v2.mjs'
       - 'agent/app-resolver.mjs'
@@ -60,15 +68,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Build Native Hands v3
+        shell: pwsh
+        run: ./native/windows-hands/build.ps1
+
       - name: Parse canonical agents
         shell: pwsh
         run: |
+          node --check agent/windows-hands-native.mjs
           node --check agent/windows-ui.mjs
           node --check agent/windows-ui-legacy.mjs
           node --check agent/windows-hotkey.mjs
           node --check agent/windows-type-v2.mjs
           node --check agent/windows-ui-actions.mjs
+          node --check agent/windows-ui-actions-legacy.mjs
           node --check agent/windows-control-v2.mjs
+          node --check agent/windows-control-v2-fallback.mjs
           node --check agent/windows-control-v2-legacy.mjs
           node --check agent/windows-focus-v2.mjs
           node --check agent/app-resolver.mjs
@@ -80,6 +99,26 @@ jobs:
           node --check lib/tool-core.mjs
           node --check tests/pc-hands-real-windows.test.mjs
           node --check tests/ui-hotkey-real-windows.test.mjs
+          if (-not (Test-Path native/windows-hands/bin/SextaHands.exe)) { throw 'SextaHands.exe was not built' }
+
+      - name: Native helper handshake
+        shell: pwsh
+        run: |
+          $p = New-Object System.Diagnostics.Process
+          $p.StartInfo.FileName = (Resolve-Path 'native/windows-hands/bin/SextaHands.exe')
+          $p.StartInfo.UseShellExecute = $false
+          $p.StartInfo.RedirectStandardInput = $true
+          $p.StartInfo.RedirectStandardOutput = $true
+          $p.StartInfo.CreateNoWindow = $true
+          [void]$p.Start()
+          $p.StandardInput.WriteLine('{"id":"ci","action":"ping","payload":{}}')
+          $p.StandardInput.Flush()
+          $line = $p.StandardOutput.ReadLine()
+          $p.Kill()
+          $json = $line | ConvertFrom-Json
+          if (-not $json.ok -or -not $json.result.ready) { throw "Native helper handshake failed: $line" }
+          Write-Host $line
+
       - name: Contracts
         shell: pwsh
         run: |
@@ -87,9 +126,29 @@ jobs:
           node --test tests/windows-control-v2-contract.test.mjs
           node --test tests/pc-desktop-policy.test.mjs
           node tests/app-resolver.test.mjs
+
       - name: Real ui_hotkey foreground delivery
         shell: pwsh
         run: node --test tests/ui-hotkey-real-windows.test.mjs
+
       - name: Real Windows UI Automation, window management and CDP flow
         shell: pwsh
         run: node --test tests/pc-hands-real-windows.test.mjs
+
+      - name: Defender scan Native Hands executable
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path 'native/windows-hands/bin/SextaHands.exe'
+          $mpCandidates = @(
+            "$env:ProgramFiles\Windows Defender\MpCmdRun.exe",
+            (Get-ChildItem "$env:ProgramData\Microsoft\Windows Defender\Platform" -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1 | ForEach-Object { Join-Path $_.FullName 'MpCmdRun.exe' })
+          ) | Where-Object { $_ -and (Test-Path $_) }
+          $mp = $mpCandidates | Select-Object -First 1
+          if (-not $mp) { Write-Warning 'Microsoft Defender CLI unavailable on runner.'; exit 0 }
+          $started = Get-Date
+          & $mp -Scan -ScanType 3 -File $exe -DisableRemediation
+          $scanExit = $LASTEXITCODE
+          if (-not (Test-Path $exe)) { throw 'Microsoft Defender removed/quarantined SextaHands.exe' }
+          $detections = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object { $_.InitialDetectionTime -ge $started.AddMinutes(-2) })
+          if ($detections.Count -gt 0) { $detections | Format-List * | Out-String | Write-Host; throw 'Microsoft Defender detected Native Hands.' }
+          if ($scanExit -ne 0) { Write-Warning "Defender scanner exit $scanExit without a reported detection." }

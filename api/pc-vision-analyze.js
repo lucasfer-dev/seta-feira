@@ -12,7 +12,7 @@ const REQUEST_BUDGET_MS = 15_800;
 const MODEL_TIMEOUT_MS = 7_500;
 
 function cleanBase64(value = '') {
-  return String(value || '').replace(/^data:image\/(?:jpeg|jpg);base64,/i, '').replace(/\s+/g, '');
+  return String(value || '').replace(/^data:image\/(?:jpeg|jpg|png);base64,/i, '').replace(/\s+/g, '');
 }
 
 function uniqueModels(values = []) {
@@ -126,7 +126,7 @@ export default async function handler(req, res) {
   const key = cacheKey(imageBase64, question);
   const cached = state.cache.get(key);
   if (cached?.expiresAt > now) {
-    return send(res, 200, { ok: true, model: cached.model, analysis: cached.analysis, cacheHit: true, fallbackUsed: cached.fallbackUsed, compatibilityMode: cached.compatibilityMode, attempts: [] });
+    return send(res, 200, { ok: true, visionAvailable: true, permissionIssue: false, model: cached.model, analysis: cached.analysis, cacheHit: true, fallbackUsed: cached.fallbackUsed, compatibilityMode: cached.compatibilityMode, attempts: [] });
   }
 
   const models = visionModels(c);
@@ -165,7 +165,7 @@ export default async function handler(req, res) {
           const fallbackUsed = model !== primaryModel;
           state.cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, model, analysis, fallbackUsed, compatibilityMode });
           pruneCache();
-          return send(res, 200, { ok: true, model, analysis, cacheHit: false, fallbackUsed, compatibilityMode, attempts });
+          return send(res, 200, { ok: true, visionAvailable: true, permissionIssue: false, model, analysis, cacheHit: false, fallbackUsed, compatibilityMode, attempts });
         }
 
         const message = data?.error?.message || 'Gemini vision failed';
@@ -183,17 +183,17 @@ export default async function handler(req, res) {
         }
 
         if ([401, 403].includes(Number(response.status))) {
-          return send(res, response.status, { error: 'vision_provider_auth_failed', message: String(message).slice(0, 500), attempts });
+          return send(res, response.status, { error: 'vision_provider_auth_failed', permissionIssue: false, message: String(message).slice(0, 500), attempts });
         }
 
         state.cooldowns.set(model, Date.now() + 20_000);
         break;
       } catch (error) {
+        // Timeout/rede não é incompatibilidade de payload nem falha de permissão local:
+        // pule para o próximo modelo e preserve a autorização já concedida ao PC Agent.
         const message = String(error?.message || error);
         attempts.push({ model, mode: compatibilityMode ? 'compat' : 'json', status: 'network', message: message.slice(0, 180) });
         state.cooldowns.set(model, Date.now() + 12_000);
-        // Timeout/rede não é incompatibilidade de payload. Repetir o mesmo modelo
-        // em modo compatível só consumia o orçamento e impedia o fallback real.
         break;
       }
     }
@@ -204,11 +204,25 @@ export default async function handler(req, res) {
   const cooldowns = models.map(model => Math.max(0, Number(state.cooldowns.get(model) || 0) - Date.now())).filter(Boolean);
   const retryAfterMs = Math.max(2500, Math.min(45_000, ...(cooldowns.length ? cooldowns : [5000])));
   res.setHeader('Retry-After', String(Math.max(1, Math.ceil(retryAfterMs / 1000))));
-  return send(res, 503, {
-    error: 'vision_temporarily_unavailable',
-    message: 'A permissão local de tela não é o problema. O provedor de visão não respondeu dentro do orçamento. A SEXTA deve usar DOM/UI Automation automaticamente e não solicitar nova confirmação de permissão.',
+
+  // A captura local foi concluída. Falha transitória do provedor visual não deve
+  // transformar a capacidade de observar o PC em um comando "failed". O Live
+  // Desktop possui pc_ui_tree diretamente e deve continuar por leitura semântica.
+  return send(res, 200, {
+    ok: true,
+    visionAvailable: false,
     permissionIssue: false,
+    model: 'vision-provider-unavailable',
+    fallbackUsed: true,
+    semanticFallbackRecommended: true,
     retryAfterMs,
+    analysis: {
+      summary: 'A captura de tela foi feita, mas a interpretação visual por pixels está temporariamente indisponível. Continue imediatamente com pc_ui_tree para ler a interface local por Windows UI Automation; não trate isso como sucesso visual nem peça nova permissão.',
+      activeApp: '',
+      visibleText: [],
+      targets: [],
+      risks: ['vision_provider_unavailable', 'semantic_ui_fallback_required']
+    },
     attempts
   });
 }

@@ -14,12 +14,15 @@ test('pc_screen_analyze não pede nova permissão quando o provedor visual cai',
   assert.match(pc, /fallback: 'ui_tree'/);
 });
 
-test('visão troca de modelo em timeout em vez de repetir modo compatível inutilmente', () => {
+test('visão troca de modelo em timeout e degrada para UIA sem culpar permissão local', () => {
   const vision = read('api/pc-vision-analyze.js');
   assert.match(vision, /MODEL_TIMEOUT_MS = 7_500/);
   assert.match(vision, /REQUEST_BUDGET_MS = 15_800/);
   assert.match(vision, /permissionIssue: false/);
   assert.match(vision, /Timeout\/rede não é incompatibilidade de payload/);
+  assert.match(vision, /semanticFallbackRecommended: true/);
+  assert.match(vision, /visionAvailable: false/);
+  assert.match(vision, /pc_ui_tree/);
 });
 
 test('declaração informa ao modelo que autorização local já foi concedida', () => {
