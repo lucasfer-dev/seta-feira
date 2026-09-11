@@ -53,7 +53,7 @@ async function findFixture(title, timeoutMs = 7000) {
   return null;
 }
 
-test('ui_hotkey reaches the real foreground app via SendInput', { skip: process.platform !== 'win32', timeout: 35000 }, async t => {
+test('ui_hotkey reaches the real foreground app via SendInput and resolves natural browser intent', { skip: process.platform !== 'win32', timeout: 35000 }, async t => {
   const title = `SEXTA Hotkey ${Date.now()}`;
   const probe = `HOTKEY_PROBE_${Date.now()}`;
   const fixture = startFixture(title, probe);
@@ -89,5 +89,13 @@ test('ui_hotkey reaches the real foreground app via SendInput', { skip: process.
 
   const clipboard = await ps('Get-Clipboard -Raw');
   assert.equal(clipboard, probe);
+
+  // A frase natural que o usuário realmente fala deve chegar ao helper nativo e
+  // ser resolvida pelo próprio backend, sem depender de prompt perfeito no Live.
+  const newTab = await uiHotkey('nova aba');
+  assert.equal(newTab.sent, true);
+  assert.equal(newTab.via, 'SendInput');
+  assert.equal(newTab.shortcut, 'ctrl+t');
+
   await assert.rejects(() => uiHotkey('ctrl+alt+delete'), /PC_UI_HOTKEY_NOT_ALLOWED/);
 });
