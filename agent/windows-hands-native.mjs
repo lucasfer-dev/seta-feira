@@ -92,6 +92,15 @@ async function start() {
 
     const proc = spawn(exe, [], { cwd: path.dirname(exe), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     child = proc;
+
+    // The desktop agent has its own polling loop, so the helper may stay warm without
+    // becoming the reason a one-shot process/test refuses to exit. The pipes continue
+    // delivering events while the parent has other referenced work.
+    proc.unref?.();
+    proc.stdin?.unref?.();
+    proc.stdout?.unref?.();
+    proc.stderr?.unref?.();
+
     let settled = false;
     const bootTimer = setTimeout(() => {
       if (settled) return;
