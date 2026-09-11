@@ -60,10 +60,10 @@ namespace Sexta.NativeHands
                 else key = Code(part);
             }
             if (key == 0) throw new InvalidOperationException("PC_UI_HOTKEY_NOT_ALLOWED");
-            foreach (var modifier in modifiers) if (!Key(modifier, false)) throw new InvalidOperationException("PC_UI_HOTKEY_SEND_FAILED");
-            if (!Key(key, false) || !Key(key, true)) throw new InvalidOperationException("PC_UI_HOTKEY_SEND_FAILED");
-            for (var i = modifiers.Count - 1; i >= 0; i--) if (!Key(modifiers[i], true)) throw new InvalidOperationException("PC_UI_HOTKEY_SEND_FAILED");
-            return new { ok = true, sent = true, verified = true, shortcut = normalized, via = "native-sendinput", provider = "native-hands-v3" };
+            foreach (var modifier in modifiers) if (!Key(modifier, false)) throw new InvalidOperationException("PC_UI_HOTKEY_SENDINPUT_FAILED");
+            if (!Key(key, false) || !Key(key, true)) throw new InvalidOperationException("PC_UI_HOTKEY_SENDINPUT_FAILED");
+            for (var i = modifiers.Count - 1; i >= 0; i--) if (!Key(modifiers[i], true)) throw new InvalidOperationException("PC_UI_HOTKEY_SENDINPUT_FAILED");
+            return new { ok = true, sent = true, verified = true, shortcut = normalized, via = "SendInput", provider = "native-hands-v3" };
         }
 
         private static bool Key(ushort vk, bool up)
