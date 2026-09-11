@@ -119,11 +119,16 @@ test('pc_ui_action exposes deep UI Automation patterns and native pointer fallba
   assert.match(windowsUiActions, /native-mouse-wheel/);
 });
 
-test('menu items are dispatched without false failure when the item disappears after activation', () => {
+test('persistent MenuItem receives a verified physical fallback instead of fake semantic success', () => {
   const ui = read('native/windows-hands/UiService.cs');
   assert.match(ui, /ControlType\.MenuItem/);
   assert.match(ui, /SelectionItem[\s\S]*requiresObservation/);
-  assert.match(ui, /isMenuItem[\s\S]*Tuple\.Create\("SelectionItem", true, true\)/);
+  assert.match(pcDesktop, /stabilizeMenuActivation/);
+  assert.match(pcDesktop, /findVisibleMenuNode/);
+  assert.match(pcDesktop, /pc_ui_tree/);
+  assert.match(pcDesktop, /pc_screen_click/);
+  assert.match(pcDesktop, /native-menu-physical-fallback/);
+  assert.match(pcDesktop, /PC_MENUITEM_ACTIVATION_NOT_VERIFIED/);
   assert.match(ui, /IsOffscreen[\s\S]*score \+= 60/);
 });
 
