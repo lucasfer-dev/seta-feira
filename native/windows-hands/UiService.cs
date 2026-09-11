@@ -49,6 +49,7 @@ namespace Sexta.NativeHands
             if (target.Length == 0) throw new InvalidOperationException("PC_UI_TEXT_REQUIRED");
             if (Safety.IsSensitive(target) || Safety.IsCredential(target)) throw new InvalidOperationException("PC_UI_SENSITIVE_CONTROL_BLOCKED");
             var node = Find(ActiveRoot(), target, string.Empty, string.Empty);
+            if (SafeBool(() => node.Current.IsPassword)) throw new InvalidOperationException("PC_UI_PASSWORD_FIELD_BLOCKED");
             var summary = Summary(node);
             var click = InvokeOrClick(node);
             return new { ok = true, clicked = true, verified = click.Item2, requiresObservation = click.Item3, via = click.Item1, target = summary, hwnd = NativeMethods.GetForegroundWindow().ToInt64(), provider = "native-uia-v3" };
@@ -95,7 +96,7 @@ namespace Sexta.NativeHands
             if (!writeLike && (Safety.IsSensitive(name) || Safety.IsSensitive(id))) throw new InvalidOperationException("PC_UI_SENSITIVE_CONTROL_BLOCKED");
 
             var node = Find(ActiveRoot(), name, id, type);
-            if (SafeBool(() => node.Current.IsPassword) && writeLike) throw new InvalidOperationException("PC_UI_PASSWORD_FIELD_BLOCKED");
+            if (SafeBool(() => node.Current.IsPassword)) throw new InvalidOperationException("PC_UI_PASSWORD_FIELD_BLOCKED");
 
             var selectedName = SafeString(() => node.Current.Name);
             var selectedId = SafeString(() => node.Current.AutomationId);
@@ -275,8 +276,6 @@ namespace Sexta.NativeHands
                 return new { ok = true, scrolled = true, verified = before < 0 || after != before, requiresObservation = false, direction = dir, amount = small ? "small" : "large", before, after, target = owner == null ? null : Summary(owner), via = "ScrollPattern", provider = "native-uia-v3" };
             }
 
-            // Canvas, Chromium custom surfaces, Electron and games nem sempre expõem ScrollPattern.
-            // O fallback continua nativo e usa a roda do mouse no centro da janela ativa.
             var rect = Safe(() => root.Current.BoundingRectangle, System.Windows.Rect.Empty);
             if (!rect.IsEmpty && rect.Width > 4 && rect.Height > 4)
             {
@@ -504,6 +503,7 @@ namespace Sexta.NativeHands
 
         private static Tuple<string, bool> PointerAction(AutomationElement node, string op)
         {
+            if (SafeBool(() => node.Current.IsPassword)) throw new InvalidOperationException("PC_UI_PASSWORD_FIELD_BLOCKED");
             System.Windows.Point point;
             var hasPoint = false;
             try { hasPoint = node.TryGetClickablePoint(out point); }
@@ -525,6 +525,7 @@ namespace Sexta.NativeHands
 
         private static Tuple<string, bool> SetValue(AutomationElement node, string value, bool forceKeyboard)
         {
+            if (SafeBool(() => node.Current.IsPassword)) throw new InvalidOperationException("PC_UI_PASSWORD_FIELD_BLOCKED");
             if (!forceKeyboard)
             {
                 try
