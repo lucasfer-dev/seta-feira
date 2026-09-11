@@ -134,11 +134,11 @@ jobs:
           Select-String -Path native/windows-hands/NativeMethods.cs -Pattern "EnumWindows","SetForegroundWindow","SetWindowPos","PostMessage","SendInput" | Out-Null
           Select-String -Path native/windows-hands/UiService.cs -Pattern "AutomationElement","InvokePattern","ValuePattern","SelectionItemPattern","TogglePattern","PC_UI_PASSWORD_FIELD_BLOCKED","PC_UI_SENSITIVE_CONTROL_BLOCKED" | Out-Null
           Select-String -Path native/windows-hands/WindowService.cs -Pattern "PC_WINDOW_CLOSE_NOT_VERIFIED","PC_WINDOW_MOVE_NOT_VERIFIED","PC_WINDOW_FOCUS_NOT_VERIFIED" | Out-Null
-          Select-String -Path native/windows-hands/ScreenService.cs -Pattern "CopyFromScreen","imageBase64" | Out-Null
+          Select-String -Path native/windows-hands/ScreenService.cs -Pattern "CopyFromScreen","imageBase64","image/jpeg","PC_SCREEN_CAPTURE_TOO_LARGE" | Out-Null
 
           Select-String -Path agent/app-resolver.mjs -Pattern "Get-StartApps","shell:AppsFolder","App Paths","BLOCKED_EXECUTABLES","APP_NOT_FOUND","APP_LAUNCH_NOT_VERIFIED" | Out-Null
           if (Select-String -Path agent/app-resolver.mjs -Pattern "shell:\s*true","-EncodedCommand","ExecutionPolicy.*Bypass") { throw 'Unsafe app resolver primitive detected' }
-          Select-String -Path api/pc-vision-analyze.js -Pattern "GEMINI_VISION_FALLBACK_MODELS","semanticFallbackRecommended","visionAvailable","cacheHit","cooldowns","image/png" | Out-Null
+          Select-String -Path api/pc-vision-analyze.js -Pattern "GEMINI_VISION_FALLBACK_MODELS","semanticFallbackRecommended","visionAvailable","cacheHit","cooldowns","image/jpeg" | Out-Null
           Select-String -Path agent/runtime-state.mjs -Pattern "AUTONOMY_OBSERVER_READ_ONLY","AUTONOMOUS_MODE_REQUIRED","AGENT_PAUSED","PRIVACY_HARDWARE_DISABLED","4.2.0" | Out-Null
           Select-String -Path agent/secure-vault.mjs -Pattern "ProtectedData","CurrentUser" | Out-Null
 
