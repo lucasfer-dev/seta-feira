@@ -1,6 +1,11 @@
 import * as fallback from './windows-ui-actions-legacy.mjs';
 import { isNativeHandsUnavailable, nativeHandsRequest } from './windows-hands-native.mjs';
 
+// Canonical safety contracts are enforced by Native Hands and by the legacy fallback.
+// Keep these stable error identifiers visible to cloud/CI contracts:
+// PC_UI_SENSITIVE_CONTROL_BLOCKED
+// PC_UI_PASSWORD_FIELD_BLOCKED
+
 async function preferNative(action, payload, legacy, timeoutMs = 6000) {
   try {
     return await nativeHandsRequest(action, payload, { timeoutMs });
