@@ -6,6 +6,7 @@ const LEGACY_LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-2.5-flash-nat
 const MODERN_LIVE_MODEL = process.env.GEMINI_LIVE_MODEL_31 || 'gemini-3.1-flash-live-preview';
 const LIVE_VOICE = process.env.GEMINI_LIVE_VOICE || 'Sulafat';
 const LIVE_FUNCTION_BUDGET = 28;
+const DESKTOP_LIVE_FUNCTION_BUDGET = 36;
 
 const DESKTOP_LIVE_PC_TOOLS = new Set([
   'pc_open_app',
@@ -14,10 +15,19 @@ const DESKTOP_LIVE_PC_TOOLS = new Set([
   'pc_system_info',
   'pc_codex_task',
   'pc_codex_status',
+  'pc_window_list',
   'pc_window_focus',
   'pc_window_close',
   'pc_window_state',
   'pc_window_move_resize',
+  'pc_screen_analyze',
+  'pc_ui_tree',
+  'pc_ui_click_text',
+  'pc_ui_type_text',
+  'pc_ui_action',
+  'pc_screen_click',
+  'pc_ui_scroll',
+  'pc_ui_hotkey',
   'pc_agent_task'
 ]);
 
@@ -28,6 +38,14 @@ const ANDROID_LIVE_PC_TOOLS = new Set([
 
 const LIVE_TOOL_PRIORITY = [
   'pc_agent_task',
+  'pc_screen_analyze',
+  'pc_ui_action',
+  'pc_ui_click_text',
+  'pc_ui_type_text',
+  'pc_ui_scroll',
+  'pc_screen_click',
+  'pc_ui_hotkey',
+  'pc_window_list',
   'pc_window_close',
   'pc_window_focus',
   'pc_window_state',
@@ -84,6 +102,7 @@ function compactLiveDeclarations(declarations = [], origin = '') {
     }
     return true;
   });
+  const budget = origin === 'desktop' ? DESKTOP_LIVE_FUNCTION_BUDGET : LIVE_FUNCTION_BUDGET;
 
   return filtered
     .map((declaration, order) => ({ declaration, order }))
@@ -94,7 +113,7 @@ function compactLiveDeclarations(declarations = [], origin = '') {
       const bPriority = LIVE_TOOL_PRIORITY_INDEX.has(bName) ? LIVE_TOOL_PRIORITY_INDEX.get(bName) : 1000;
       return aPriority - bPriority || a.order - b.order;
     })
-    .slice(0, LIVE_FUNCTION_BUDGET)
+    .slice(0, budget)
     .map(item => item.declaration);
 }
 
@@ -128,7 +147,7 @@ export default async function handler(req, res) {
   const deviceRule = origin === 'android'
     ? 'DISPOSITIVO ATUAL: Android. Para ações no aparelho atual, prefira SEMPRE ferramentas android_. Só use pc_ se o usuário disser explicitamente PC, computador, Windows ou notebook. EXCEÇÃO: pc_codex_task e pc_codex_status podem ser usados no Android quando o usuário pedir Codex/programação; eles apenas delegam a tarefa ao agente Windows.'
     : origin === 'desktop'
-      ? 'DISPOSITIVO ATUAL: PC/desktop. Para abrir, focar, minimizar, maximizar, mover e fechar janelas, use as ferramentas pc_ diretas disponíveis. Para tarefas internas ou multi-etapas em programas e navegador, prefira pc_agent_task; ele observa, age e verifica usando as ferramentas detalhadas fora da sessão Live. Só use android_ quando a conversa estiver no Android.'
+      ? 'DISPOSITIVO ATUAL: PC/desktop. Para ações simples e imediatas no Windows, use diretamente a ferramenta pc_ específica: listar/focar/mover/fechar janelas, olhar a tela, ler a árvore UI, clicar, digitar, rolar ou usar atalho. Use pc_agent_task somente para objetivos realmente multi-etapas que precisam observar → agir → verificar repetidamente. Para navegador, prefira as ferramentas pc_browser_ quando estiverem disponíveis no fluxo delegado.'
       : 'DISPOSITIVO ATUAL: navegador. Escolha Android ou PC apenas quando o pedido ou o contexto indicar claramente o dispositivo. pc_codex_task pode ser usado para delegar programação ao agente Windows.';
 
   const liveRule = [
@@ -139,6 +158,7 @@ export default async function handler(req, res) {
     'PRESENÇA: comentários, piadas, desabafos e observações podem receber reações naturais. Ignore somente fala ambiente claramente alheia à conversa.',
     'RITMO: prefira respostas curtas e deixe espaço para o usuário entrar. Não termine toda fala com pergunta nem use bordões fixos.',
     'FERRAMENTAS: quando houver ferramenta adequada, use-a. Não diga que uma ação terminou antes da confirmação real.',
+    'WINDOWS HANDS: para “o que tem na tela?”, use pc_screen_analyze. Para clicar pelo nome, use pc_ui_click_text ou pc_ui_action. Para digitar, use pc_ui_type_text. Para mover ou alterar janela, use pc_window_move_resize/pc_window_state. Não transforme uma ação simples em pc_agent_task sem necessidade.',
     'EFEITOS COLATERAIS: nunca envie, responda, crie, edite, abra ou altere algo por iniciativa própria. Essas ações devem corresponder a um pedido explícito do usuário no turno atual.'
   ].join('\n');
 
@@ -240,7 +260,7 @@ export default async function handler(req, res) {
       actionRouter: 'sexta-tool-core',
       toolCount: functionDeclarations.length,
       totalToolCount: allLiveDeclarations.length,
-      toolProfile: origin === 'desktop' ? 'desktop-compact-v1' : origin === 'android' ? 'android-compact-v1' : 'browser-compact-v1',
+      toolProfile: origin === 'desktop' ? 'desktop-native-hands-v3' : origin === 'android' ? 'android-compact-v1' : 'browser-compact-v1',
       clientVersion: clientVersion || 'legacy',
       liveGeneration: IS_GEMINI_31_LIVE ? '3.1' : '2.5',
       vadMode: manualVad ? 'manual' : hybridVad ? 'hybrid' : 'automatic',
