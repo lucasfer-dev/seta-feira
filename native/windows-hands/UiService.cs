@@ -60,7 +60,7 @@ namespace Sexta.NativeHands
             if (!string.IsNullOrWhiteSpace(target))
             {
                 if (Safety.IsCredential(target)) throw new InvalidOperationException("PC_UI_PASSWORD_FIELD_BLOCKED");
-                node = Find(ActiveRoot(), target.Trim(), string.Empty, string.Empty);
+                node = FindWritable(ActiveRoot(), target.Trim());
             }
             else node = AutomationElement.FocusedElement;
             if (node == null) throw new InvalidOperationException("PC_UI_CONTROL_NOT_FOUND");
@@ -235,6 +235,49 @@ namespace Sexta.NativeHands
                         if (!shortType.Equals(type, StringComparison.OrdinalIgnoreCase) && !fullType.Equals(type, StringComparison.OrdinalIgnoreCase)) continue;
                         score--;
                     }
+                    if (score < bestScore) { best = el; bestScore = score; }
+                }
+                catch { }
+            }
+            if (best == null) throw new InvalidOperationException("PC_UI_CONTROL_NOT_FOUND");
+            return best;
+        }
+
+        private static AutomationElement FindWritable(AutomationElement root, string selector)
+        {
+            var all = root.FindAll(TreeScope.Subtree, Condition.TrueCondition);
+            AutomationElement best = null;
+            var bestScore = int.MaxValue;
+            for (var i = 0; i < all.Count && i < 2200; i++)
+            {
+                try
+                {
+                    var el = all[i];
+                    if (!el.Current.IsEnabled) continue;
+                    var password = el.Current.IsPassword;
+                    var currentName = password ? "[password]" : (el.Current.Name ?? string.Empty).Trim();
+                    var currentId = (el.Current.AutomationId ?? string.Empty).Trim();
+
+                    var score = 1000;
+                    if (currentId.Equals(selector, StringComparison.OrdinalIgnoreCase)) score = 0;
+                    else if (currentName.Equals(selector, StringComparison.OrdinalIgnoreCase)) score = 10;
+                    else if (currentName.StartsWith(selector, StringComparison.OrdinalIgnoreCase)) score = 20;
+                    else if (currentName.IndexOf(selector, StringComparison.OrdinalIgnoreCase) >= 0) score = 30;
+                    else continue;
+
+                    object raw;
+                    var writableValue = false;
+                    try
+                    {
+                        if (el.TryGetCurrentPattern(ValuePattern.Pattern, out raw)) writableValue = !((ValuePattern)raw).Current.IsReadOnly;
+                    }
+                    catch { }
+                    var isEdit = el.Current.ControlType == ControlType.Edit;
+                    var keyboardFocusable = el.Current.IsKeyboardFocusable;
+                    if (isEdit) score -= 8;
+                    if (writableValue) score -= 6;
+                    if (keyboardFocusable) score -= 2;
+
                     if (score < bestScore) { best = el; bestScore = score; }
                 }
                 catch { }
