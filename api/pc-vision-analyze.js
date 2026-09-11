@@ -126,7 +126,7 @@ export default async function handler(req, res) {
   const key = cacheKey(imageBase64, question);
   const cached = state.cache.get(key);
   if (cached?.expiresAt > now) {
-    return send(res, 200, { ok: true, visionAvailable: true, model: cached.model, analysis: cached.analysis, cacheHit: true, fallbackUsed: cached.fallbackUsed, compatibilityMode: cached.compatibilityMode, attempts: [] });
+    return send(res, 200, { ok: true, visionAvailable: true, permissionIssue: false, model: cached.model, analysis: cached.analysis, cacheHit: true, fallbackUsed: cached.fallbackUsed, compatibilityMode: cached.compatibilityMode, attempts: [] });
   }
 
   const models = visionModels(c);
@@ -165,7 +165,7 @@ export default async function handler(req, res) {
           const fallbackUsed = model !== primaryModel;
           state.cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, model, analysis, fallbackUsed, compatibilityMode });
           pruneCache();
-          return send(res, 200, { ok: true, visionAvailable: true, model, analysis, cacheHit: false, fallbackUsed, compatibilityMode, attempts });
+          return send(res, 200, { ok: true, visionAvailable: true, permissionIssue: false, model, analysis, cacheHit: false, fallbackUsed, compatibilityMode, attempts });
         }
 
         const message = data?.error?.message || 'Gemini vision failed';
@@ -183,12 +183,14 @@ export default async function handler(req, res) {
         }
 
         if ([401, 403].includes(Number(response.status))) {
-          return send(res, response.status, { error: 'vision_provider_auth_failed', message: String(message).slice(0, 500), attempts });
+          return send(res, response.status, { error: 'vision_provider_auth_failed', permissionIssue: false, message: String(message).slice(0, 500), attempts });
         }
 
         state.cooldowns.set(model, Date.now() + 20_000);
         break;
       } catch (error) {
+        // Timeout/rede não é incompatibilidade de payload nem falha de permissão local:
+        // pule para o próximo modelo e preserve a autorização já concedida ao PC Agent.
         const message = String(error?.message || error);
         attempts.push({ model, mode: compatibilityMode ? 'compat' : 'json', status: 'network', message: message.slice(0, 180) });
         state.cooldowns.set(model, Date.now() + 12_000);
@@ -209,6 +211,7 @@ export default async function handler(req, res) {
   return send(res, 200, {
     ok: true,
     visionAvailable: false,
+    permissionIssue: false,
     model: 'vision-provider-unavailable',
     fallbackUsed: true,
     semanticFallbackRecommended: true,
