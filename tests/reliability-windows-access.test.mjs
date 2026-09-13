@@ -34,8 +34,11 @@ test('Voice Reliability v10.1 carrega antes do Voice Core e protege continuaçã
   assert.match(reliability, /tool_continuation_timeout/);
   assert.match(reliability, /__sextaMarkToolContinuation/);
   assert.match(reliability, /playback-state/);
-  assert.match(reliability, /10\.1\.1-playback-continuation-guard/);
-  assert.match(reliability, /socket\.close\(4011/);
+  assert.match(reliability, /10\.1\.2-failed-tool-fast-recovery/);
+  assert.match(reliability, /FAILED_TOOL_CONTINUATION_TIMEOUT_MS = 3500/);
+  assert.match(reliability, /TOOL_CONTINUATION_TIMEOUT_MS = 6500/);
+  assert.match(reliability, /4012/);
+  assert.match(reliability, /4011/);
 });
 
 test('Desktop usa buffer adaptativo gap-aware sem aumentar a partida base', () => {
@@ -54,6 +57,8 @@ test('telemetria de voz é persistida sem gravar transcrições', () => {
   assert.match(metrics, /sexta_live_metrics/);
   assert.match(metrics, /client_timestamp/);
   assert.match(metrics, /turn_id/);
+  assert.match(metrics, /failedToolNames/);
+  assert.match(metrics, /toolErrors/);
   assert.doesNotMatch(metrics, /body\.(?:transcript|content|userText|assistantText)/);
 });
 
