@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-// This contract also acts as the final stacked-roadmap validation trigger.
+// Final stacked-roadmap validation trigger after context/orb/backoff hardening.
 const audit = fs.readFileSync(new URL('../agent/audit.mjs', import.meta.url), 'utf8');
 const doctor = fs.readFileSync(new URL('../agent/doctor.mjs', import.meta.url), 'utf8');
 const agent = fs.readFileSync(new URL('../agent/agent-v3.mjs', import.meta.url), 'utf8');
