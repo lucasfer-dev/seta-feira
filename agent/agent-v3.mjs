@@ -23,6 +23,7 @@ const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${T
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const activeCodexProjects = new Set();
 const activeChildren = new Set();
+let lastAction = null;
 
 async function post(route, body) {
   const response = await fetch(`${BASE}${route}`, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(25000) });
@@ -222,16 +223,29 @@ const CAPABILITIES = [
   'browser_open', 'browser_tabs', 'browser_select_tab', 'browser_snapshot', 'browser_click', 'browser_type', 'browser_back', 'browser_forward', 'browser_reload', 'agent_control'
 ];
 
+function buildWorldState(runtime, hardware, browserAgent) {
+  const local = hardware?.worldState || {};
+  return {
+    version:'2.0.0', capturedAt:new Date().toISOString(),
+    device:{ id:DEVICE_ID, name:cfg.deviceName || os.hostname(), kind:'windows' },
+    activeWindow:local.activeWindow || null, windows:Array.isArray(local.windows) ? local.windows.slice(0,14) : [],
+    browser:browserAgent || null, currentProject:[...activeCodexProjects][0] || null,
+    codexActiveProjects:[...activeCodexProjects], lastAction, autonomy:runtime.autonomy, paused:runtime.paused
+  };
+}
+
 async function heartbeat() {
   const runtime = publicRuntimeState();
   const hardware = runtime.privacy.hardware ? await hardwareSnapshot().catch(() => null) : null;
   const secureVault = secureVaultStatus();
+  const browserAgent = browserStatus(cfg);
+  const worldState = buildWorldState(runtime, hardware, browserAgent);
   return post('/api/device-heartbeat', {
     deviceId: DEVICE_ID, name: cfg.deviceName || os.hostname(), kind: 'agent', capabilities: CAPABILITIES,
     context: {
       hostname: os.hostname(), platform: os.platform(), uptime: Math.round(os.uptime()), projects: Object.keys(cfg.projects || {}),
       codexTask: true, pcAgent: true, pcVision: process.platform === 'win32', pcHands: process.platform === 'win32', pcWindowControlV2: process.platform === 'win32', pcUiActions: process.platform === 'win32',
-      browserAgent: browserStatus(cfg), codexActiveProjects: [...activeCodexProjects], agentProtocol: AGENT_PROTOCOL_VERSION,
+      browserAgent, worldState, codexActiveProjects: [...activeCodexProjects], agentProtocol: AGENT_PROTOCOL_VERSION,
       agentVersion: AGENT_PROTOCOL_VERSION, autonomy: runtime.autonomy, paused: runtime.paused, privacy: runtime.privacy,
       hardware, secureVault: { available: secureVault.available, version: secureVault.version, aliases: secureVault.aliases.length },
       wakeWordConfigured: cfg.wakeWord?.enabled === true
@@ -263,10 +277,12 @@ while (true) {
       try {
         audit({ commandId: command.id, action: command.action, status: 'running', ok: true });
         const result = await execute(command);
+        lastAction = { at:new Date().toISOString(), commandId:command.id, action:command.action, status:'done', ok:true };
         audit({ commandId: command.id, action: command.action, status: 'done', ok: true, details: { state: publicRuntimeState() } });
         await post('/api/agent-result', { commandId: command.id, deviceId: DEVICE_ID, action: command.action, status: 'done', ok: true, result, message: 'Executado pelo agente Windows.' });
         if (command.action === 'agent_control') lastBeat = 0;
       } catch (error) {
+        lastAction = { at:new Date().toISOString(), commandId:command.id, action:command.action, status:'failed', ok:false, error:String(error?.message || error).slice(0,240) };
         audit({ commandId: command.id, action: command.action, status: 'failed', ok: false, details: { message: error.message } });
         await post('/api/agent-result', { commandId: command.id, deviceId: DEVICE_ID, action: command.action, status: 'failed', ok: false, result: { error: error.message }, message: error.message });
       }

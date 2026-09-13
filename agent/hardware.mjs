@@ -53,13 +53,13 @@ async function desktopWorldState() {
     const source = Array.isArray(result) ? result : Array.isArray(result?.windows) ? result.windows : [];
     const windows = source.map(compactWindow).filter(item => item.title || item.process).slice(0, 14);
     return {
-      version: '1.0.0',
+      version: '1.1.0',
       capturedAt: new Date().toISOString(),
       activeWindow: windows.find(item => item.active) || windows[0] || null,
       windows
     };
   } catch (error) {
-    return { version: '1.0.0', capturedAt: new Date().toISOString(), activeWindow: null, windows: [], error: String(error?.message || error).slice(0, 240) };
+    return { version: '1.1.0', capturedAt: new Date().toISOString(), activeWindow: null, windows: [], error: String(error?.message || error).slice(0, 240) };
   }
 }
 
