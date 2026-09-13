@@ -21,6 +21,7 @@
   const LISTEN_BUFFER_MS = IS_DESKTOP ? 1800 : 320;
   const LISTEN_PASS_THROUGH_MS = 1800;
   const WAKE_COMMAND_WINDOW_MS = 5200;
+  const LEGACY_GUARD_VERSION = '1.2.1-listen-thinking-gate';
 
   let assistantSpeaking = false;
   let voiceState = 'off';
@@ -334,6 +335,7 @@
   window.__sextaBargeInGuard = {
     installed: true,
     version: '1.3.0-strict-desktop-wake',
+    legacyVersion: LEGACY_GUARD_VERSION,
     debug: () => ({
       assistantSpeaking,
       voiceState,
