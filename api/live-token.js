@@ -40,6 +40,7 @@ const LIVE_TOOL_PRIORITY = [
   'capability_dispatch',
   'pc_agent_task',
   'pc_screen_analyze',
+  'pc_ui_tree',
   'pc_ui_action',
   'pc_ui_click_text',
   'pc_ui_type_text',
