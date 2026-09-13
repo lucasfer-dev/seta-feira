@@ -1,0 +1,48 @@
+name: Propagate Roadmap Contract Fix
+
+on:
+  push:
+    branches: [automation/roadmap-20260913]
+    paths:
+      - '.github/workflows/roadmap-propagate-contract.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  propagate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Propagate personality contract to stacked branches
+        run: |
+          set -euo pipefail
+          git config user.name "sexta-roadmap-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git fetch origin '+refs/heads/roadmap/*:refs/remotes/origin/roadmap/*'
+          source_branch='roadmap/01-voice-critical-path'
+          for branch in \
+            roadmap/02-voice-natural-turns \
+            roadmap/03-hands-observe-act-verify \
+            roadmap/04-capability-router-mcp \
+            roadmap/05-mission-engine-controls \
+            roadmap/06-world-state-unified \
+            roadmap/07-browser-agent-reliability \
+            roadmap/08-memory-context-scopes \
+            roadmap/09-proactivity-guardrails \
+            roadmap/10-presence-orb-ux \
+            roadmap/11-observability-slo \
+            roadmap/12-desktop-hardening
+          do
+            git checkout -B "$branch" "origin/$branch"
+            git show "origin/$source_branch:tests/personality-contract.test.mjs" > tests/personality-contract.test.mjs
+            if git diff --quiet -- tests/personality-contract.test.mjs; then
+              echo "$branch already up to date"
+              continue
+            fi
+            git add tests/personality-contract.test.mjs
+            git commit -m "test(core): sync roadmap contracts"
+            git push origin "HEAD:refs/heads/$branch"
+          done
