@@ -20,13 +20,13 @@ let activity = fs.readFileSync(mainActivityPath, 'utf8');
 if (!activity.includes('StartupGreeting.onAppOpened(this);')) {
   activity = activity.replace(
     '\n    @Override\n    protected void onCreate(Bundle savedInstanceState) {',
-    `\n    @Override\n    protected void onStart() {\n        super.onStart();\n        StartupGreeting.onAppOpened(this);\n    }\n\n    @Override\n    protected void onCreate(Bundle savedInstanceState) {`
+    `\n    @Override\n    public void onStart() {\n        super.onStart();\n        StartupGreeting.onAppOpened(this);\n    }\n\n    @Override\n    protected void onCreate(Bundle savedInstanceState) {`
   );
 }
 if (!activity.includes('StartupGreeting.shutdown();')) {
   activity = activity.replace(
     '\n}\n',
-    `\n    @Override\n    protected void onDestroy() {\n        StartupGreeting.shutdown();\n        super.onDestroy();\n    }\n}\n`
+    `\n    @Override\n    public void onDestroy() {\n        StartupGreeting.shutdown();\n        super.onDestroy();\n    }\n}\n`
   );
 }
 fs.writeFileSync(mainActivityPath, activity);
