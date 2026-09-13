@@ -16,9 +16,11 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
 
   const OUTPUT_PREBUFFER = IS_ANDROID ? 0.09 : 0.028;
   const START_CONFIRM_MS = 72;
-  const SHORT_SPEECH_RELEASE_MS = 520;
-  const NORMAL_SPEECH_RELEASE_MS = 650;
-  const DICTATION_SPEECH_RELEASE_MS = 850;
+  const SHORT_SPEECH_RELEASE_MS = 260;
+  const NORMAL_SPEECH_RELEASE_MS = 360;
+  const DICTATION_SPEECH_RELEASE_MS = 560;
+  const CONTEXT_CACHE_TTL_MS = 60_000;
+  const PREWARM_DELAY_MS = 700;
   const PRE_ROLL_MS = 240;
   const RESPONSE_TIMEOUT_MS = 8500;
   const OUTPUT_SETTLE_MS = 80;
@@ -36,6 +38,9 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
   let reconnectAttempts = 0;
   let reconnectRequested = false;
   let cachedInstruction = '';
+  let cachedInstructionAt = 0;
+  let startupStartedAt = 0;
+  let voiceTraceId = '';
   let cachedPersonality = normalizePersonality({});
   let currentSession = null;
   let pendingToolCalls = 0;
@@ -71,7 +76,7 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
   function freshTurn() {
     return {
       interimInput: '', finalInput: '', outputText: '',
-      speechStartAt: 0, firstInterimAt: 0, firstFinalAt: 0,
+      speechStartAt: 0, activityEndAt: 0, firstInterimAt: 0, firstFinalAt: 0,
       firstModelAt: 0, firstAudioAt: 0
     };
   }
@@ -113,7 +118,7 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
 
   function reportMetric(kind, extra = {}) {
     void api('/api/live-metrics', {
-      method:'POST', body:JSON.stringify({ kind:`voice_core_v10:${kind}`, platform:ORIGIN, state, ...extra })
+      method:'POST', body:JSON.stringify({ kind:`voice_core_v10:${kind}`, platform:ORIGIN, state, traceId:voiceTraceId, clientTimestamp:new Date().toISOString(), ...extra })
     }).catch(() => {});
   }
 
@@ -282,6 +287,9 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
 
   function endLocalSpeech() {
     if (!localSpeechActive) return;
+    const endedAt = performance.now();
+    const releaseMs = speechReleaseMs(endedAt);
+    turn.activityEndAt = endedAt;
     localSpeechActive = false;
     speechEvidenceMs = 0;
     lastVoicedAt = 0;
@@ -292,7 +300,10 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
     // The user already finished. Visually and semantically this is thinking,
     // not listening. A strong continuation can still reopen speech through the gate.
     if (!assistantSpeaking && pendingToolCalls === 0) transition('thinking');
-    reportMetric('local_speech_end');
+    reportMetric('local_speech_end', {
+      speechDurationMs: turn.speechStartAt ? Math.round(endedAt - turn.speechStartAt) : null,
+      releaseMs
+    });
   }
 
   function processMicFrame(raw) {
@@ -374,7 +385,8 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
         reportMetric('turn', {
           speechStartToInterimMs:snapshot.firstInterimAt && snapshot.speechStartAt ? Math.round(snapshot.firstInterimAt - snapshot.speechStartAt) : null,
           speechStartToFinalMs:snapshot.firstFinalAt && snapshot.speechStartAt ? Math.round(snapshot.firstFinalAt - snapshot.speechStartAt) : null,
-          speechStartToSpeakingMs:snapshot.firstAudioAt && snapshot.speechStartAt ? Math.round(snapshot.firstAudioAt - snapshot.speechStartAt) : null
+          speechStartToSpeakingMs:snapshot.firstAudioAt && snapshot.speechStartAt ? Math.round(snapshot.firstAudioAt - snapshot.speechStartAt) : null,
+          activityEndToSpeakingMs:snapshot.firstAudioAt && snapshot.activityEndAt ? Math.round(snapshot.firstAudioAt - snapshot.activityEndAt) : null
         });
         transition('listening');
         return;
@@ -383,11 +395,11 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
     }
   }
 
-  async function startMicrophone() {
+  async function prepareMicrophone({ activate = true } = {}) {
     if (mediaStream && inputContext && inputWorklet) {
-      captureEnabled = true;
-      if (inputContext.state === 'suspended') await inputContext.resume();
-      transition('listening');
+      captureEnabled = activate;
+      if (activate && inputContext.state === 'suspended') await inputContext.resume();
+      if (activate) transition('listening');
       return;
     }
 
@@ -413,7 +425,7 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
     inputSource.connect(inputWorklet);
     inputWorklet.connect(silentGain);
     silentGain.connect(inputContext.destination);
-    captureEnabled = true;
+    captureEnabled = activate;
     reportMetric('capture_ready', {
       trackSampleRate:Number(settings.sampleRate || 0) || null,
       trackChannelCount:Number(settings.channelCount || 0) || null,
@@ -426,7 +438,11 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
       settings:{ ...settings, audioContextSampleRate:inputContext.sampleRate },
       capabilities:track?.getCapabilities?.() || {}, capturedAt:Date.now()
     });
-    transition('listening');
+    if (activate) transition('listening');
+  }
+
+  async function startMicrophone() {
+    return prepareMicrophone({ activate:true });
   }
 
   function stopMicrophone() {
@@ -441,10 +457,11 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
     speechEvidenceMs = 0; lastVoicedAt = 0; localSpeechActive = false;
   }
 
-  async function buildSystemInstruction() {
+  async function buildSystemInstruction({ fresh = true } = {}) {
     const conversationId = localStorage.getItem('sexta_conversation') || 'main';
     let sync = {};
-    try { sync = await api(`/api/sync?conversationId=${encodeURIComponent(conversationId)}&fresh=1`); } catch {}
+    const freshness = fresh ? '&fresh=1' : '';
+    try { sync = await api(`/api/sync?conversationId=${encodeURIComponent(conversationId)}&scope=voice${freshness}`); } catch {}
     emit('sexta:session-context', { loadedAt:Date.now(), messages:sync.messages?.length || 0, memories:sync.memories?.length || 0 });
     const settings = sync.settings || {};
     cachedPersonality = normalizePersonality(settings);
@@ -463,6 +480,25 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
       'Nunca diga que uma ação terminou antes da ferramenta confirmar.', platformRule,
       memories ? `Memórias relevantes:\n${memories}` : '', recent ? `Contexto recente:\n${recent}` : ''
     ].filter(Boolean).join('\n\n');
+  }
+
+  async function prewarmVoiceRuntime() {
+    if (!IS_DESKTOP || sessionActive || window.SEXTA_VOICE_PREWARM === false) return;
+    const startedAt = performance.now();
+    const results = await Promise.allSettled([
+      prepareMicrophone({ activate:false }),
+      ensureOutputContext(),
+      buildSystemInstruction({ fresh:false }).then(value => {
+        cachedInstruction = value;
+        cachedInstructionAt = Date.now();
+      })
+    ]);
+    reportMetric('prewarm_ready', {
+      prewarmMs: Math.round(performance.now() - startedAt),
+      micReady: results[0]?.status === 'fulfilled',
+      outputReady: results[1]?.status === 'fulfilled',
+      contextCached: Boolean(cachedInstruction)
+    });
   }
 
   async function persistTurn(userText, assistantText) {
@@ -545,6 +581,7 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
 
     if (message.setupComplete) {
       setupComplete = true; reconnectAttempts = 0; reconnectRequested = false;
+      reportMetric('startup_setup_complete', { startupMs:startupStartedAt ? Math.round(performance.now() - startupStartedAt) : null });
       if (handshakeTimer) clearTimeout(handshakeTimer); handshakeTimer = null;
       try { await startMicrophone(); }
       catch (error) { console.error('[SEXTA v10] microfone:', error); transition('error', { label:'Não consegui abrir o microfone.' }); }
@@ -621,20 +658,28 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
     if (!sessionActive || connectingSocket || (websocket?.readyState === WebSocket.OPEN && setupComplete)) return;
     transition(reason === 'initial' ? 'connecting' : 'recovering');
     try {
-      if (!cachedInstruction) cachedInstruction = await buildSystemInstruction();
+      if (!cachedInstruction || Date.now() - cachedInstructionAt > CONTEXT_CACHE_TTL_MS) {
+        const contextStartedAt = performance.now();
+        cachedInstruction = await buildSystemInstruction({ fresh:false });
+        cachedInstructionAt = Date.now();
+        reportMetric('startup_context_ready', { contextMs:Math.round(performance.now() - contextStartedAt) });
+      }
       if (!sessionActive) return;
+      const tokenStartedAt = performance.now();
       const session = await api('/api/live-token', {
         method:'POST', body:JSON.stringify({
           systemInstruction:cachedInstruction, personality:cachedPersonality, origin:ORIGIN, resumptionHandle:'',
           clientVersion:'v10', liveGeneration:'3.1', vadMode:'manual'
         })
       });
+      reportMetric('startup_token_ready', { tokenMs:Math.round(performance.now() - tokenStartedAt) });
       if (!session?.token) throw new Error('token Live vazio');
       if (session.liveGeneration !== '3.1') throw new Error('Gemini 3.1 Live não foi ativado');
       currentSession = session;
       const socket = new WebSocket(`${WS_BASE}?access_token=${encodeURIComponent(session.token)}`);
       connectingSocket = socket;
       socket.onopen = () => {
+        reportMetric('startup_socket_open', { socketMs:startupStartedAt ? Math.round(performance.now() - startupStartedAt) : null });
         if (!sessionActive) { try { socket.close(1000, 'off'); } catch {} return; }
         websocket = socket; connectingSocket = null;
         socket.send(JSON.stringify({ setup:{
@@ -697,10 +742,22 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
   async function startVoice() {
     if (sessionActive) return;
     if (!AudioContextCtor || !window.AudioWorkletNode) { transition('error', { label:'Este navegador não suporta áudio em tempo real.' }); return; }
-    sessionActive = true; turn = freshTurn(); transition('connecting'); await connectLive('initial');
+    startupStartedAt = performance.now();
+    voiceTraceId = window.crypto?.randomUUID?.() || `voice-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    reportMetric('startup_begin', {
+      prewarmed:Boolean(mediaStream && inputWorklet),
+      contextCached:Boolean(cachedInstruction && Date.now() - cachedInstructionAt <= CONTEXT_CACHE_TTL_MS)
+    });
+    sessionActive = true; turn = freshTurn(); transition('connecting');
+    void prepareMicrophone({ activate:false }).catch(() => {});
+    await connectLive('initial');
   }
 
-  function stopVoice() { if (!sessionActive) return; sessionActive = false; cleanup(true); transition('off'); }
+  function stopVoice() {
+    if (!sessionActive) return;
+    sessionActive = false; cleanup(true); transition('off');
+    if (IS_DESKTOP) setTimeout(() => void prewarmVoiceRuntime(), PREWARM_DELAY_MS);
+  }
   function toggleVoice() { if (sessionActive) stopVoice(); else void startVoice(); }
 
   document.addEventListener('visibilitychange', () => {
@@ -713,18 +770,21 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
   voiceBtn.onclick = toggleVoice;
   if (wakeBtn) wakeBtn.onclick = toggleVoice;
   transition('off');
+  if (IS_DESKTOP) setTimeout(() => void prewarmVoiceRuntime(), PREWARM_DELAY_MS);
 
   window.__sextaGeminiLive = {
     start:startVoice, stop:stopVoice, toggle:toggleVoice, active:() => sessionActive,
     debug:() => ({
-      version:'voice-core-v10', model:currentSession?.model || null,
+      version:'voice-core-v10.2-prewarm', model:currentSession?.model || null,
       liveGeneration:currentSession?.liveGeneration || null, platform:ORIGIN,
       vadMode:'manual-local-gated', state, sessionActive, setupComplete, captureEnabled,
       localSpeechActive, localVoiceActive:localSpeechActive, assistantSpeaking, pendingToolCalls,
       responsePending, responseTimeoutStreak,
       interimTranscript:turn.interimInput, finalTranscript:turn.finalInput,
       outputTranscript:turn.outputText, noiseFloor, threshold:speechThreshold(),
-      inputSampleRate:inputContext?.sampleRate || null, activityOpen, responseDeadline
+      inputSampleRate:inputContext?.sampleRate || null, activityOpen, responseDeadline,
+      endpointing:{ shortMs:SHORT_SPEECH_RELEASE_MS, normalMs:NORMAL_SPEECH_RELEASE_MS, dictationMs:DICTATION_SPEECH_RELEASE_MS },
+      traceId:voiceTraceId, contextCachedAt:cachedInstructionAt
     })
   };
 })();
