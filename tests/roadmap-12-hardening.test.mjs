@@ -8,5 +8,5 @@ const doctor = fs.readFileSync(new URL('../agent/doctor.mjs', import.meta.url), 
 const agent = fs.readFileSync(new URL('../agent/agent-v3.mjs', import.meta.url), 'utf8');
 test('desktop agent has durable redacted audit rotation and bounded backoff', () => {
   assert.match(audit,/LOCALAPPDATA/); assert.match(audit,/MAX_BYTES/); assert.match(audit,/BACKUPS/); assert.match(audit,/\[circular\]/); assert.match(audit,/auditHealth/);
-  assert.match(doctor,/Audit log/); assert.match(agent,/pollFailureStreak/); assert.match(agent,/Math\.min\(15000/);
+  assert.match(doctor,/Audit log/); assert.match(agent,/pollFailureStreak/); assert.match(agent,/Math\.min\(15000/); assert.match(agent,/continue;/);
 });

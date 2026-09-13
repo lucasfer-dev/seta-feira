@@ -293,6 +293,7 @@ while (true) {
     pollFailureStreak += 1;
     console.error('[SEXTA Agent]', error.message);
     await sleep(Math.min(15000, 750 * (2 ** Math.min(pollFailureStreak, 4))));
+    continue;
   }
   await sleep(3000);
 }
