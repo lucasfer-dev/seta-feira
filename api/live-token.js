@@ -6,7 +6,7 @@ const LEGACY_LIVE_MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-2.5-flash-nat
 const MODERN_LIVE_MODEL = process.env.GEMINI_LIVE_MODEL_31 || 'gemini-3.1-flash-live-preview';
 const LIVE_VOICE = process.env.GEMINI_LIVE_VOICE || 'Sulafat';
 const LIVE_FUNCTION_BUDGET = 28;
-const DESKTOP_LIVE_FUNCTION_BUDGET = 36;
+const DESKTOP_LIVE_FUNCTION_BUDGET = 26;
 
 const DESKTOP_LIVE_PC_TOOLS = new Set([
   'pc_open_app',
@@ -37,8 +37,10 @@ const ANDROID_LIVE_PC_TOOLS = new Set([
 ]);
 
 const LIVE_TOOL_PRIORITY = [
+  'capability_dispatch',
   'pc_agent_task',
   'pc_screen_analyze',
+  'pc_ui_tree',
   'pc_ui_action',
   'pc_ui_click_text',
   'pc_ui_type_text',
@@ -170,6 +172,7 @@ export default async function handler(req, res) {
     'RITMO: prefira respostas curtas e deixe espaço para o usuário entrar. Não termine toda fala com pergunta nem use bordões fixos.',
     'LATÊNCIA PERCEBIDA: em confirmação simples ou ação curta, responda em uma frase breve. Não faça preâmbulo antes de ferramenta; execute e só então confirme o resultado real.',
     'FERRAMENTAS: quando houver ferramenta adequada e a fala tiver sido ativada pela wake word, use-a. Não diga que uma ação terminou antes da confirmação real.',
+    'ROTEAMENTO: capacidades menos comuns podem chegar por capability_dispatch. O roteador só aceita ações allowlisted e a ferramenta final continua sujeita à política de segurança.',
     'WINDOWS HANDS: para “o que tem na tela?”, use pc_screen_analyze. Para clicar pelo nome, use pc_ui_click_text ou pc_ui_action. Para digitar, use pc_ui_type_text. Para mover ou alterar janela, use pc_window_move_resize/pc_window_state. Não transforme uma ação simples em pc_agent_task sem necessidade.',
     'EFEITOS COLATERAIS: nunca envie, responda, crie, edite, abra ou altere algo por iniciativa própria. Essas ações devem corresponder a um pedido explícito do usuário no turno ativado atual.'
   ].join('\n');
