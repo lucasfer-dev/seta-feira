@@ -6,4 +6,5 @@ const presence = fs.readFileSync(new URL('../public/presence-engine.js', import.
 test('presence orb reacts across listening/thinking/speaking/acting/recovery', () => {
   assert.match(orb, /sexta-presence-stage/); for (const state of ['listening','thinking','speaking','acting','reconnecting','error']) assert.match(orb,new RegExp(state));
   assert.match(presence, /recovering: 'reconnecting'/);
+  assert.doesNotMatch(orb, /var\(--sexta-stage-energy\) \* \.08/);
 });
