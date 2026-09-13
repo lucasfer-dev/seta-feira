@@ -17,8 +17,8 @@ function safeTimestamp(value) {
 
 function compactExtras(body = {}) {
   const extras = {};
-  const stringKeys = ['reason', 'toolNames', 'outputMode', 'audioSource'];
-  const numberKeys = ['streak', 'count', 'failed', 'timeoutMs', 'closeCode', 'suppressedTurnCompletes'];
+  const stringKeys = ['reason', 'toolNames', 'failedToolNames', 'toolErrors', 'outputMode', 'audioSource'];
+  const numberKeys = ['streak', 'count', 'failed', 'timeoutMs', 'continuationTimeoutMs', 'closeCode', 'suppressedTurnCompletes'];
   const booleanKeys = ['hadTranscript', 'toolPending', 'awaitingContinuation', 'continuationActivity', 'hasAudio', 'hasOutputText'];
   for (const key of stringKeys) if (body[key] != null) extras[key] = shortString(body[key], 500);
   for (const key of numberKeys) {
