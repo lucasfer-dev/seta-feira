@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/roadmap-automation.yml'
       - '.github/scripts/roadmap-automation.py'
+      - '.github/scripts/run-roadmap-automation.py'
 
 permissions:
   contents: write
@@ -25,4 +26,4 @@ jobs:
           git config user.name "sexta-roadmap-bot"
           git config user.email "actions@users.noreply.github.com"
           git fetch origin main
-          python .github/scripts/roadmap-automation.py
+          python .github/scripts/run-roadmap-automation.py
