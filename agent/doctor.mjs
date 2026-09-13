@@ -7,6 +7,7 @@ import { AGENT_PROTOCOL_VERSION, readRuntimeState } from './runtime-state.mjs';
 import { hardwareSnapshot } from './hardware.mjs';
 import { secureVaultStatus } from './secure-vault.mjs';
 import { probeWakeWord } from './wake-word.mjs';
+import { auditHealth } from './audit.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const AGENT_HOME = path.resolve(process.env.SEXTA_AGENT_HOME || path.join(ROOT, 'agent'));
@@ -55,6 +56,8 @@ export async function runDoctor({ print = true } = {}) {
   rows.push(row('Projetos allowlist', missingProjects.length === 0, projects.length ? `${projects.length} configurado(s)${missingProjects.length ? `; ausentes: ${missingProjects.join(', ')}` : ''}` : 'nenhum projeto configurado', false));
 
   const state = readRuntimeState();
+  const audit = auditHealth();
+  rows.push(row('Audit log', audit.ok, audit.ok ? `${audit.path} • rotate ${Math.round(audit.maxBytes / 1024 / 1024)} MB` : audit.lastFailure, false));
   rows.push(row('Runtime state', true, `${state.autonomy}${state.paused ? ' • pausado' : ''} • privacy ${Object.values(state.privacy).every(Boolean) ? 'on' : 'custom'}`, false));
 
   const base = String(env.SEXTA_BASE_URL || 'https://seta-feira.vercel.app').replace(/\/$/, ''); const started = Date.now();

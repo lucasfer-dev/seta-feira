@@ -261,10 +261,12 @@ async function poll() {
 
 console.log(`[SEXTA Agent v${AGENT_PROTOCOL_VERSION}] ${DEVICE_ID} -> ${BASE}`);
 let lastBeat = 0;
+let pollFailureStreak = 0;
 while (true) {
   try {
     if (Date.now() - lastBeat > 15000) { await heartbeat(); lastBeat = Date.now(); }
     const { commands = [] } = await poll();
+    pollFailureStreak = 0;
     for (const command of commands) {
       if (command.payload?.codexTask === true) {
         try { await launchCodexTask(command); }
@@ -287,6 +289,10 @@ while (true) {
         await post('/api/agent-result', { commandId: command.id, deviceId: DEVICE_ID, action: command.action, status: 'failed', ok: false, result: { error: error.message }, message: error.message });
       }
     }
-  } catch (error) { console.error('[SEXTA Agent]', error.message); }
+  } catch (error) {
+    pollFailureStreak += 1;
+    console.error('[SEXTA Agent]', error.message);
+    await sleep(Math.min(15000, 750 * (2 ** Math.min(pollFailureStreak, 4))));
+  }
   await sleep(3000);
 }
