@@ -9,7 +9,10 @@ function memoryVisible(item = {}, { deviceId = '' } = {}) {
   const expires = Date.parse(String(item.expiresAt || item.expires_at || ''));
   if (Number.isFinite(expires) && expires <= Date.now()) return false;
   const scope = String(item.scope || 'global').toLowerCase();
-  if (scope === 'device' && deviceId && String(item.deviceId || item.device_id || '') !== deviceId) return false;
+  if (scope === 'device') {
+    const ownerDevice = String(item.deviceId || item.device_id || '');
+    return Boolean(deviceId) && ownerDevice === deviceId;
+  }
   return true;
 }
 function loadersFor(scope) {
@@ -24,10 +27,11 @@ async function loadSnapshot(scope = 'full', deviceId = '') {
   if (Array.isArray(result.memories)) result.memories = result.memories.filter(item => memoryVisible(item,{deviceId}));
   return { conversationId:SHARED_CONVERSATION_ID, scope, ...result, personalityInstruction:buildPersonalityContract(result.settings || {},{channel:'voice-live',platform:'connected-device'}), generatedAt:new Date().toISOString(), degraded:Object.keys(errors).length>0, errors };
 }
-function refresh(scope, deviceId) {
-  if (inFlights.has(scope)) return inFlights.get(scope);
-  const promise = loadSnapshot(scope,deviceId).then(value => { caches.set(scope,{value,at:Date.now()}); return value; }).finally(() => inFlights.delete(scope));
-  inFlights.set(scope,promise); return promise;
+function cacheKey(scope, deviceId) { return `${scope}:${deviceId || 'global'}`; }
+function refresh(key, scope, deviceId) {
+  if (inFlights.has(key)) return inFlights.get(key);
+  const promise = loadSnapshot(scope,deviceId).then(value => { caches.set(key,{value,at:Date.now()}); return value; }).finally(() => inFlights.delete(key));
+  inFlights.set(key,promise); return promise;
 }
 export default async function handler(req,res) {
   if (req.method !== 'GET') return send(res,405,{error:'method_not_allowed'});
@@ -35,12 +39,12 @@ export default async function handler(req,res) {
   try {
     const url = new URL(req.url,'http://localhost'); const scope = url.searchParams.get('scope') === 'voice' ? 'voice' : 'full';
     const deviceId = String(url.searchParams.get('deviceId') || '').slice(0,120); const forceFresh = url.searchParams.get('fresh') === '1';
-    const ttl = scope === 'voice' ? VOICE_CACHE_MS : CACHE_MS; const cached = caches.get(scope); const age = cached ? Date.now()-cached.at : Infinity;
+    const ttl = scope === 'voice' ? VOICE_CACHE_MS : CACHE_MS; const key = cacheKey(scope,deviceId); const cached = caches.get(key); const age = cached ? Date.now()-cached.at : Infinity;
     if (!forceFresh && cached && age < ttl) { res.setHeader('X-SEXTA-Sync-Cache','HIT'); return send(res,200,cached.value); }
-    if (!forceFresh && cached) { void refresh(scope,deviceId).catch(error => console.warn('[SEXTA Sync] background refresh:',String(error?.message||error).slice(0,240))); res.setHeader('X-SEXTA-Sync-Cache','STALE-WHILE-REVALIDATE'); return send(res,200,{...cached.value,refreshing:true,cacheAgeMs:age}); }
-    const snapshot = await refresh(scope,deviceId); res.setHeader('X-SEXTA-Sync-Cache',forceFresh?'BYPASS':'MISS'); return send(res,200,snapshot);
+    if (!forceFresh && cached) { void refresh(key,scope,deviceId).catch(error => console.warn('[SEXTA Sync] background refresh:',String(error?.message||error).slice(0,240))); res.setHeader('X-SEXTA-Sync-Cache','STALE-WHILE-REVALIDATE'); return send(res,200,{...cached.value,refreshing:true,cacheAgeMs:age}); }
+    const snapshot = await refresh(key,scope,deviceId); res.setHeader('X-SEXTA-Sync-Cache',forceFresh?'BYPASS':'MISS'); return send(res,200,snapshot);
   } catch (error) {
-    console.error('[SEXTA Sync]',error); const stale = caches.get('full')?.value || caches.get('voice')?.value;
+    console.error('[SEXTA Sync]',error); const stale = [...caches.entries()].find(([key]) => key.startsWith('full:'))?.[1]?.value || [...caches.entries()].find(([key]) => key.startsWith('voice:'))?.[1]?.value;
     if (stale) { res.setHeader('X-SEXTA-Sync-Cache','STALE'); return send(res,200,{...stale,degraded:true,stale:true,syncError:String(error?.message||error).slice(0,500)}); }
     return send(res,500,{error:'sync_failed',message:String(error?.message||error)});
   }
