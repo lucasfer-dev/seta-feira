@@ -459,9 +459,10 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
 
   async function buildSystemInstruction({ fresh = true } = {}) {
     const conversationId = localStorage.getItem('sexta_conversation') || 'main';
+    const deviceId = localStorage.getItem('sexta_device_id') || (IS_ANDROID ? 'android-native' : IS_DESKTOP ? 'desktop-native' : 'browser');
     let sync = {};
     const freshness = fresh ? '&fresh=1' : '';
-    try { sync = await api(`/api/sync?conversationId=${encodeURIComponent(conversationId)}&scope=voice${freshness}`); } catch {}
+    try { sync = await api(`/api/sync?conversationId=${encodeURIComponent(conversationId)}&scope=voice&deviceId=${encodeURIComponent(deviceId)}${freshness}`); } catch {}
     emit('sexta:session-context', { loadedAt:Date.now(), messages:sync.messages?.length || 0, memories:sync.memories?.length || 0 });
     const settings = sync.settings || {};
     cachedPersonality = normalizePersonality(settings);
