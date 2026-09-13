@@ -1,0 +1,24 @@
+name: Final Roadmap Hardening
+
+on:
+  push:
+    branches: [automation/roadmap-20260913]
+    paths:
+      - '.github/workflows/roadmap-final-hardening.yml'
+      - '.github/scripts/harden-roadmap-final.py'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Harden final roadmap branches
+        run: python .github/scripts/harden-roadmap-final.py
