@@ -12,6 +12,8 @@
   let lastRunAt = '';
   let lastError = '';
   let voiceState = 'off';
+  let urgentAudio = null;
+  let urgentAudioUrl = '';
 
   const token = () => localStorage.getItem('sexta_token') || '';
   function lockedByAnotherTab() {
@@ -26,6 +28,44 @@
   function classify(item = {}) {
     const priority = priorityOf(item);
     return { ...item, priority, delivery: priority >= INTERRUPT_PRIORITY ? 'urgent' : priority >= ATTENTION_PRIORITY ? 'attention' : 'silent' };
+  }
+  function urgentText(item = {}) {
+    const body = String(item?.notification?.body || item?.details?.title || item?.message || item?.name || 'Uma condição urgente precisa da sua atenção.')
+      .replace(/\s+/g, ' ').trim().slice(0, 420);
+    return body ? `Chefe, ${body}` : 'Chefe, preciso da sua atenção.';
+  }
+  function releaseUrgentAudio() {
+    try { urgentAudio?.pause?.(); } catch {}
+    urgentAudio = null;
+    if (urgentAudioUrl) {
+      try { URL.revokeObjectURL(urgentAudioUrl); } catch {}
+      urgentAudioUrl = '';
+    }
+  }
+  async function speakUrgent(item) {
+    if (!token() || typeof Audio !== 'function') return false;
+    releaseUrgentAudio();
+    try {
+      if (window.__sextaGeminiLive?.active?.()) window.__sextaGeminiLive.stop?.();
+      const response = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+        body: JSON.stringify({ text: urgentText(item), personality: { warmth:58, formality:55 } })
+      });
+      if (!response.ok) throw new Error(`TTS_HTTP_${response.status}`);
+      const blob = await response.blob();
+      if (!blob.size) throw new Error('TTS_EMPTY');
+      urgentAudioUrl = URL.createObjectURL(blob);
+      urgentAudio = new Audio(urgentAudioUrl);
+      urgentAudio.addEventListener('ended', releaseUrgentAudio, { once:true });
+      urgentAudio.addEventListener('error', releaseUrgentAudio, { once:true });
+      await urgentAudio.play();
+      return true;
+    } catch (error) {
+      releaseUrgentAudio();
+      lastError = `urgent_audio:${String(error?.message || error).slice(0, 240)}`;
+      return false;
+    }
   }
   async function tick({ force = false } = {}) {
     if (running || !token()) return null;
@@ -47,8 +87,9 @@
 
       if (urgent.length) {
         interruptions += urgent.length;
+        const spoken = await speakUrgent(urgent[0]);
         window.dispatchEvent(new CustomEvent('sexta:proactive-interrupt', {
-          detail: { fired: urgent, at: lastRunAt, voiceState, reason: 'priority-threshold' }
+          detail: { fired: urgent, at: lastRunAt, voiceState, reason: 'priority-threshold', spoken }
         }));
       }
 
@@ -81,9 +122,9 @@
   window.addEventListener('online', () => void tick());
   window.__sextaProactivity = {
     installed: true,
-    version: '1.1.0-priority-delivery',
+    version: '1.2.0-urgent-voice',
     tick: () => tick({ force: true }),
-    debug: () => ({ intervalMs: INTERVAL_MS, attentionPriority: ATTENTION_PRIORITY, interruptPriority: INTERRUPT_PRIORITY, voiceState, running, ticks, triggers, interruptions, lastRunAt, lastError })
+    debug: () => ({ intervalMs: INTERVAL_MS, attentionPriority: ATTENTION_PRIORITY, interruptPriority: INTERRUPT_PRIORITY, voiceState, running, ticks, triggers, interruptions, urgentAudioActive:Boolean(urgentAudio), lastRunAt, lastError })
   };
   schedule();
 })();
