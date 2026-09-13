@@ -1,9 +1,11 @@
 (() => {
   if (window.__sextaPresenceOrb?.installed) return;
   const voiceBtn = document.querySelector('#voiceBtn');
+  const stageOrb = document.querySelector('.ambient-orb');
   if (!voiceBtn) return;
 
   voiceBtn.classList.add('sexta-presence-orb');
+  stageOrb?.classList.add('sexta-presence-stage');
   const style = document.createElement('style');
   style.dataset.sextaPresenceOrb = '1';
   style.textContent = `
@@ -124,6 +126,20 @@
     @keyframes sexta-orb-reconnect { 0%,100% { transform: rotate(0deg) scale(.98); } 50% { transform: rotate(180deg) scale(1.04); } }
     @keyframes sexta-orb-error { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
 
+    .ambient-orb.sexta-presence-stage {
+      --sexta-stage-energy: .25;
+      transition: transform .24s ease, filter .24s ease, opacity .24s ease;
+      transform: scale(.98);
+      filter: drop-shadow(0 0 calc(10px + var(--sexta-stage-energy) * 28px) rgba(103,232,249,.28));
+      will-change: transform, filter;
+    }
+    html[data-sexta-presence='listening'] .ambient-orb.sexta-presence-stage { transform:scale(1.01); }
+    html[data-sexta-presence='thinking'] .ambient-orb.sexta-presence-stage { transform:scale(1.02); filter: drop-shadow(0 0 32px rgba(167,139,250,.30)); }
+    html[data-sexta-presence='speaking'] .ambient-orb.sexta-presence-stage { transform:scale(1.04); }
+    html[data-sexta-presence='acting'] .ambient-orb.sexta-presence-stage { transform:scale(1.025); filter: drop-shadow(0 0 34px rgba(251,191,36,.28)); }
+    html[data-sexta-presence='reconnecting'] .ambient-orb.sexta-presence-stage { opacity:.72; }
+    html[data-sexta-presence='error'] .ambient-orb.sexta-presence-stage { filter:drop-shadow(0 0 30px rgba(248,113,113,.34)); }
+
     @media (prefers-reduced-motion: reduce) {
       #voiceBtn.sexta-presence-orb::before,
       #voiceBtn.sexta-presence-orb::after { animation: none !important; }
@@ -133,7 +149,7 @@
 
   window.__sextaPresenceOrb = {
     installed: true,
-    version: '1.0.0',
-    debug: () => ({ presence: document.documentElement.dataset.sextaPresence || 'standby' })
+    version: '1.1.0-stage-presence',
+    debug: () => ({ presence:document.documentElement.dataset.sextaPresence || 'standby', stageOrb:Boolean(stageOrb) })
   };
 })();

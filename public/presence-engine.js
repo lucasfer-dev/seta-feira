@@ -18,6 +18,7 @@
     speaking: 'speaking',
     tool: 'acting',
     reconnecting: 'reconnecting',
+    recovering: 'reconnecting',
     connecting: 'reconnecting',
     error: 'error'
   };
@@ -58,7 +59,7 @@
   relayDesktop({ state: 'standby', voice: 'idle', toolDepth: 0, changedAt: state.changedAt, source: 'boot' });
   window.__sextaPresence = {
     installed: true,
-    version: '1.1.0',
+    version: '1.2.0-world-presence',
     debug: () => ({ ...state })
   };
 })();
