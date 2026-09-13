@@ -28,7 +28,10 @@ const DESKTOP_LIVE_PC_TOOLS = new Set([
   'pc_screen_click',
   'pc_ui_scroll',
   'pc_ui_hotkey',
-  'pc_agent_task'
+  'pc_agent_task',
+  'pc_mission_status',
+  'pc_mission_resume',
+  'pc_mission_cancel'
 ]);
 
 const ANDROID_LIVE_PC_TOOLS = new Set([
@@ -39,6 +42,9 @@ const ANDROID_LIVE_PC_TOOLS = new Set([
 const LIVE_TOOL_PRIORITY = [
   'capability_dispatch',
   'pc_agent_task',
+  'pc_mission_status',
+  'pc_mission_resume',
+  'pc_mission_cancel',
   'pc_screen_analyze',
   'pc_ui_tree',
   'pc_ui_action',
