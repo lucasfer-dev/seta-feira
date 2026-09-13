@@ -1,0 +1,603 @@
+from pathlib import Path
+import subprocess, glob
+
+
+def sh(*args):
+    print('+', ' '.join(args), flush=True)
+    subprocess.run(args, check=True)
+
+
+def write(path, content):
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(content, encoding='utf-8')
+
+
+def rep(path, old, new, count=1):
+    p = Path(path)
+    data = p.read_text(encoding='utf-8')
+    if old not in data:
+        raise RuntimeError(f'pattern not found in {path}: {old[:160]!r}')
+    p.write_text(data.replace(old, new, count), encoding='utf-8')
+
+
+base = 'origin/main'
+branches = []
+
+
+def finish(branch, message, checks=()):
+    global base
+    for path in checks:
+        sh('node', '--check', path)
+    tests = sorted(glob.glob('tests/roadmap-*.test.mjs'))
+    if tests:
+        sh('node', '--test', *tests)
+    sh('git', 'add', '-A')
+    sh('git', 'commit', '-m', message)
+    sh('git', 'push', 'origin', f'HEAD:refs/heads/{branch}')
+    branches.append(branch)
+    base = branch
+
+
+def begin(branch):
+    sh('git', 'checkout', '-B', branch, base)
+
+
+# PR 01 — Voice critical path: prewarm, endpointing and startup tracing.
+branch = 'roadmap/01-voice-critical-path'
+begin(branch)
+p = 'public/voice-core-v10.js'
+rep(p, "  const SHORT_SPEECH_RELEASE_MS = 520;\n  const NORMAL_SPEECH_RELEASE_MS = 650;\n  const DICTATION_SPEECH_RELEASE_MS = 850;", "  const SHORT_SPEECH_RELEASE_MS = 260;\n  const NORMAL_SPEECH_RELEASE_MS = 360;\n  const DICTATION_SPEECH_RELEASE_MS = 560;\n  const CONTEXT_CACHE_TTL_MS = 60_000;\n  const PREWARM_DELAY_MS = 700;")
+rep(p, "  let cachedInstruction = '';\n  let cachedPersonality", "  let cachedInstruction = '';\n  let cachedInstructionAt = 0;\n  let startupStartedAt = 0;\n  let voiceTraceId = '';\n  let cachedPersonality")
+rep(p, "      speechStartAt: 0, firstInterimAt: 0, firstFinalAt: 0,\n      firstModelAt: 0, firstAudioAt: 0", "      speechStartAt: 0, activityEndAt: 0, firstInterimAt: 0, firstFinalAt: 0,\n      firstModelAt: 0, firstAudioAt: 0")
+rep(p, "      method:'POST', body:JSON.stringify({ kind:`voice_core_v10:${kind}`, platform:ORIGIN, state, ...extra })", "      method:'POST', body:JSON.stringify({ kind:`voice_core_v10:${kind}`, platform:ORIGIN, state, traceId:voiceTraceId, clientTimestamp:new Date().toISOString(), ...extra })")
+rep(p, "  function endLocalSpeech() {\n    if (!localSpeechActive) return;\n    localSpeechActive = false;\n    speechEvidenceMs = 0;\n    lastVoicedAt = 0;\n    if (activityOpen) sendRealtime({ activityEnd:{} });\n    activityOpen = false;\n    preRollFrames = [];\n    armResponseWatchdog();\n    // The user already finished. Visually and semantically this is thinking,\n    // not listening. A strong continuation can still reopen speech through the gate.\n    if (!assistantSpeaking && pendingToolCalls === 0) transition('thinking');\n    reportMetric('local_speech_end');\n  }", "  function endLocalSpeech() {\n    if (!localSpeechActive) return;\n    const endedAt = performance.now();\n    const releaseMs = speechReleaseMs(endedAt);\n    turn.activityEndAt = endedAt;\n    localSpeechActive = false;\n    speechEvidenceMs = 0;\n    lastVoicedAt = 0;\n    if (activityOpen) sendRealtime({ activityEnd:{} });\n    activityOpen = false;\n    preRollFrames = [];\n    armResponseWatchdog();\n    // The user already finished. Visually and semantically this is thinking,\n    // not listening. A strong continuation can still reopen speech through the gate.\n    if (!assistantSpeaking && pendingToolCalls === 0) transition('thinking');\n    reportMetric('local_speech_end', {\n      speechDurationMs: turn.speechStartAt ? Math.round(endedAt - turn.speechStartAt) : null,\n      releaseMs\n    });\n  }")
+rep(p, "          speechStartToSpeakingMs:snapshot.firstAudioAt && snapshot.speechStartAt ? Math.round(snapshot.firstAudioAt - snapshot.speechStartAt) : null", "          speechStartToSpeakingMs:snapshot.firstAudioAt && snapshot.speechStartAt ? Math.round(snapshot.firstAudioAt - snapshot.speechStartAt) : null,\n          activityEndToSpeakingMs:snapshot.firstAudioAt && snapshot.activityEndAt ? Math.round(snapshot.firstAudioAt - snapshot.activityEndAt) : null")
+rep(p, "  async function startMicrophone() {\n    if (mediaStream && inputContext && inputWorklet) {\n      captureEnabled = true;\n      if (inputContext.state === 'suspended') await inputContext.resume();\n      transition('listening');\n      return;\n    }", "  async function prepareMicrophone({ activate = true } = {}) {\n    if (mediaStream && inputContext && inputWorklet) {\n      captureEnabled = activate;\n      if (activate && inputContext.state === 'suspended') await inputContext.resume();\n      if (activate) transition('listening');\n      return;\n    }")
+rep(p, "    captureEnabled = true;\n    reportMetric('capture_ready'", "    captureEnabled = activate;\n    reportMetric('capture_ready'", 1)
+rep(p, "    transition('listening');\n  }\n\n  function stopMicrophone()", "    if (activate) transition('listening');\n  }\n\n  async function startMicrophone() {\n    return prepareMicrophone({ activate:true });\n  }\n\n  function stopMicrophone()", 1)
+rep(p, "  async function buildSystemInstruction() {\n    const conversationId = localStorage.getItem('sexta_conversation') || 'main';\n    let sync = {};\n    try { sync = await api(`/api/sync?conversationId=${encodeURIComponent(conversationId)}&fresh=1`); } catch {}", "  async function buildSystemInstruction({ fresh = true } = {}) {\n    const conversationId = localStorage.getItem('sexta_conversation') || 'main';\n    let sync = {};\n    const freshness = fresh ? '&fresh=1' : '';\n    try { sync = await api(`/api/sync?conversationId=${encodeURIComponent(conversationId)}&scope=voice${freshness}`); } catch {}")
+marker = "  async function persistTurn(userText, assistantText) {"
+prewarm = """  async function prewarmVoiceRuntime() {
+    if (!IS_DESKTOP || sessionActive || window.SEXTA_VOICE_PREWARM === false) return;
+    const startedAt = performance.now();
+    const results = await Promise.allSettled([
+      prepareMicrophone({ activate:false }),
+      ensureOutputContext(),
+      buildSystemInstruction({ fresh:false }).then(value => {
+        cachedInstruction = value;
+        cachedInstructionAt = Date.now();
+      })
+    ]);
+    reportMetric('prewarm_ready', {
+      prewarmMs: Math.round(performance.now() - startedAt),
+      micReady: results[0]?.status === 'fulfilled',
+      outputReady: results[1]?.status === 'fulfilled',
+      contextCached: Boolean(cachedInstruction)
+    });
+  }
+
+"""
+rep(p, marker, prewarm + marker)
+rep(p, "      if (!cachedInstruction) cachedInstruction = await buildSystemInstruction();\n      if (!sessionActive) return;\n      const session = await api('/api/live-token', {", "      if (!cachedInstruction || Date.now() - cachedInstructionAt > CONTEXT_CACHE_TTL_MS) {\n        const contextStartedAt = performance.now();\n        cachedInstruction = await buildSystemInstruction({ fresh:false });\n        cachedInstructionAt = Date.now();\n        reportMetric('startup_context_ready', { contextMs:Math.round(performance.now() - contextStartedAt) });\n      }\n      if (!sessionActive) return;\n      const tokenStartedAt = performance.now();\n      const session = await api('/api/live-token', {")
+rep(p, "      if (!session?.token) throw new Error('token Live vazio');", "      reportMetric('startup_token_ready', { tokenMs:Math.round(performance.now() - tokenStartedAt) });\n      if (!session?.token) throw new Error('token Live vazio');")
+rep(p, "      socket.onopen = () => {\n        if (!sessionActive)", "      socket.onopen = () => {\n        reportMetric('startup_socket_open', { socketMs:startupStartedAt ? Math.round(performance.now() - startupStartedAt) : null });\n        if (!sessionActive)")
+rep(p, "    if (message.setupComplete) {\n      setupComplete = true; reconnectAttempts = 0; reconnectRequested = false;", "    if (message.setupComplete) {\n      setupComplete = true; reconnectAttempts = 0; reconnectRequested = false;\n      reportMetric('startup_setup_complete', { startupMs:startupStartedAt ? Math.round(performance.now() - startupStartedAt) : null });")
+rep(p, "  async function startVoice() {\n    if (sessionActive) return;\n    if (!AudioContextCtor || !window.AudioWorkletNode) { transition('error', { label:'Este navegador não suporta áudio em tempo real.' }); return; }\n    sessionActive = true; turn = freshTurn(); transition('connecting'); await connectLive('initial');\n  }", "  async function startVoice() {\n    if (sessionActive) return;\n    if (!AudioContextCtor || !window.AudioWorkletNode) { transition('error', { label:'Este navegador não suporta áudio em tempo real.' }); return; }\n    startupStartedAt = performance.now();\n    voiceTraceId = window.crypto?.randomUUID?.() || `voice-${Date.now()}-${Math.random().toString(16).slice(2)}`;\n    reportMetric('startup_begin', {\n      prewarmed:Boolean(mediaStream && inputWorklet),\n      contextCached:Boolean(cachedInstruction && Date.now() - cachedInstructionAt <= CONTEXT_CACHE_TTL_MS)\n    });\n    sessionActive = true; turn = freshTurn(); transition('connecting');\n    void prepareMicrophone({ activate:false }).catch(() => {});\n    await connectLive('initial');\n  }")
+rep(p, "  function stopVoice() { if (!sessionActive) return; sessionActive = false; cleanup(true); transition('off'); }", "  function stopVoice() {\n    if (!sessionActive) return;\n    sessionActive = false; cleanup(true); transition('off');\n    if (IS_DESKTOP) setTimeout(() => void prewarmVoiceRuntime(), PREWARM_DELAY_MS);\n  }")
+rep(p, "  transition('off');\n\n  window.__sextaGeminiLive", "  transition('off');\n  if (IS_DESKTOP) setTimeout(() => void prewarmVoiceRuntime(), PREWARM_DELAY_MS);\n\n  window.__sextaGeminiLive")
+rep(p, "      version:'voice-core-v10', model:", "      version:'voice-core-v10.2-prewarm', model:")
+rep(p, "      inputSampleRate:inputContext?.sampleRate || null, activityOpen, responseDeadline", "      inputSampleRate:inputContext?.sampleRate || null, activityOpen, responseDeadline,\n      endpointing:{ shortMs:SHORT_SPEECH_RELEASE_MS, normalMs:NORMAL_SPEECH_RELEASE_MS, dictationMs:DICTATION_SPEECH_RELEASE_MS },\n      traceId:voiceTraceId, contextCachedAt:cachedInstructionAt")
+wf = '.github/workflows/web-smoke.yml'
+rep(wf, "      - name: Test voice contracts\n        run: node --test tests/voice-core-v10-contract.test.mjs tests/voice-tool-continuation-playback.test.mjs\n", "      - name: Test voice contracts\n        run: node --test tests/voice-core-v10-contract.test.mjs tests/voice-tool-continuation-playback.test.mjs\n      - name: Test roadmap contracts\n        run: node --test tests/roadmap-*.test.mjs\n")
+write('tests/roadmap-01-voice-latency.test.mjs', r'''import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const source = fs.readFileSync(new URL('../public/voice-core-v10.js', import.meta.url), 'utf8');
+test('voice core prewarms desktop resources and uses fast adaptive endpointing', () => {
+  assert.match(source, /SHORT_SPEECH_RELEASE_MS = 260/);
+  assert.match(source, /NORMAL_SPEECH_RELEASE_MS = 360/);
+  assert.match(source, /DICTATION_SPEECH_RELEASE_MS = 560/);
+  assert.match(source, /prewarmVoiceRuntime/);
+  assert.match(source, /prepareMicrophone\(\{ activate:false \}\)/);
+  assert.match(source, /scope=voice/);
+  assert.match(source, /activityEndToSpeakingMs/);
+  assert.match(source, /startup_setup_complete/);
+});
+''')
+finish(branch, 'perf(voice): prewarm critical path and tighten endpointing', [p])
+
+
+# PR 02 — Natural voice/wake turns.
+branch = 'roadmap/02-voice-natural-turns'
+begin(branch)
+p = 'public/voice-core-v10.js'
+rep(p, "      'A sessão é contínua. Depois de iniciada, o usuário não precisa repetir “Sexta-feira”.',\n      'Responda assim que um turno terminar e a intenção estiver clara.',\n      'Se o usuário falar por cima de você, ceda a vez imediatamente.',", "      'No Desktop, cada novo comando exige a wake word local; fala ambiente nunca abre um turno.',\n      'Quando a wake word liberar o áudio, trate o restante da mesma fala como o comando e responda assim que ele terminar.',\n      'Durante sua própria fala, só interrompa quando uma nova wake word tiver autorizado o áudio.',")
+b = 'public/voice-barge-in-guard.js'
+rep(b, "  const MAX_BUFFER_MS = IS_DESKTOP ? 1800 : 360;", "  const MAX_BUFFER_MS = IS_DESKTOP ? 2400 : 360;")
+rep(b, "  const LISTEN_BUFFER_MS = IS_DESKTOP ? 1800 : 320;", "  const LISTEN_BUFFER_MS = IS_DESKTOP ? 2400 : 320;")
+rep(b, "  const WAKE_COMMAND_WINDOW_MS = 5200;", "  const WAKE_COMMAND_WINDOW_MS = 7000;\n  const WAKE_REARM_GUARD_MS = 350;")
+rep(b, "  let wakeAuthorizedUntil = 0;", "  let wakeAuthorizedUntil = 0;\n  let lastWakeAt = 0;")
+rep(b, "    const onWakeWord = () => {\n      if (!IS_DESKTOP) return;\n      strictWakeLatched = true;\n      wakeAuthorizedUntil = performance.now() + WAKE_COMMAND_WINDOW_MS;", "    const onWakeWord = () => {\n      if (!IS_DESKTOP) return;\n      const now = performance.now();\n      if (now - lastWakeAt < WAKE_REARM_GUARD_MS) return;\n      lastWakeAt = now;\n      strictWakeLatched = true;\n      wakeAuthorizedUntil = now + WAKE_COMMAND_WINDOW_MS;")
+rep(b, "    version: '1.3.1-strict-from-start',", "    version: '1.4.0-wake-command-window',")
+rep(b, "      wakeAuthorized: wakeAuthorized(),", "      wakeAuthorized: wakeAuthorized(),\n      wakeCommandWindowMs: WAKE_COMMAND_WINDOW_MS,\n      lastWakeAt,")
+lt = 'api/live-token.js'
+rep(lt, "    'RITMO: prefira respostas curtas e deixe espaço para o usuário entrar. Não termine toda fala com pergunta nem use bordões fixos.',", "    'RITMO: prefira respostas curtas e deixe espaço para o usuário entrar. Não termine toda fala com pergunta nem use bordões fixos.',\n    'LATÊNCIA PERCEBIDA: em confirmação simples ou ação curta, responda em uma frase breve. Não faça preâmbulo antes de ferramenta; execute e só então confirme o resultado real.',")
+write('tests/roadmap-02-voice-turns.test.mjs', r'''import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const core = fs.readFileSync(new URL('../public/voice-core-v10.js', import.meta.url), 'utf8');
+const guard = fs.readFileSync(new URL('../public/voice-barge-in-guard.js', import.meta.url), 'utf8');
+const token = fs.readFileSync(new URL('../api/live-token.js', import.meta.url), 'utf8');
+test('voice requires wake per command while preserving wake+command in one utterance', () => {
+  assert.doesNotMatch(core, /A sessão é contínua/);
+  assert.match(core, /cada novo comando exige a wake word local/);
+  assert.match(guard, /WAKE_COMMAND_WINDOW_MS = 7000/);
+  assert.match(guard, /WAKE_REARM_GUARD_MS = 350/);
+  assert.match(token, /Não faça preâmbulo antes de ferramenta/);
+});
+''')
+finish(branch, 'feat(voice): make wake turns natural and deterministic', [p, b, lt])
+
+
+# PR 03 — Hands bounded Observe → Act → Verify recovery.
+branch = 'roadmap/03-hands-observe-act-verify'
+begin(branch)
+p = 'lib/pc-desktop-tools.mjs'
+marker = "export async function executePcDesktopTool(name, args = {}, options = {}) {"
+helper = r'''function recoverableUiError(result) {
+  if (!failedResult(result)) return false;
+  const error = String(result?.error || result?.result?.error || result?.result?.message || '');
+  if (/PASSWORD_FIELD_BLOCKED|SENSITIVE_CONTROL_BLOCKED|CONFIRMATION_REQUIRED/i.test(error)) return false;
+  return /NOT_FOUND|TARGET_GONE|STALE|ELEMENT_GONE|CONTROL_NOT_FOUND|UIA_/i.test(error);
+}
+
+async function recoverStaleUiTarget(name, args, initial, options) {
+  if (!recoverableUiError(initial) || !['pc_ui_click_text', 'pc_ui_action', 'pc_ui_type_text'].includes(name)) return initial;
+  let observation = null;
+  try { observation = await legacy.executePcDesktopTool('pc_ui_tree', { maxNodes: 180 }, options); }
+  catch (error) {
+    return { ...initial, recovery: { ...(initial?.recovery || {}), staleTargetReobserved:false, retryUsed:false, observationError:String(error?.message || error).slice(0,240) } };
+  }
+  const retry = await legacy.executePcDesktopTool(name, args, options);
+  return {
+    ...retry,
+    recovery: {
+      ...(retry?.recovery || {}), staleTargetReobserved:true, retryUsed:true,
+      originalError:String(initial?.error || initial?.result?.error || '').slice(0,300),
+      observationOk:!failedResult(observation)
+    }
+  };
+}
+
+'''
+rep(p, marker, helper + marker)
+rep(p, "  if (name === 'pc_ui_type_text') initial = await recoverTypeText(payload, initial, options);\n  const result = await stabilizeMenuActivation(name, payload, initial, options);", "  if (name === 'pc_ui_type_text') initial = await recoverTypeText(payload, initial, options);\n  if (failedResult(initial)) initial = await recoverStaleUiTarget(name, payload, initial, options);\n  const result = await stabilizeMenuActivation(name, payload, initial, options);")
+rep(p, "    requestedWindow: target.hasTarget ? { title: target.title, hwnd: target.hwnd || null } : null\n  };", "    requestedWindow: target.hasTarget ? { title: target.title, hwnd: target.hwnd || null } : null,\n    observeActVerify: {\n      preFocusVerified: target.hasTarget ? Boolean(focus && !focus.actionSkipped) : null,\n      recoveryUsed: Boolean(initial?.recovery?.retryUsed || initial?.recovery?.via),\n      resultVerified: result?.ok === true && result?.state === 'completed' && result?.result?.verified !== false\n    }\n  };")
+write('tests/roadmap-03-hands-oav.test.mjs', r'''import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const source = fs.readFileSync(new URL('../lib/pc-desktop-tools.mjs', import.meta.url), 'utf8');
+test('Hands performs bounded re-observation instead of blind retries', () => {
+  assert.match(source, /recoverStaleUiTarget/);
+  assert.match(source, /staleTargetReobserved:true/);
+  assert.match(source, /retryUsed:true/);
+  assert.match(source, /observeActVerify/);
+  assert.match(source, /PASSWORD_FIELD_BLOCKED\|SENSITIVE_CONTROL_BLOCKED/);
+});
+''')
+finish(branch, 'feat(hands): add bounded re-observe and verification telemetry', [p])
+
+
+# PR 04 — Allowlisted capability router, compatible with MCP.
+branch = 'roadmap/04-capability-router-mcp'
+begin(branch)
+router = r'''const ROUTES = Object.freeze({
+  windows: Object.freeze({ open_app:'pc_open_app', open_url:'pc_open_url', list_windows:'pc_window_list', focus_window:'pc_window_focus', screen:'pc_screen_analyze', click:'pc_ui_click_text', type:'pc_ui_type_text', action:'pc_ui_action', scroll:'pc_ui_scroll', hotkey:'pc_ui_hotkey' }),
+  browser: Object.freeze({ open:'pc_browser_open', tabs:'pc_browser_tabs', snapshot:'pc_browser_snapshot', click:'pc_browser_click', type:'pc_browser_type', back:'pc_browser_back', forward:'pc_browser_forward', reload:'pc_browser_reload' }),
+  memory: Object.freeze({ list:'memory_list' }),
+  codex: Object.freeze({ task:'pc_codex_task', status:'pc_codex_status' }),
+  google: Object.freeze({ calendar:'google_calendar_list', drive:'google_drive_search', unread_email:'google_unread_email' }),
+  whatsapp: Object.freeze({ send:'whatsapp_send_message' })
+});
+
+export const CAPABILITY_DISPATCH_DECLARATION = Object.freeze({
+  name:'capability_dispatch',
+  description:'Roteia uma capacidade menos comum para uma ferramenta allowlisted da SEXTA sem expor dezenas de schemas no canal de voz. Não é shell genérico.',
+  parameters:{ type:'object', properties:{ capability:{type:'string',enum:Object.keys(ROUTES)}, action:{type:'string'}, args:{type:'object'} }, required:['capability','action'] }
+});
+
+export function resolveCapabilityRoute(capability = '', action = '') {
+  const family = String(capability || '').trim().toLowerCase();
+  const operation = String(action || '').trim().toLowerCase();
+  const tool = ROUTES[family]?.[operation] || '';
+  return tool ? { capability:family, action:operation, tool } : null;
+}
+
+export async function executeCapabilityDispatch(args = {}, { execute, options = {} } = {}) {
+  if (process.env.SEXTA_CAPABILITY_ROUTER === '0') throw new Error('CAPABILITY_ROUTER_DISABLED');
+  if (typeof execute !== 'function') throw new Error('CAPABILITY_ROUTER_EXECUTOR_REQUIRED');
+  const route = resolveCapabilityRoute(args.capability, args.action);
+  if (!route) throw new Error('CAPABILITY_ROUTE_NOT_ALLOWED');
+  const routedArgs = args.args && typeof args.args === 'object' ? args.args : {};
+  const result = await execute(route.tool, routedArgs, { ...options, routedFrom:'capability_dispatch' });
+  return result && typeof result === 'object' ? { ...result, route:{ capability:route.capability, action:route.action, tool:route.tool } } : result;
+}
+'''
+write('lib/capability-router.mjs', router)
+tc = 'lib/tool-core.mjs'
+rep(tc, "import { evaluateToolPolicy, toolPolicyVersion } from './tool-policy.mjs';", "import { evaluateToolPolicy, toolPolicyVersion } from './tool-policy.mjs';\nimport { CAPABILITY_DISPATCH_DECLARATION, executeCapabilityDispatch } from './capability-router.mjs';")
+rep(tc, "return [...LIVE_TOOL_DECLARATIONS, ...ANDROID_HANDS_TOOL_DECLARATIONS, ...PC_DESKTOP_TOOL_DECLARATIONS, ...V4_TOOL_DECLARATIONS, ...mcp].filter(tool => {", "return [...LIVE_TOOL_DECLARATIONS, ...ANDROID_HANDS_TOOL_DECLARATIONS, ...PC_DESKTOP_TOOL_DECLARATIONS, ...V4_TOOL_DECLARATIONS, CAPABILITY_DISPATCH_DECLARATION, ...mcp].filter(tool => {")
+rep(tc, "  if (isMcpToolName(name)) return executeMcpTool(name, args, { userText, enforceExplicit });", "  if (name === CAPABILITY_DISPATCH_DECLARATION.name) {\n    return executeCapabilityDispatch(args, { options, execute:(tool, routedArgs, routedOptions = {}) => executeTool(tool, routedArgs, { ...options, ...routedOptions }) });\n  }\n  if (isMcpToolName(name)) return executeMcpTool(name, args, { userText, enforceExplicit });")
+lt = 'api/live-token.js'
+rep(lt, "const DESKTOP_LIVE_FUNCTION_BUDGET = 36;", "const DESKTOP_LIVE_FUNCTION_BUDGET = 26;")
+rep(lt, "const LIVE_TOOL_PRIORITY = [\n  'pc_agent_task',", "const LIVE_TOOL_PRIORITY = [\n  'capability_dispatch',\n  'pc_agent_task',")
+rep(lt, "    'FERRAMENTAS: quando houver ferramenta adequada e a fala tiver sido ativada pela wake word, use-a. Não diga que uma ação terminou antes da confirmação real.',", "    'FERRAMENTAS: quando houver ferramenta adequada e a fala tiver sido ativada pela wake word, use-a. Não diga que uma ação terminou antes da confirmação real.',\n    'ROTEAMENTO: capacidades menos comuns podem chegar por capability_dispatch. O roteador só aceita ações allowlisted e a ferramenta final continua sujeita à política de segurança.',")
+wf = '.github/workflows/web-smoke.yml'
+rep(wf, "          node --check lib/mcp-client.mjs\n", "          node --check lib/mcp-client.mjs\n          node --check lib/capability-router.mjs\n")
+write('tests/roadmap-04-capability-router.test.mjs', r'''import test from 'node:test';
+import assert from 'node:assert/strict';
+import { resolveCapabilityRoute } from '../lib/capability-router.mjs';
+test('capability router only exposes explicit allowlisted routes', () => {
+  assert.equal(resolveCapabilityRoute('windows','open_app')?.tool, 'pc_open_app');
+  assert.equal(resolveCapabilityRoute('browser','snapshot')?.tool, 'pc_browser_snapshot');
+  assert.equal(resolveCapabilityRoute('codex','task')?.tool, 'pc_codex_task');
+  assert.equal(resolveCapabilityRoute('windows','shell'), null);
+  assert.equal(resolveCapabilityRoute('unknown','anything'), null);
+});
+''')
+finish(branch, 'feat(core): add allowlisted capability router for live tools', ['lib/capability-router.mjs', tc, lt])
+
+
+# PR 05 — Mission lifecycle controls.
+branch = 'roadmap/05-mission-engine-controls'
+begin(branch)
+tc = 'lib/tool-core.mjs'
+rep(tc, "const MISSION_VERSION = '1.0.0';", r'''const MISSION_VERSION = '1.1.0';
+const MISSION_TOOL_DECLARATIONS = Object.freeze([
+  { name:'pc_mission_status', description:'Consulta uma missão persistente da SEXTA por ID ou lista missões recentes.', parameters:{ type:'object', properties:{ missionId:{type:'string'}, status:{type:'string'}, limit:{type:'number'} } } },
+  { name:'pc_mission_resume', description:'Retoma explicitamente uma missão persistente já existente, preservando checkpoints confirmados.', parameters:{ type:'object', properties:{ missionId:{type:'string'}, maxSteps:{type:'number'} }, required:['missionId'] } },
+  { name:'pc_mission_cancel', description:'Cancela uma missão persistente. Não executa nenhuma ação desktop adicional.', parameters:{ type:'object', properties:{ missionId:{type:'string'}, reason:{type:'string'} }, required:['missionId'] } }
+]);
+const MISSION_TOOL_NAMES = new Set(MISSION_TOOL_DECLARATIONS.map(tool => tool.name));''')
+rep(tc, "...V4_TOOL_DECLARATIONS, CAPABILITY_DISPATCH_DECLARATION, ...mcp", "...V4_TOOL_DECLARATIONS, ...MISSION_TOOL_DECLARATIONS, CAPABILITY_DISPATCH_DECLARATION, ...mcp")
+marker = "function compactMissionTrace(trace = []) {"
+mission_helpers = r'''async function getMissionById(missionId = '') {
+  const id = String(missionId || '').trim();
+  if (!id) return null;
+  const notes = await getVaultNotes({ limit:300 }).catch(() => []);
+  return notes.map(parseMission).filter(Boolean).find(item => String(item.id || '') === id) || null;
+}
+function publicMission(mission) {
+  if (!mission) return null;
+  return { id:mission.id, goal:mission.goal, status:mission.status, version:mission.version, createdAt:mission.createdAt, updatedAt:mission.updatedAt, attempts:Number(mission.attempts)||0, completedSteps:Number(mission.completedSteps)||0, summary:String(mission.summary||'').slice(0,1200), lastTool:mission.lastTool || '', lastState:mission.lastState || '', lastError:String(mission.lastError||'').slice(0,500) };
+}
+async function executeMissionTool(name, args = {}, options = {}) {
+  if (name === 'pc_mission_status') {
+    if (args.missionId) return { ok:true, handled:true, scope:'pc-agent', state:'completed', mission:publicMission(await getMissionById(args.missionId)) };
+    const status = String(args.status || '').trim();
+    const limit = Math.max(1, Math.min(50, Number(args.limit) || 12));
+    const notes = await getVaultNotes({ limit:300 }).catch(() => []);
+    const missions = notes.map(parseMission).filter(Boolean).filter(item => !status || item.status === status).sort((a,b) => String(b.updatedAt||'').localeCompare(String(a.updatedAt||''))).slice(0,limit).map(publicMission);
+    return { ok:true, handled:true, scope:'pc-agent', state:'completed', missions };
+  }
+  const mission = await getMissionById(args.missionId);
+  if (!mission) return { ok:false, handled:true, scope:'pc-agent', state:'failed', error:'MISSION_NOT_FOUND' };
+  if (name === 'pc_mission_cancel') {
+    mission.status = 'cancelled'; mission.cancelledAt = new Date().toISOString(); mission.summary = String(args.reason || 'Missão cancelada pelo usuário.').slice(0,1200);
+    await saveMission(mission);
+    return { ok:true, handled:true, scope:'pc-agent', state:'cancelled', mission:publicMission(mission) };
+  }
+  if (name === 'pc_mission_resume') {
+    if (mission.status === 'completed') return { ok:true, handled:true, scope:'pc-agent', state:'completed', mission:publicMission(mission), summary:'A missão já estava concluída.' };
+    mission.status = 'recovering'; mission.summary = 'Retomada explicitamente pelo usuário.'; await saveMission(mission);
+    return runPcAgentTask({ goal:mission.goal, maxSteps:args.maxSteps }, options);
+  }
+  throw new Error('MISSION_TOOL_NOT_SUPPORTED');
+}
+
+'''
+rep(tc, marker, mission_helpers + marker)
+rep(tc, "  if (name === CAPABILITY_DISPATCH_DECLARATION.name) {", "  if (MISSION_TOOL_NAMES.has(name)) return executeMissionTool(name, args, options);\n  if (name === CAPABILITY_DISPATCH_DECLARATION.name) {")
+lt = 'api/live-token.js'
+rep(lt, "  'pc_agent_task',", "  'pc_agent_task',\n  'pc_mission_status',\n  'pc_mission_resume',\n  'pc_mission_cancel',", 1)
+write('tests/roadmap-05-missions.test.mjs', r'''import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const source = fs.readFileSync(new URL('../lib/tool-core.mjs', import.meta.url), 'utf8');
+test('Mission Engine exposes explicit lifecycle controls', () => {
+  for (const name of ['pc_mission_status','pc_mission_resume','pc_mission_cancel']) assert.match(source, new RegExp(name));
+  assert.match(source, /MISSION_VERSION = '1\.1\.0'/);
+  assert.match(source, /status = 'cancelled'/);
+  assert.match(source, /runPcAgentTask\(\{ goal:mission\.goal/);
+});
+''')
+finish(branch, 'feat(missions): add status resume and cancel lifecycle controls', [tc, lt])
+
+
+# PR 06 — Unified World State.
+branch = 'roadmap/06-world-state-unified'
+begin(branch)
+av = 'agent/agent-v3.mjs'
+rep(av, "const activeChildren = new Set();", "const activeChildren = new Set();\nlet lastAction = null;")
+marker = "async function heartbeat() {"
+world_fn = r'''function buildWorldState(runtime, hardware, browserAgent) {
+  const local = hardware?.worldState || {};
+  return {
+    version:'2.0.0', capturedAt:new Date().toISOString(),
+    device:{ id:DEVICE_ID, name:cfg.deviceName || os.hostname(), kind:'windows' },
+    activeWindow:local.activeWindow || null, windows:Array.isArray(local.windows) ? local.windows.slice(0,14) : [],
+    browser:browserAgent || null, currentProject:[...activeCodexProjects][0] || null,
+    codexActiveProjects:[...activeCodexProjects], lastAction, autonomy:runtime.autonomy, paused:runtime.paused
+  };
+}
+
+'''
+rep(av, marker, world_fn + marker)
+rep(av, "  const secureVault = secureVaultStatus();\n  return post('/api/device-heartbeat', {", "  const secureVault = secureVaultStatus();\n  const browserAgent = browserStatus(cfg);\n  const worldState = buildWorldState(runtime, hardware, browserAgent);\n  return post('/api/device-heartbeat', {")
+rep(av, "      browserAgent: browserStatus(cfg), codexActiveProjects:", "      browserAgent, worldState, codexActiveProjects:")
+rep(av, "        const result = await execute(command);\n        audit({ commandId: command.id, action: command.action, status: 'done'", "        const result = await execute(command);\n        lastAction = { at:new Date().toISOString(), commandId:command.id, action:command.action, status:'done', ok:true };\n        audit({ commandId: command.id, action: command.action, status: 'done'")
+rep(av, "      } catch (error) {\n        audit({ commandId: command.id, action: command.action, status: 'failed'", "      } catch (error) {\n        lastAction = { at:new Date().toISOString(), commandId:command.id, action:command.action, status:'failed', ok:false, error:String(error?.message || error).slice(0,240) };\n        audit({ commandId: command.id, action: command.action, status: 'failed'")
+hw = 'agent/hardware.mjs'
+rep(hw, "      version: '1.0.0',", "      version: '1.1.0',", 1)
+rep(hw, "return { version: '1.0.0', capturedAt:", "return { version: '1.1.0', capturedAt:", 1)
+write('tests/roadmap-06-world-state.test.mjs', r'''import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const agent = fs.readFileSync(new URL('../agent/agent-v3.mjs', import.meta.url), 'utf8');
+test('heartbeat carries a compact unified World State', () => {
+  assert.match(agent, /buildWorldState/); assert.match(agent, /version:'2\.0\.0'/); assert.match(agent, /activeWindow:local\.activeWindow/);
+  assert.match(agent, /browser:browserAgent/); assert.match(agent, /currentProject/); assert.match(agent, /lastAction/);
+});
+''')
+finish(branch, 'feat(agent): publish unified World State in heartbeat', [av, hw])
+
+
+# PR 07 — Browser Agent reliability.
+branch = 'roadmap/07-browser-agent-reliability'
+begin(branch)
+ba = 'agent/browser-agent.mjs'
+rep(ba, "const tabListings = new Map();", "const tabListings = new Map();\nconst SNAPSHOT_TTL_MS = 12_000;\nconst TAB_LIST_TTL_MS = 10_000;\nconst MAX_SNAPSHOTS = 12;")
+rep(ba, "async function evaluate(port, expression, returnByValue = true, preferredTargetId = '') {\n  const result = await cdpCall(port, 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue, userGesture: true }, preferredTargetId);", "async function evaluate(port, expression, returnByValue = true, preferredTargetId = '') {\n  let result;\n  try { result = await cdpCall(port, 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue, userGesture: true }, preferredTargetId); }\n  catch (error) {\n    const retryable = /CDP_SOCKET_FAILED|CDP_TIMEOUT/i.test(String(error?.message || error));\n    if (!retryable || !preferredTargetId) throw error;\n    await sleep(90);\n    result = await cdpCall(port, 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue, userGesture: true }, preferredTargetId);\n  }")
+rep(ba, "function invalidateSnapshot(targetId) { if (targetId) snapshots.delete(String(targetId)); }", "function invalidateSnapshot(targetId) { if (targetId) snapshots.delete(String(targetId)); }\nfunction pruneSnapshots() {\n  const now = Date.now();\n  for (const [id, snapshot] of snapshots) if (now - Number(snapshot?.createdAt || 0) > SNAPSHOT_TTL_MS) snapshots.delete(id);\n  while (snapshots.size > MAX_SNAPSHOTS) snapshots.delete(snapshots.keys().next().value);\n}")
+rep(ba, "  snapshots.set(target.id,{token,url:data.url||state.url,timeOrigin:state.timeOrigin,elements:Array.isArray(data.elements)?data.elements:[],createdAt:Date.now()}); return{...data,tabId:target.id,snapshotId:token,documentTimeOrigin:state.timeOrigin};", "  pruneSnapshots(); snapshots.set(target.id,{token,url:data.url||state.url,timeOrigin:state.timeOrigin,elements:Array.isArray(data.elements)?data.elements:[],createdAt:Date.now()}); return{...data,tabId:target.id,snapshotId:token,documentTimeOrigin:state.timeOrigin,snapshotTtlMs:SNAPSHOT_TTL_MS};")
+rep(ba, "  const target=await pageTarget(port); const snapshot=snapshots.get(target.id); if(!snapshot)throw new Error('PC_BROWSER_SNAPSHOT_REQUIRED'); const current=await stableBrowserState(port,target.id,2200);", "  const target=await pageTarget(port); const snapshot=snapshots.get(target.id); if(!snapshot)throw new Error('PC_BROWSER_SNAPSHOT_REQUIRED'); if(Date.now()-Number(snapshot.createdAt||0)>SNAPSHOT_TTL_MS){invalidateSnapshot(target.id);throw new Error('PC_BROWSER_STALE_SNAPSHOT:TTL_EXPIRED');} const current=await stableBrowserState(port,target.id,2200);")
+rep(ba, "  const targetId=listing?.ids?.[i] || pages[i]?.id || '';", "  if (listing && Date.now() - Number(listing.createdAt || 0) > TAB_LIST_TTL_MS) { tabListings.delete(port); throw new Error('PC_BROWSER_STALE_TAB_LIST:TTL_EXPIRED'); }\n  const targetId=listing?.ids?.[i] || pages[i]?.id || '';")
+write('tests/roadmap-07-browser.test.mjs', r'''import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const source = fs.readFileSync(new URL('../agent/browser-agent.mjs', import.meta.url), 'utf8');
+test('Browser Agent rejects stale snapshots/tabs and only retries transient CDP sockets once', () => {
+  assert.match(source, /SNAPSHOT_TTL_MS = 12_000/); assert.match(source, /TAB_LIST_TTL_MS = 10_000/); assert.match(source, /TTL_EXPIRED/);
+  assert.match(source, /CDP_SOCKET_FAILED\|CDP_TIMEOUT/); assert.match(source, /snapshotInvalidated:true/);
+});
+''')
+finish(branch, 'feat(browser): harden CDP snapshots and transient recovery', [ba])
+
+
+# PR 08 — Scoped voice memory/context and stale-while-revalidate.
+branch = 'roadmap/08-memory-context-scopes'
+begin(branch)
+sync = r'''import { getDevices, getEvents, getMemories, getMessages, getNotifications, getSettings, isOwner, send } from '../lib/core.mjs';
+import { buildPersonalityContract } from '../public/sexta-personality.js';
+const SHARED_CONVERSATION_ID = 'main';
+const CACHE_MS = Math.max(3000, Math.min(30000, Number(process.env.SEXTA_SYNC_CACHE_MS || 12000)));
+const VOICE_CACHE_MS = Math.max(CACHE_MS, Math.min(60000, Number(process.env.SEXTA_VOICE_CONTEXT_CACHE_MS || 30000)));
+const caches = new Map();
+const inFlights = new Map();
+function memoryVisible(item = {}, { deviceId = '' } = {}) {
+  const expires = Date.parse(String(item.expiresAt || item.expires_at || ''));
+  if (Number.isFinite(expires) && expires <= Date.now()) return false;
+  const scope = String(item.scope || 'global').toLowerCase();
+  if (scope === 'device' && deviceId && String(item.deviceId || item.device_id || '') !== deviceId) return false;
+  return true;
+}
+function loadersFor(scope) {
+  if (scope === 'voice') return { messages:() => getMessages(SHARED_CONVERSATION_ID,18), memories:() => getMemories(16), settings:() => getSettings() };
+  return { messages:() => getMessages(SHARED_CONVERSATION_ID,50), memories:() => getMemories(30), devices:() => getDevices(), events:() => getEvents(12), notifications:() => getNotifications(25), settings:() => getSettings() };
+}
+async function loadSnapshot(scope = 'full', deviceId = '') {
+  const loaders = loadersFor(scope); const names = Object.keys(loaders);
+  const settled = await Promise.allSettled(names.map(name => loaders[name]()));
+  const previous = caches.get(scope)?.value || {}; const result = {}; const errors = {};
+  names.forEach((name,index) => { const row = settled[index]; if (row.status === 'fulfilled') result[name] = row.value; else { errors[name] = String(row.reason?.message || row.reason || 'unknown_error').slice(0,500); result[name] = previous[name] !== undefined ? previous[name] : name === 'settings' ? {} : []; } });
+  if (Array.isArray(result.memories)) result.memories = result.memories.filter(item => memoryVisible(item,{deviceId}));
+  return { conversationId:SHARED_CONVERSATION_ID, scope, ...result, personalityInstruction:buildPersonalityContract(result.settings || {},{channel:'voice-live',platform:'connected-device'}), generatedAt:new Date().toISOString(), degraded:Object.keys(errors).length>0, errors };
+}
+function refresh(scope, deviceId) {
+  if (inFlights.has(scope)) return inFlights.get(scope);
+  const promise = loadSnapshot(scope,deviceId).then(value => { caches.set(scope,{value,at:Date.now()}); return value; }).finally(() => inFlights.delete(scope));
+  inFlights.set(scope,promise); return promise;
+}
+export default async function handler(req,res) {
+  if (req.method !== 'GET') return send(res,405,{error:'method_not_allowed'});
+  if (!isOwner(req)) return send(res,401,{error:'unauthorized'});
+  try {
+    const url = new URL(req.url,'http://localhost'); const scope = url.searchParams.get('scope') === 'voice' ? 'voice' : 'full';
+    const deviceId = String(url.searchParams.get('deviceId') || '').slice(0,120); const forceFresh = url.searchParams.get('fresh') === '1';
+    const ttl = scope === 'voice' ? VOICE_CACHE_MS : CACHE_MS; const cached = caches.get(scope); const age = cached ? Date.now()-cached.at : Infinity;
+    if (!forceFresh && cached && age < ttl) { res.setHeader('X-SEXTA-Sync-Cache','HIT'); return send(res,200,cached.value); }
+    if (!forceFresh && cached) { void refresh(scope,deviceId).catch(error => console.warn('[SEXTA Sync] background refresh:',String(error?.message||error).slice(0,240))); res.setHeader('X-SEXTA-Sync-Cache','STALE-WHILE-REVALIDATE'); return send(res,200,{...cached.value,refreshing:true,cacheAgeMs:age}); }
+    const snapshot = await refresh(scope,deviceId); res.setHeader('X-SEXTA-Sync-Cache',forceFresh?'BYPASS':'MISS'); return send(res,200,snapshot);
+  } catch (error) {
+    console.error('[SEXTA Sync]',error); const stale = caches.get('full')?.value || caches.get('voice')?.value;
+    if (stale) { res.setHeader('X-SEXTA-Sync-Cache','STALE'); return send(res,200,{...stale,degraded:true,stale:true,syncError:String(error?.message||error).slice(0,500)}); }
+    return send(res,500,{error:'sync_failed',message:String(error?.message||error)});
+  }
+}
+'''
+write('api/sync.js', sync)
+write('tests/roadmap-08-memory-context.test.mjs', r'''import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const source = fs.readFileSync(new URL('../api/sync.js', import.meta.url), 'utf8');
+test('voice sync is scoped, TTL-aware and stale-while-revalidate', () => {
+  assert.match(source, /scope === 'voice'/); assert.match(source, /getMessages\(SHARED_CONVERSATION_ID,18\)/);
+  assert.match(source, /memoryVisible/); assert.match(source, /expiresAt/); assert.match(source, /STALE-WHILE-REVALIDATE/);
+});
+''')
+finish(branch, 'perf(memory): add scoped voice context and stale-while-revalidate sync', ['api/sync.js'])
+
+
+# PR 09 — Proactivity guardrails.
+branch = 'roadmap/09-proactivity-guardrails'
+begin(branch)
+pr = 'public/proactivity-engine.js'
+rep(pr, "  const INTERRUPT_PRIORITY = 95;", "  const INTERRUPT_PRIORITY = 95;\n  const QUIET_HOURS_URGENT_PRIORITY = 99;\n  const URGENT_COOLDOWN_MS = Math.max(60000, Number(window.SEXTA_URGENT_COOLDOWN_MS || 300000));\n  const DEDUPE_TTL_MS = Math.max(60000, Number(window.SEXTA_PROACTIVITY_DEDUPE_MS || 1800000));")
+rep(pr, "  let urgentAudioUrl = '';", "  let urgentAudioUrl = '';\n  let lastInterruptAt = 0;\n  let resumeVoiceAfterUrgent = false;\n  const seenEvents = new Map();")
+marker = "  function urgentText(item = {}) {"
+helpers = r'''  function eventKey(item = {}) {
+    return JSON.stringify([item?.id || '', item?.name || '', item?.notification?.body || '', item?.details?.title || '']).slice(0,800);
+  }
+  function dedupe(item = {}) {
+    const now = Date.now();
+    for (const [key, at] of seenEvents) if (now - at > DEDUPE_TTL_MS) seenEvents.delete(key);
+    const key = eventKey(item); if (seenEvents.has(key)) return false; seenEvents.set(key,now); return true;
+  }
+  function quietHoursActive(date = new Date()) {
+    const start = Math.max(0,Math.min(23,Number(localStorage.getItem('sexta_quiet_start_hour') || 22)));
+    const end = Math.max(0,Math.min(23,Number(localStorage.getItem('sexta_quiet_end_hour') || 7)));
+    const hour = date.getHours(); return start > end ? hour >= start || hour < end : hour >= start && hour < end;
+  }
+'''
+rep(pr, marker, helpers + marker)
+rep(pr, "  function releaseUrgentAudio() {\n    try { urgentAudio?.pause?.(); } catch {}", "  function releaseUrgentAudio(resume = true) {\n    try { urgentAudio?.pause?.(); } catch {}")
+rep(pr, "      urgentAudioUrl = '';\n    }\n  }", "      urgentAudioUrl = '';\n    }\n    if (resume && resumeVoiceAfterUrgent) { resumeVoiceAfterUrgent = false; setTimeout(() => void window.__sextaGeminiLive?.start?.(),160); }\n  }", 1)
+rep(pr, "    releaseUrgentAudio();\n    try {\n      if (window.__sextaGeminiLive?.active?.()) window.__sextaGeminiLive.stop?.();", "    releaseUrgentAudio(false);\n    try {\n      resumeVoiceAfterUrgent = Boolean(window.__sextaGeminiLive?.active?.());\n      if (resumeVoiceAfterUrgent) window.__sextaGeminiLive.stop?.();")
+rep(pr, "      urgentAudio.addEventListener('ended', releaseUrgentAudio, { once:true });\n      urgentAudio.addEventListener('error', releaseUrgentAudio, { once:true });", "      urgentAudio.addEventListener('ended', () => releaseUrgentAudio(true), { once:true });\n      urgentAudio.addEventListener('error', () => releaseUrgentAudio(true), { once:true });")
+rep(pr, "      releaseUrgentAudio();\n      lastError", "      releaseUrgentAudio(true);\n      lastError", 1)
+rep(pr, "      const fired = raw.map(classify);\n      const urgent = fired.filter(item => item.delivery === 'urgent');\n      const attention = fired.filter(item => item.delivery === 'attention');", "      const fired = raw.map(classify).filter(dedupe);\n      const urgentCandidates = fired.filter(item => item.delivery === 'urgent');\n      const quiet = quietHoursActive();\n      const cooldownReady = Date.now() - lastInterruptAt >= URGENT_COOLDOWN_MS;\n      const urgent = urgentCandidates.filter(item => cooldownReady && (!quiet || item.priority >= QUIET_HOURS_URGENT_PRIORITY));\n      const suppressedUrgent = urgentCandidates.filter(item => !urgent.includes(item));\n      const attention = [...fired.filter(item => item.delivery === 'attention'), ...suppressedUrgent];")
+rep(pr, "      if (urgent.length) {\n        interruptions += urgent.length;", "      if (urgent.length) {\n        lastInterruptAt = Date.now();\n        interruptions += urgent.length;")
+rep(pr, "    version: '1.2.0-urgent-voice',", "    version: '1.3.0-guardrails',")
+rep(pr, "    debug: () => ({ intervalMs: INTERVAL_MS, attentionPriority: ATTENTION_PRIORITY, interruptPriority: INTERRUPT_PRIORITY, voiceState, running, ticks, triggers, interruptions, urgentAudioActive:Boolean(urgentAudio), lastRunAt, lastError })", "    debug: () => ({ intervalMs:INTERVAL_MS, attentionPriority:ATTENTION_PRIORITY, interruptPriority:INTERRUPT_PRIORITY, quietHoursUrgentPriority:QUIET_HOURS_URGENT_PRIORITY, urgentCooldownMs:URGENT_COOLDOWN_MS, dedupeTtlMs:DEDUPE_TTL_MS, voiceState, running, ticks, triggers, interruptions, lastInterruptAt, urgentAudioActive:Boolean(urgentAudio), lastRunAt, lastError })")
+write('tests/roadmap-09-proactivity.test.mjs', r'''import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const source = fs.readFileSync(new URL('../public/proactivity-engine.js', import.meta.url), 'utf8');
+test('proactivity has quiet hours, dedupe, cooldown and restores voice', () => {
+  assert.match(source, /QUIET_HOURS_URGENT_PRIORITY = 99/); assert.match(source, /URGENT_COOLDOWN_MS/); assert.match(source, /DEDUPE_TTL_MS/);
+  assert.match(source, /quietHoursActive/); assert.match(source, /resumeVoiceAfterUrgent/);
+});
+''')
+finish(branch, 'feat(proactivity): add quiet hours dedupe cooldown and voice resume', [pr])
+
+
+# PR 10 — Presence/orb UX.
+branch = 'roadmap/10-presence-orb-ux'
+begin(branch)
+orb = 'public/presence-orb-lite.js'
+rep(orb, "  const voiceBtn = document.querySelector('#voiceBtn');\n  if (!voiceBtn) return;\n\n  voiceBtn.classList.add('sexta-presence-orb');", "  const voiceBtn = document.querySelector('#voiceBtn');\n  const stageOrb = document.querySelector('.ambient-orb');\n  if (!voiceBtn) return;\n\n  voiceBtn.classList.add('sexta-presence-orb');\n  stageOrb?.classList.add('sexta-presence-stage');")
+rep(orb, "    @media (prefers-reduced-motion: reduce) {", r'''    .ambient-orb.sexta-presence-stage {
+      --sexta-stage-energy: .25;
+      transition: transform .24s ease, filter .24s ease, opacity .24s ease;
+      transform: scale(calc(.96 + var(--sexta-stage-energy) * .08));
+      filter: drop-shadow(0 0 calc(10px + var(--sexta-stage-energy) * 28px) rgba(103,232,249,.28));
+      will-change: transform, filter;
+    }
+    html[data-sexta-presence='listening'] .ambient-orb.sexta-presence-stage { --sexta-stage-energy: .58; }
+    html[data-sexta-presence='thinking'] .ambient-orb.sexta-presence-stage { --sexta-stage-energy: .72; filter: drop-shadow(0 0 32px rgba(167,139,250,.30)); }
+    html[data-sexta-presence='speaking'] .ambient-orb.sexta-presence-stage { --sexta-stage-energy: .92; }
+    html[data-sexta-presence='acting'] .ambient-orb.sexta-presence-stage { --sexta-stage-energy: .82; filter: drop-shadow(0 0 34px rgba(251,191,36,.28)); }
+    html[data-sexta-presence='reconnecting'] .ambient-orb.sexta-presence-stage { opacity:.72; }
+    html[data-sexta-presence='error'] .ambient-orb.sexta-presence-stage { filter:drop-shadow(0 0 30px rgba(248,113,113,.34)); }
+
+    @media (prefers-reduced-motion: reduce) {''')
+rep(orb, "    version: '1.0.0',", "    version: '1.1.0-stage-presence',")
+rep(orb, "    debug: () => ({ presence: document.documentElement.dataset.sextaPresence || 'standby' })", "    debug: () => ({ presence:document.documentElement.dataset.sextaPresence || 'standby', stageOrb:Boolean(stageOrb) })")
+pe = 'public/presence-engine.js'
+rep(pe, "    reconnecting: 'reconnecting',\n    connecting: 'reconnecting',", "    reconnecting: 'reconnecting',\n    recovering: 'reconnecting',\n    connecting: 'reconnecting',")
+rep(pe, "    version: '1.1.0',", "    version: '1.2.0-world-presence',")
+write('tests/roadmap-10-presence.test.mjs', r'''import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const orb = fs.readFileSync(new URL('../public/presence-orb-lite.js', import.meta.url), 'utf8');
+const presence = fs.readFileSync(new URL('../public/presence-engine.js', import.meta.url), 'utf8');
+test('presence orb reacts across listening/thinking/speaking/acting/recovery', () => {
+  assert.match(orb, /sexta-presence-stage/); for (const state of ['listening','thinking','speaking','acting','reconnecting','error']) assert.match(orb,new RegExp(state));
+  assert.match(presence, /recovering: 'reconnecting'/);
+});
+''')
+finish(branch, 'feat(ui): connect ambient orb to assistant presence states', [orb, pe])
+
+
+# PR 11 — End-to-end voice observability / SLOs.
+branch = 'roadmap/11-observability-slo'
+begin(branch)
+lm = 'api/live-metrics.js'
+rep(lm, "  const stringKeys = ['reason', 'toolNames', 'failedToolNames', 'toolErrors', 'outputMode', 'audioSource'];", "  const stringKeys = ['reason', 'toolNames', 'failedToolNames', 'toolErrors', 'outputMode', 'audioSource', 'traceId', 'startupStage'];")
+rep(lm, "  const numberKeys = ['streak', 'count', 'failed', 'timeoutMs', 'continuationTimeoutMs', 'closeCode', 'suppressedTurnCompletes'];", "  const numberKeys = ['streak', 'count', 'failed', 'timeoutMs', 'continuationTimeoutMs', 'closeCode', 'suppressedTurnCompletes', 'prewarmMs', 'startupMs', 'contextMs', 'tokenMs', 'socketMs', 'setupMs', 'activityEndToSpeakingMs', 'releaseMs', 'speechDurationMs'];")
+rep(lm, "  if (/response_timeout|turn_reset|output_underrun|tool_batch_complete|tool_continuation_timeout|socket_closed_while_waiting|premature_turn_boundary_suppressed/i.test(kind)) return true;", "  if (/response_timeout|turn_reset|output_underrun|tool_batch_complete|tool_continuation_timeout|socket_closed_while_waiting|premature_turn_boundary_suppressed|startup_|prewarm_ready/i.test(kind)) return true;")
+rep(lm, "    kind: shortString(body.kind || 'legacy', 80), phase: shortString(body.phase || 'complete', 32), platform: shortString(body.platform || 'unknown', 24), turnId: shortString(body.turnId, 80), state: shortString(body.state, 32),", "    kind: shortString(body.kind || 'legacy', 80), phase: shortString(body.phase || 'complete', 32), platform: shortString(body.platform || 'unknown', 24), turnId: shortString(body.turnId, 80), traceId: shortString(body.traceId, 80), state: shortString(body.state, 32),")
+rep(lm, "  const mainLatency = metrics.speechStartToInterimMs ?? metrics.endToPlaybackDueMs ?? metrics.endToFirstAudioMs ?? metrics.speechEndToFirstAudioMs;", "  const mainLatency = metrics.activityEndToSpeakingMs ?? metrics.speechStartToInterimMs ?? metrics.endToPlaybackDueMs ?? metrics.endToFirstAudioMs ?? metrics.speechEndToFirstAudioMs;\n  const startupSlow = Number.isFinite(metrics.startupMs) && metrics.startupMs > 1800;\n  const endpointSlow = Number.isFinite(metrics.activityEndToSpeakingMs) && metrics.activityEndToSpeakingMs > 1800;")
+rep(lm, "  const level = interruptionSlow || recognitionSlow || outputStarved || reliabilityWarning || (Number.isFinite(mainLatency) && mainLatency > 3000) ? 'warn' : 'info';", "  const level = startupSlow || endpointSlow || interruptionSlow || recognitionSlow || outputStarved || reliabilityWarning || (Number.isFinite(mainLatency) && mainLatency > 3000) ? 'warn' : 'info';")
+rep(lm, "turn_id: metrics.turnId || null, state:", "turn_id: metrics.turnId || metrics.traceId || null, state:")
+write('tests/roadmap-11-observability.test.mjs', r'''import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const metrics = fs.readFileSync(new URL('../api/live-metrics.js', import.meta.url), 'utf8');
+const voice = fs.readFileSync(new URL('../public/voice-core-v10.js', import.meta.url), 'utf8');
+test('voice observability correlates startup and endpoint-to-audio latency', () => {
+  assert.match(voice, /voiceTraceId/); assert.match(metrics, /activityEndToSpeakingMs/); assert.match(metrics, /startupMs/); assert.match(metrics, /prewarmMs/);
+  assert.match(metrics, /startupSlow/); assert.match(metrics, /endpointSlow/);
+});
+''')
+finish(branch, 'chore(observability): add correlated voice startup and SLO metrics', [lm])
+
+
+# PR 12 — Desktop hardening: durable audit, doctor and bounded polling backoff.
+branch = 'roadmap/12-desktop-hardening'
+begin(branch)
+audit = r'''import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+function defaultAuditPath() {
+  const root = process.platform === 'win32' ? (process.env.LOCALAPPDATA || process.env.APPDATA || path.join(os.homedir(),'AppData','Local')) : path.join(os.homedir(),'.local','state');
+  return path.join(root,'SEXTA','agent-audit.log');
+}
+const AUDIT_PATH = path.resolve(process.env.SEXTA_AGENT_AUDIT || defaultAuditPath());
+const MAX_BYTES = Math.max(256*1024,Number(process.env.SEXTA_AGENT_AUDIT_MAX_BYTES || 2*1024*1024));
+const BACKUPS = Math.max(1,Math.min(8,Number(process.env.SEXTA_AGENT_AUDIT_BACKUPS || 3)));
+const SECRET_KEYS = /token|password|senha|secret|authorization|imagebase64|cookie|api[-_]?key|text/i;
+let lastFailure = '';
+function scrub(value, depth = 0, seen = new WeakSet()) {
+  if (depth > 4) return '[depth-limit]';
+  if (!value || typeof value !== 'object') { const text=String(value??''); return text.length>240?`${text.slice(0,240)}…`:value; }
+  if (seen.has(value)) return '[circular]'; seen.add(value);
+  if (Array.isArray(value)) return value.slice(0,16).map(item=>scrub(item,depth+1,seen));
+  const out={}; for (const [key,item] of Object.entries(value)) out[key]=SECRET_KEYS.test(key)?'[redacted]':scrub(item,depth+1,seen); return out;
+}
+function rotateIfNeeded() {
+  try {
+    if (!fs.existsSync(AUDIT_PATH) || fs.statSync(AUDIT_PATH).size < MAX_BYTES) return;
+    for (let index=BACKUPS; index>=1; index-=1) { const from=index===1?AUDIT_PATH:`${AUDIT_PATH}.${index-1}`; const to=`${AUDIT_PATH}.${index}`; if(!fs.existsSync(from))continue; if(index===BACKUPS&&fs.existsSync(to))fs.rmSync(to,{force:true}); fs.renameSync(from,to); }
+  } catch (error) { lastFailure=`rotate:${String(error?.message||error).slice(0,300)}`; console.error('[SEXTA Audit]',lastFailure); }
+}
+export function audit(entry = {}) {
+  try { fs.mkdirSync(path.dirname(AUDIT_PATH),{recursive:true}); rotateIfNeeded(); const row={at:new Date().toISOString(),pid:process.pid,commandId:String(entry.commandId||''),action:String(entry.action||''),status:String(entry.status||''),ok:entry.ok===true,details:scrub(entry.details||{})}; fs.appendFileSync(AUDIT_PATH,`${JSON.stringify(row)}\n`,'utf8'); lastFailure=''; return true; }
+  catch (error) { lastFailure=String(error?.message||error).slice(0,300); console.error('[SEXTA Audit] write failed:',lastFailure); return false; }
+}
+export function auditPath(){return AUDIT_PATH;}
+export function auditHealth(){ try{fs.mkdirSync(path.dirname(AUDIT_PATH),{recursive:true});fs.closeSync(fs.openSync(AUDIT_PATH,'a'));return{ok:true,path:AUDIT_PATH,maxBytes:MAX_BYTES,backups:BACKUPS,lastFailure};}catch(error){return{ok:false,path:AUDIT_PATH,maxBytes:MAX_BYTES,backups:BACKUPS,lastFailure:String(error?.message||error).slice(0,300)};} }
+'''
+write('agent/audit.mjs', audit)
+doc = 'agent/doctor.mjs'
+rep(doc, "import { probeWakeWord } from './wake-word.mjs';", "import { probeWakeWord } from './wake-word.mjs';\nimport { auditHealth } from './audit.mjs';")
+rep(doc, "  const state = readRuntimeState();\n  rows.push(row('Runtime state'", "  const state = readRuntimeState();\n  const audit = auditHealth();\n  rows.push(row('Audit log', audit.ok, audit.ok ? `${audit.path} • rotate ${Math.round(audit.maxBytes / 1024 / 1024)} MB` : audit.lastFailure, false));\n  rows.push(row('Runtime state'")
+av = 'agent/agent-v3.mjs'
+rep(av, "let lastBeat = 0;\nwhile (true) {", "let lastBeat = 0;\nlet pollFailureStreak = 0;\nwhile (true) {")
+rep(av, "    const { commands = [] } = await poll();", "    const { commands = [] } = await poll();\n    pollFailureStreak = 0;")
+rep(av, "  } catch (error) { console.error('[SEXTA Agent]', error.message); }\n  await sleep(3000);", "  } catch (error) {\n    pollFailureStreak += 1;\n    console.error('[SEXTA Agent]', error.message);\n    await sleep(Math.min(15000, 750 * (2 ** Math.min(pollFailureStreak, 4))));\n  }\n  await sleep(3000);")
+write('tests/roadmap-12-hardening.test.mjs', r'''import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const audit = fs.readFileSync(new URL('../agent/audit.mjs', import.meta.url), 'utf8');
+const doctor = fs.readFileSync(new URL('../agent/doctor.mjs', import.meta.url), 'utf8');
+const agent = fs.readFileSync(new URL('../agent/agent-v3.mjs', import.meta.url), 'utf8');
+test('desktop agent has durable redacted audit rotation and bounded backoff', () => {
+  assert.match(audit,/LOCALAPPDATA/); assert.match(audit,/MAX_BYTES/); assert.match(audit,/BACKUPS/); assert.match(audit,/\[circular\]/); assert.match(audit,/auditHealth/);
+  assert.match(doctor,/Audit log/); assert.match(agent,/pollFailureStreak/); assert.match(agent,/Math\.min\(15000/);
+});
+''')
+finish(branch, 'fix(agent): harden audit persistence health and retry backoff', ['agent/audit.mjs', doc, av])
+
+print('STACK_BRANCHES=' + ','.join(branches))
