@@ -11,16 +11,17 @@
   const NORMAL_CONFIRM_MS = IS_ANDROID ? 240 : 210;
   const FAST_CONFIRM_MS = IS_ANDROID ? 120 : 105;
   const SPEAKING_GRACE_MS = 180;
-  const MAX_BUFFER_MS = IS_DESKTOP ? 1800 : 360;
+  const MAX_BUFFER_MS = IS_DESKTOP ? 2400 : 360;
   const PASS_THROUGH_MS = 1200;
 
   const LISTEN_BASE_THRESHOLD = IS_ANDROID ? 0.014 : IS_FIREFOX ? 0.0115 : 0.0105;
   const LISTEN_FLOOR_MULTIPLIER = IS_ANDROID ? 4.5 : IS_FIREFOX ? 4.2 : 3.8;
   const LISTEN_CONFIRM_MS = IS_ANDROID ? 150 : 125;
   const LISTEN_FAST_MS = IS_ANDROID ? 90 : 80;
-  const LISTEN_BUFFER_MS = IS_DESKTOP ? 1800 : 320;
+  const LISTEN_BUFFER_MS = IS_DESKTOP ? 2400 : 320;
   const LISTEN_PASS_THROUGH_MS = 1800;
-  const WAKE_COMMAND_WINDOW_MS = 5200;
+  const WAKE_COMMAND_WINDOW_MS = 7000;
+  const WAKE_REARM_GUARD_MS = 350;
   const LEGACY_GUARD_VERSION = '1.2.1-listen-thinking-gate';
 
   let assistantSpeaking = false;
@@ -40,6 +41,7 @@
   let listenAccepted = 0;
   let strictWakeLatched = IS_DESKTOP;
   let wakeAuthorizedUntil = 0;
+  let lastWakeAt = 0;
 
   function resetCandidate() {
     candidateMs = 0;
@@ -194,8 +196,11 @@
 
     const onWakeWord = () => {
       if (!IS_DESKTOP) return;
+      const now = performance.now();
+      if (now - lastWakeAt < WAKE_REARM_GUARD_MS) return;
+      lastWakeAt = now;
       strictWakeLatched = true;
-      wakeAuthorizedUntil = performance.now() + WAKE_COMMAND_WINDOW_MS;
+      wakeAuthorizedUntil = now + WAKE_COMMAND_WINDOW_MS;
       listenPassThroughUntil = wakeAuthorizedUntil;
       passThroughUntil = wakeAuthorizedUntil;
       listenAccepted += 1;
@@ -334,7 +339,7 @@
   window.AudioWorkletNode = GuardedAudioWorkletNode;
   window.__sextaBargeInGuard = {
     installed: true,
-    version: '1.3.1-strict-from-start',
+    version: '1.4.0-wake-command-window',
     legacyVersion: LEGACY_GUARD_VERSION,
     debug: () => ({
       assistantSpeaking,
@@ -353,6 +358,8 @@
       strictWakeLatched,
       wakeAuthorizedUntil,
       wakeAuthorized: wakeAuthorized(),
+      wakeCommandWindowMs: WAKE_COMMAND_WINDOW_MS,
+      lastWakeAt,
       autoGainControlForcedOff: Boolean(mediaDevices?.__sextaGuardedGetUserMedia)
     })
   };

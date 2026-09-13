@@ -473,9 +473,9 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
         : 'DISPOSITIVO ATUAL: navegador. Escolha o dispositivo pela capacidade e pelo pedido.';
     return [
       buildPersonalityContract(cachedPersonality, { channel:'voice-live', platform:ORIGIN }),
-      'A sessão é contínua. Depois de iniciada, o usuário não precisa repetir “Sexta-feira”.',
-      'Responda assim que um turno terminar e a intenção estiver clara.',
-      'Se o usuário falar por cima de você, ceda a vez imediatamente.',
+      'No Desktop, cada novo comando exige a wake word local; fala ambiente nunca abre um turno.',
+      'Quando a wake word liberar o áudio, trate o restante da mesma fala como o comando e responda assim que ele terminar.',
+      'Durante sua própria fala, só interrompa quando uma nova wake word tiver autorizado o áudio.',
       'Não narre estados internos. Ferramentas rápidas podem acontecer silenciosamente.',
       'Nunca diga que uma ação terminou antes da ferramenta confirmar.', platformRule,
       memories ? `Memórias relevantes:\n${memories}` : '', recent ? `Contexto recente:\n${recent}` : ''
