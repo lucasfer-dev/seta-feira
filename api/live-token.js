@@ -117,6 +117,16 @@ function compactLiveDeclarations(declarations = [], origin = '') {
     .map(item => item.declaration);
 }
 
+function sanitizeClientInstruction(value = '') {
+  return String(value || '')
+    .replace(/A sessão é contínua\.\s*Depois de iniciada, o usuário não precisa repetir [“\"]Sexta-feira[”\"]\.?/gi, '')
+    .replace(/CONVERSA LIVE:[^\n]*(?:não precisa repetir|conversa contínua)[^\n]*/gi, '')
+    .replace(/Se o usuário falar por cima de você, ceda a vez imediatamente\.?/gi, '')
+    .replace(/INTERRUPÇÃO:[^\n]*ceda a vez imediatamente[^\n]*/gi, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
   if (!isOwner(req)) return send(res, 401, { error: 'unauthorized' });
@@ -131,7 +141,7 @@ export default async function handler(req, res) {
   const IS_GEMINI_31_LIVE = /gemini-3\.1-flash-live/i.test(LIVE_MODEL);
   const SUPPORTS_25_NON_BLOCKING = /gemini-2\.5/i.test(LIVE_MODEL);
 
-  const suppliedInstruction = String(body.systemInstruction || '').slice(0, 9000);
+  const suppliedInstruction = sanitizeClientInstruction(String(body.systemInstruction || '').slice(0, 9000));
   const resumptionHandle = String(body.resumptionHandle || '').trim().slice(0, 4096);
   const requestedVad = String(body.vadMode || '').toLowerCase();
   const manualVad = requestedVad === 'manual';
@@ -151,9 +161,9 @@ export default async function handler(req, res) {
       : 'DISPOSITIVO ATUAL: navegador. Escolha Android ou PC apenas quando o pedido ou o contexto indicar claramente o dispositivo. pc_codex_task pode ser usado para delegar programação ao agente Windows.';
 
   const liveRule = [
-    'WAKE WORD OBRIGATÓRIA: uma fala do usuário só é dirigida à SEXTA quando contém “Sexta” ou “Sexta-feira”. Não trate a sessão como conversa aberta contínua.',
-    'FALA AMBIENTE: se uma transcrição não contiver “Sexta” ou “Sexta-feira”, não responda, não reaja, não use ferramentas e não transforme essa fala em contexto de comando. Considere-a ambiente.',
-    'ATIVAÇÃO: ao ouvir “Sexta” ou “Sexta-feira”, aceite o restante da mesma fala como o comando. Se o usuário disser apenas a wake word, responda de forma curta e natural, preferencialmente “Sim, chefe?” ou equivalente breve.',
+    'WAKE WORD OBRIGATÓRIA: uma fala do usuário só é dirigida à SEXTA quando contém a ativação “Sexta”, “Sexta-feira” ou uma variante fonética local já validada pelo detector (“Seta”, “Seta-feira”). Não trate a sessão como conversa aberta contínua.',
+    'FALA AMBIENTE: se a entrada não tiver sido liberada pelo detector local de wake word, não responda, não reaja, não use ferramentas e não transforme essa fala em contexto de comando. Considere-a ambiente.',
+    'ATIVAÇÃO: quando a entrada tiver sido liberada após a wake word, aceite o restante da mesma fala como o comando. Se o usuário disser apenas a wake word, responda de forma curta e natural, preferencialmente “Sim, chefe?” ou equivalente breve.',
     'INTERRUPÇÃO: durante sua própria fala, só ceda a vez quando a entrada tiver sido liberada pelo detector local da wake word. Ruído, TV, outra pessoa ou fala sem a wake word não devem interromper sua resposta.',
     'TRATAMENTO: quando usar vocativo para o proprietário, use apenas “chefe”. Não use senhor, parceiro, mano, Lucas ou outro apelido.',
     'ESCUTA: respeite pausas e hesitações depois da ativação e responda assim que o comando realmente terminar.',
@@ -204,7 +214,7 @@ export default async function handler(req, res) {
   const inputAudioTranscription = {
     languageCodes: ['pt-BR'],
     mode: 'VERBATIM',
-    customVocabulary: ['Sexta-feira', 'Sexta feira', 'Sexta', 'Codex', 'Envista', 'Lucas', 'chefe']
+    customVocabulary: ['Sexta-feira', 'Sexta feira', 'Sexta', 'Seta-feira', 'Seta feira', 'Seta', 'Codex', 'Envista', 'Lucas', 'chefe']
   };
   const outputAudioTranscription = { languageCodes: ['pt-BR'], mode: 'VERBATIM' };
   const contextWindowCompression = { slidingWindow: {} };
