@@ -38,7 +38,7 @@
   let listenPassThroughUntil = 0;
   let listenRejected = 0;
   let listenAccepted = 0;
-  let strictWakeLatched = false;
+  let strictWakeLatched = IS_DESKTOP;
   let wakeAuthorizedUntil = 0;
 
   function resetCandidate() {
@@ -334,7 +334,7 @@
   window.AudioWorkletNode = GuardedAudioWorkletNode;
   window.__sextaBargeInGuard = {
     installed: true,
-    version: '1.3.0-strict-desktop-wake',
+    version: '1.3.1-strict-from-start',
     legacyVersion: LEGACY_GUARD_VERSION,
     debug: () => ({
       assistantSpeaking,
