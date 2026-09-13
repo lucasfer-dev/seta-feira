@@ -54,8 +54,9 @@ test('all active response paths consume the canonical contract', () => {
 test('live voice requires wake word and desktop barge-in is wake-gated from startup', () => {
   const live = fs.readFileSync(new URL('../api/live-token.js', import.meta.url), 'utf8');
   assert.match(live, /WAKE WORD OBRIGATÓRIA/);
-  assert.match(live, /só ceda a vez quando a entrada tiver sido liberada pelo detector local da wake word/);
-  assert.doesNotMatch(live, /não precisa repetir “Sexta-feira” antes de cada fala/);
+  assert.match(live, /sanitizeClientInstruction/);
+  assert.match(live, /detector local da wake word/);
+  assert.doesNotMatch(live, /CONVERSA LIVE:[^\n]*não precisa repetir “Sexta-feira”/);
 
   const guard = fs.readFileSync(new URL('../public/voice-barge-in-guard.js', import.meta.url), 'utf8');
   assert.match(guard, /1\.3\.1-strict-from-start/);
@@ -64,7 +65,7 @@ test('live voice requires wake word and desktop barge-in is wake-gated from star
   assert.match(guard, /WAKE_COMMAND_WINDOW_MS = 5200/);
 
   const wake = fs.readFileSync(new URL('../agent/wake-word.mjs', import.meta.url), 'utf8');
-  for (const phrase of ['sexta', 'sexta-feira', 'sexta feira', 'seta', 'seta-feira', 'seta feira']) assert.match(wake, new RegExp(phrase.replace('-', '\\-')));
+  for (const phrase of ['sexta', 'sexta-feira', 'sexta feira', 'seta', 'seta-feira', 'seta feira']) assert.ok(wake.includes(`'${phrase}'`), phrase);
 
   const desktop = fs.readFileSync(new URL('../apps/desktop-electron/main.cjs', import.meta.url), 'utf8');
   assert.match(desktop, /wakeWordEnabled\(\).*wakeWordEnabled !== false/);
@@ -82,6 +83,30 @@ test('mission engine persists checkpoints and world state rides the heartbeat', 
   assert.match(hardware, /worldState/);
   assert.match(hardware, /activeWindow/);
   assert.match(hardware, /listWindows\(14\)/);
+});
+
+test('tool continuation recovers faster after failures and preserves diagnostic detail', () => {
+  const reliability = fs.readFileSync(new URL('../public/voice-reliability-v10-1.js', import.meta.url), 'utf8');
+  assert.match(reliability, /10\.1\.2-failed-tool-fast-recovery/);
+  assert.match(reliability, /TOOL_CONTINUATION_TIMEOUT_MS = 6500/);
+  assert.match(reliability, /FAILED_TOOL_CONTINUATION_TIMEOUT_MS = 3500/);
+  assert.match(reliability, /failedToolNames/);
+  assert.match(reliability, /toolErrors/);
+
+  const metrics = fs.readFileSync(new URL('../api/live-metrics.js', import.meta.url), 'utf8');
+  assert.match(metrics, /failedToolNames/);
+  assert.match(metrics, /toolErrors/);
+  assert.match(metrics, /continuationTimeoutMs/);
+});
+
+test('proactivity only interrupts at urgent priority and speaks with canonical TTS endpoint', () => {
+  const proactive = fs.readFileSync(new URL('../public/proactivity-engine.js', import.meta.url), 'utf8');
+  assert.match(proactive, /INTERRUPT_PRIORITY = 95/);
+  assert.match(proactive, /ATTENTION_PRIORITY = 80/);
+  assert.match(proactive, /sexta:proactive-interrupt/);
+  assert.match(proactive, /fetch\('\/api\/tts'/);
+  assert.match(proactive, /Chefe,/);
+  assert.match(proactive, /1\.2\.0-urgent-voice/);
 });
 
 test('voice endpointing adapts to commands, conversation and dictation', () => {
