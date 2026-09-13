@@ -9,6 +9,9 @@ let browserProcess = null;
 let selectedTargetId = null;
 const snapshots = new Map();
 const tabListings = new Map();
+const SNAPSHOT_TTL_MS = 12_000;
+const TAB_LIST_TTL_MS = 10_000;
+const MAX_SNAPSHOTS = 12;
 
 function browserPort(cfg = {}) { return Math.max(1025, Math.min(65534, Number(cfg.browser?.debugPort) || 9223)); }
 function browserProfile(cfg = {}) { return path.resolve(String(cfg.browser?.profileDir || path.join(os.homedir(), '.sexta-browser-profile'))); }
@@ -92,7 +95,14 @@ function evaluationError(result = {}) {
   return String(description).replace(/\s+/g, ' ').slice(0, 500);
 }
 async function evaluate(port, expression, returnByValue = true, preferredTargetId = '') {
-  const result = await cdpCall(port, 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue, userGesture: true }, preferredTargetId);
+  let result;
+  try { result = await cdpCall(port, 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue, userGesture: true }, preferredTargetId); }
+  catch (error) {
+    const retryable = /CDP_SOCKET_FAILED|CDP_TIMEOUT/i.test(String(error?.message || error));
+    if (!retryable || !preferredTargetId) throw error;
+    await sleep(90);
+    result = await cdpCall(port, 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue, userGesture: true }, preferredTargetId);
+  }
   const error = evaluationError(result);
   if (error) throw new Error(`PC_BROWSER_EVAL_EXCEPTION:${error}`);
   return result;
@@ -129,6 +139,11 @@ async function waitForStateChange(port, before, timeoutMs = 2800, targetId = '')
 function normalizeHttpUrl(rawUrl) { const input = String(rawUrl || '').trim(); if (!input) throw new Error('PC_BROWSER_URL_REQUIRED'); const candidate = /^[a-z][a-z0-9+.-]*:/i.test(input) ? input : `https://${input}`; const url = new URL(candidate); if (!['http:','https:'].includes(url.protocol)) throw new Error('PC_BROWSER_URL_BLOCKED'); return url; }
 const SENSITIVE = /\b(?:send|submit|pay|purchase|buy|checkout|confirm|delete|remove|publish|post|transfer|wire|enviar|pagar|comprar|finalizar|confirmar|excluir|remover|publicar|transferir|assinar|subscribe)\b/i;
 function invalidateSnapshot(targetId) { if (targetId) snapshots.delete(String(targetId)); }
+function pruneSnapshots() {
+  const now = Date.now();
+  for (const [id, snapshot] of snapshots) if (now - Number(snapshot?.createdAt || 0) > SNAPSHOT_TTL_MS) snapshots.delete(id);
+  while (snapshots.size > MAX_SNAPSHOTS) snapshots.delete(snapshots.keys().next().value);
+}
 async function waitForNavigation(port, { targetId = '', before = {}, expectedUrl = '', timeoutMs = 8000, requireNewDocument = false } = {}) {
   const deadline = Date.now() + timeoutMs; let after = {}; let currentTargetId = targetId; let lastError = '';
   while (Date.now() < deadline) {
@@ -171,6 +186,7 @@ export async function browserTabs(cfg) {
 }
 export async function browserSelectTab(cfg,index) {
   const port=await ensureBrowser(cfg); const i=Math.max(0,Math.floor(Number(index)||0)); const listing=tabListings.get(port); const pages=await pageTargets(port);
+  if (listing && Date.now() - Number(listing.createdAt || 0) > TAB_LIST_TTL_MS) { tabListings.delete(port); throw new Error('PC_BROWSER_STALE_TAB_LIST:TTL_EXPIRED'); }
   const targetId=listing?.ids?.[i] || pages[i]?.id || ''; if(!targetId)throw new Error('PC_BROWSER_TAB_NOT_FOUND'); const target=pages.find(page=>page.id===targetId); if(!target)throw new Error('PC_BROWSER_STALE_TAB_LIST');
   const wasSelected=selectedTargetId===target.id; invalidateSnapshot(target.id); if(!wasSelected){await activateTarget(port,target.id);await sleep(140);}else{setSelectedTarget(port,target.id);}
   const selected=(await pageTargets(port)).find(page=>page.id===target.id); if(!selected||selectedTargetId!==target.id)throw new Error('PC_BROWSER_TAB_SELECTION_NOT_VERIFIED');
@@ -182,10 +198,10 @@ export async function browserSnapshot(cfg) {
   const expression=`(() => {const token=${encodedToken};const visible=el=>{const s=getComputedStyle(el),r=el.getBoundingClientRect();return s.display!=='none'&&s.visibility!=='hidden'&&Number(s.opacity||1)>0&&r.width>0&&r.height>0;};const nodes=[...document.querySelectorAll('a,button,input,textarea,select,[role="button"],[role="link"],[role="checkbox"],[role="tab"],[contenteditable="true"]')].filter(visible).slice(0,140);const elements=nodes.map((el,index)=>{const type=String(el.getAttribute('type')||'').toLowerCase();const password=type==='password';const ref=token+':'+index;el.setAttribute('data-sexta-ref',ref);const safeValue=password?'':String(el.value||'');const text=String(el.innerText||safeValue||el.getAttribute('aria-label')||el.getAttribute('title')||el.getAttribute('placeholder')||'').replace(/\\s+/g,' ').trim().slice(0,240);return{index,ref,tag:el.tagName.toLowerCase(),role:el.getAttribute('role')||'',type,password,text,name:String(el.getAttribute('name')||'').slice(0,120),id:String(el.id||'').slice(0,120),disabled:Boolean(el.disabled),href:el.tagName==='A'?String(el.href||'').slice(0,500):''};});return JSON.stringify({title:document.title,url:location.href,text:String(document.body?.innerText||'').replace(/\\n{3,}/g,'\\n\\n').slice(0,14000),elements});})()`;
   const data=parseEval(await evaluate(port,expression,true,target.id));
   if (!data || typeof data !== 'object' || !data.url) throw new Error('PC_BROWSER_SNAPSHOT_INVALID');
-  snapshots.set(target.id,{token,url:data.url||state.url,timeOrigin:state.timeOrigin,elements:Array.isArray(data.elements)?data.elements:[],createdAt:Date.now()}); return{...data,tabId:target.id,snapshotId:token,documentTimeOrigin:state.timeOrigin};
+  pruneSnapshots(); snapshots.set(target.id,{token,url:data.url||state.url,timeOrigin:state.timeOrigin,elements:Array.isArray(data.elements)?data.elements:[],createdAt:Date.now()}); return{...data,tabId:target.id,snapshotId:token,documentTimeOrigin:state.timeOrigin,snapshotTtlMs:SNAPSHOT_TTL_MS};
 }
 async function snapshotElement(port,index) {
-  const target=await pageTarget(port); const snapshot=snapshots.get(target.id); if(!snapshot)throw new Error('PC_BROWSER_SNAPSHOT_REQUIRED'); const current=await stableBrowserState(port,target.id,2200);
+  const target=await pageTarget(port); const snapshot=snapshots.get(target.id); if(!snapshot)throw new Error('PC_BROWSER_SNAPSHOT_REQUIRED'); if(Date.now()-Number(snapshot.createdAt||0)>SNAPSHOT_TTL_MS){invalidateSnapshot(target.id);throw new Error('PC_BROWSER_STALE_SNAPSHOT:TTL_EXPIRED');} const current=await stableBrowserState(port,target.id,2200);
   const staleUrl=!urlMatches(current.url,snapshot.url); const staleDocument=Boolean(snapshot.timeOrigin&&current.timeOrigin&&snapshot.timeOrigin!==current.timeOrigin); if(staleUrl||staleDocument){invalidateSnapshot(target.id);throw new Error(`PC_BROWSER_STALE_SNAPSHOT:${snapshot.url || 'unknown'}=>${current.url || 'unknown'}`);}
   const i=Math.max(0,Math.floor(Number(index)||0)); const saved=snapshot.elements.find(element=>Number(element.index)===i); if(!saved?.ref)throw new Error('PC_BROWSER_ELEMENT_NOT_FOUND'); const ref=JSON.stringify(saved.ref);
   const expression=`(() => {const ref=${ref};const el=[...document.querySelectorAll('[data-sexta-ref]')].find(node=>node.getAttribute('data-sexta-ref')===ref);if(!el)return JSON.stringify({found:false});const type=String(el.getAttribute('type')||'').toLowerCase();const password=type==='password';const safeValue=password?'':String(el.value||'');return JSON.stringify({found:true,ref,tag:el.tagName.toLowerCase(),type,password,text:String(el.innerText||safeValue||el.getAttribute('aria-label')||el.getAttribute('title')||el.getAttribute('placeholder')||'').replace(/\\s+/g,' ').trim().slice(0,300),disabled:Boolean(el.disabled)});})()`;
