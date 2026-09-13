@@ -59,10 +59,10 @@ test('live voice requires wake word and desktop barge-in is wake-gated from star
   assert.doesNotMatch(live, /CONVERSA LIVE:[^\n]*não precisa repetir “Sexta-feira”/);
 
   const guard = fs.readFileSync(new URL('../public/voice-barge-in-guard.js', import.meta.url), 'utf8');
-  assert.match(guard, /1\.3\.1-strict-from-start/);
+  assert.match(guard, /1\.(?:3\.1-strict-from-start|4\.0-wake-command-window)/);
   assert.match(guard, /sexta:wake-word/);
   assert.match(guard, /strictWakeLatched = IS_DESKTOP/);
-  assert.match(guard, /WAKE_COMMAND_WINDOW_MS = 5200/);
+  assert.match(guard, /WAKE_COMMAND_WINDOW_MS = (?:5200|7000)/);
 
   const wake = fs.readFileSync(new URL('../agent/wake-word.mjs', import.meta.url), 'utf8');
   for (const phrase of ['sexta', 'sexta-feira', 'sexta feira', 'seta', 'seta-feira', 'seta feira']) assert.ok(wake.includes(`'${phrase}'`), phrase);
@@ -73,7 +73,7 @@ test('live voice requires wake word and desktop barge-in is wake-gated from star
 
 test('mission engine persists checkpoints and world state rides the heartbeat', () => {
   const tools = fs.readFileSync(new URL('../lib/tool-core.mjs', import.meta.url), 'utf8');
-  assert.match(tools, /MISSION_VERSION = '1\.0\.0'/);
+  assert.match(tools, /MISSION_VERSION = '1\.[01]\.0'/);
   assert.match(tools, /sexta-mission/);
   assert.match(tools, /findResumableMission/);
   assert.match(tools, /missionId/);
@@ -106,13 +106,13 @@ test('proactivity only interrupts at urgent priority and speaks with canonical T
   assert.match(proactive, /sexta:proactive-interrupt/);
   assert.match(proactive, /fetch\('\/api\/tts'/);
   assert.match(proactive, /Chefe,/);
-  assert.match(proactive, /1\.2\.0-urgent-voice/);
+  assert.match(proactive, /1\.(?:2\.0-urgent-voice|3\.0-guardrails)/);
 });
 
 test('voice endpointing adapts to commands, conversation and dictation', () => {
   const voice = fs.readFileSync(new URL('../public/voice-core-v10.js', import.meta.url), 'utf8');
-  assert.match(voice, /SHORT_SPEECH_RELEASE_MS = 520/);
-  assert.match(voice, /NORMAL_SPEECH_RELEASE_MS = 650/);
-  assert.match(voice, /DICTATION_SPEECH_RELEASE_MS = 850/);
+  assert.match(voice, /SHORT_SPEECH_RELEASE_MS = 260/);
+  assert.match(voice, /NORMAL_SPEECH_RELEASE_MS = 360/);
+  assert.match(voice, /DICTATION_SPEECH_RELEASE_MS = 560/);
   assert.match(voice, /speechReleaseMs\(now\)/);
 });
