@@ -17,7 +17,7 @@ function readDesktopConfig() { try { return JSON.parse(fs.readFileSync(desktopCo
 function writeDesktopConfig(next) { const current = readDesktopConfig(); fs.mkdirSync(path.dirname(desktopConfigPath()), { recursive: true }); fs.writeFileSync(desktopConfigPath(), JSON.stringify({ ...current, ...next }, null, 2), 'utf8'); }
 function selectedVaultPath() { return String(readDesktopConfig().vaultPath || ''); }
 function overlayEnabled() { return readDesktopConfig().overlayEnabled !== false; }
-function wakeWordEnabled() { return readDesktopConfig().wakeWordEnabled === true; }
+function wakeWordEnabled() { return readDesktopConfig().wakeWordEnabled !== false; }
 function agentResource(file) { return app.isPackaged ? path.join(process.resourcesPath, 'agent', file) : path.resolve(__dirname, '../../agent', file); }
 function agentHome() { return app.isPackaged ? path.join(app.getPath('userData'), 'agent') : path.resolve(__dirname, '../../agent'); }
 function agentConfigPath() { return path.join(agentHome(), 'config.json'); }
@@ -131,7 +131,7 @@ async function pairAgent(payload = {}) {
     projects: existing.projects || {},
     codex: { command: existing.codex?.command || codexCommand, timeoutMs: Number(existing.codex?.timeoutMs || 900000) },
     browser: { command: existing.browser?.command || browser, debugPort: Number(existing.browser?.debugPort || 9223), profileDir: existing.browser?.profileDir || path.join(agentHome(), 'browser-profile') },
-    wakeWord: existing.wakeWord || { enabled: wakeWordEnabled(), phrases: ['sexta', 'sexta-feira'], engine: 'windows-system-speech' }
+    wakeWord: existing.wakeWord || { enabled: wakeWordEnabled(), phrases: ['sexta', 'sexta-feira', 'sexta feira', 'seta', 'seta-feira', 'seta feira'], engine: 'windows-system-speech' }
   };
   atomicText(agentConfigPath(), `${JSON.stringify(config, null, 2)}\n`);
   writeAgentEnv({ SEXTA_BASE_URL: WEB_URL.replace(/\/$/, ''), SEXTA_AGENT_TOKEN: pair.token, SEXTA_DEVICE_ID: deviceId });

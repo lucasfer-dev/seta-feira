@@ -46,9 +46,9 @@ function loadReliability() {
       try { metrics.push(JSON.parse(init.body || '{}')); } catch {}
       return { ok: true };
     },
-    setTimeout(fn) {
+    setTimeout(fn, delay = 0) {
       const id = nextTimer++;
-      timers.set(id, fn);
+      timers.set(id, { fn, delay });
       return id;
     },
     clearTimeout(id) { timers.delete(id); },
@@ -82,15 +82,41 @@ test('playback iniciado depois de tool response impede fechamento pelo watchdog'
   }));
 
   assert.equal(timers.size, 1, 'o watchdog deve ser armado após toolResponse');
+  assert.equal([...timers.values()][0].delay, 6500, 'tool concluída deve usar janela reduzida de continuação');
 
   window.dispatchEvent({ type: 'sexta:voice-state', detail: { state: 'speaking' } });
   assert.equal(timers.size, 0, 'o playback real deve cancelar o watchdog');
-
-  // Mesmo que uma referência antiga do callback fosse executada por engano,
-  // continuationActivity precisa impedir o fechamento da sessão.
-  for (const callback of [...timers.values()]) callback();
   assert.deepEqual(socket.closed, []);
 
   await Promise.resolve();
   assert.ok(metrics.some(metric => metric.kind === 'voice_reliability_v10_1:tool_continuation_started' && metric.source === 'playback-state'));
+});
+
+test('tool com falha reduz silêncio para 3,5s e registra nome e erro antes de recuperar', async () => {
+  const { window, timers, metrics } = loadReliability();
+  const socket = new window.WebSocket('wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=test');
+
+  socket.send(JSON.stringify({
+    toolResponse: {
+      functionResponses: [{
+        id: 'call-2',
+        name: 'pc_ui_type_text',
+        response: { ok: false, state: 'failed', error: 'PC_UI_TARGET_NOT_FOUND' }
+      }]
+    }
+  }));
+
+  assert.equal(timers.size, 1);
+  const timer = [...timers.values()][0];
+  assert.equal(timer.delay, 3500);
+  timer.fn();
+  assert.deepEqual(socket.closed, [{ code: 4012, reason: 'failed-tool-continuation-timeout' }]);
+
+  await Promise.resolve();
+  assert.ok(metrics.some(metric => metric.kind === 'voice_reliability_v10_1:tool_response_sent'
+    && metric.failedToolNames === 'pc_ui_type_text'
+    && metric.toolErrors === 'PC_UI_TARGET_NOT_FOUND'
+    && metric.continuationTimeoutMs === 3500));
+  assert.ok(metrics.some(metric => metric.kind === 'voice_reliability_v10_1:tool_continuation_timeout'
+    && metric.failedToolNames === 'pc_ui_type_text'));
 });

@@ -5,20 +5,23 @@
   const NativeAudioWorkletNode = window.AudioWorkletNode;
   const IS_ANDROID = /Android/i.test(navigator.userAgent);
   const IS_FIREFOX = /Firefox/i.test(navigator.userAgent);
+  const IS_DESKTOP = /Electron/i.test(navigator.userAgent) || Boolean(window.sextaDesktop?.desktop);
 
   const BASE_THRESHOLD = IS_ANDROID ? 0.024 : 0.019;
   const NORMAL_CONFIRM_MS = IS_ANDROID ? 240 : 210;
   const FAST_CONFIRM_MS = IS_ANDROID ? 120 : 105;
   const SPEAKING_GRACE_MS = 180;
-  const MAX_BUFFER_MS = 360;
+  const MAX_BUFFER_MS = IS_DESKTOP ? 1800 : 360;
   const PASS_THROUGH_MS = 1200;
 
   const LISTEN_BASE_THRESHOLD = IS_ANDROID ? 0.014 : IS_FIREFOX ? 0.0115 : 0.0105;
   const LISTEN_FLOOR_MULTIPLIER = IS_ANDROID ? 4.5 : IS_FIREFOX ? 4.2 : 3.8;
   const LISTEN_CONFIRM_MS = IS_ANDROID ? 150 : 125;
   const LISTEN_FAST_MS = IS_ANDROID ? 90 : 80;
-  const LISTEN_BUFFER_MS = 320;
+  const LISTEN_BUFFER_MS = IS_DESKTOP ? 1800 : 320;
   const LISTEN_PASS_THROUGH_MS = 1800;
+  const WAKE_COMMAND_WINDOW_MS = 5200;
+  const LEGACY_GUARD_VERSION = '1.2.1-listen-thinking-gate';
 
   let assistantSpeaking = false;
   let voiceState = 'off';
@@ -35,6 +38,8 @@
   let listenPassThroughUntil = 0;
   let listenRejected = 0;
   let listenAccepted = 0;
+  let strictWakeLatched = IS_DESKTOP;
+  let wakeAuthorizedUntil = 0;
 
   function resetCandidate() {
     candidateMs = 0;
@@ -71,6 +76,10 @@
 
   function shouldGateIdleSpeech() {
     return !assistantSpeaking && (voiceState === 'listening' || voiceState === 'thinking' || voiceState === 'recovering');
+  }
+
+  function wakeAuthorized(now = performance.now()) {
+    return IS_DESKTOP && strictWakeLatched && now < wakeAuthorizedUntil;
   }
 
   window.addEventListener('sexta:voice-state', event => {
@@ -183,6 +192,22 @@
       clearListenBuffer();
     }
 
+    const onWakeWord = () => {
+      if (!IS_DESKTOP) return;
+      strictWakeLatched = true;
+      wakeAuthorizedUntil = performance.now() + WAKE_COMMAND_WINDOW_MS;
+      listenPassThroughUntil = wakeAuthorizedUntil;
+      passThroughUntil = wakeAuthorizedUntil;
+      listenAccepted += 1;
+      acceptedCandidates += assistantSpeaking ? 1 : 0;
+      if (assistantSpeaking) replayBuffered();
+      else replayListenBuffered();
+      window.dispatchEvent(new CustomEvent('sexta:wake-gate', {
+        detail: { phase:'accepted', voiceState, assistantSpeaking, windowMs:WAKE_COMMAND_WINDOW_MS }
+      }));
+    };
+    window.addEventListener('sexta:wake-word', onWakeWord);
+
     port.addEventListener('message', event => {
       if (replayEvents.has(event)) return;
 
@@ -198,6 +223,13 @@
       }
 
       if (shouldGateIdleSpeech()) {
+        if (IS_DESKTOP && strictWakeLatched) {
+          if (wakeAuthorized(now)) return;
+          event.stopImmediatePropagation();
+          rememberListening(frame, frameMs);
+          return;
+        }
+
         if (now < listenPassThroughUntil) return;
 
         event.stopImmediatePropagation();
@@ -235,7 +267,14 @@
 
       if (!assistantSpeaking) {
         clearBuffer();
-        clearListenBuffer();
+        if (!strictWakeLatched) clearListenBuffer();
+        return;
+      }
+
+      if (IS_DESKTOP && strictWakeLatched) {
+        if (wakeAuthorized(now)) return;
+        event.stopImmediatePropagation();
+        rememberBarge(frame, frameMs);
         return;
       }
 
@@ -295,7 +334,8 @@
   window.AudioWorkletNode = GuardedAudioWorkletNode;
   window.__sextaBargeInGuard = {
     installed: true,
-    version: '1.2.1-listen-thinking-gate',
+    version: '1.3.1-strict-from-start',
+    legacyVersion: LEGACY_GUARD_VERSION,
     debug: () => ({
       assistantSpeaking,
       voiceState,
@@ -310,6 +350,9 @@
       listenCandidatePeak,
       listenAccepted,
       listenRejected,
+      strictWakeLatched,
+      wakeAuthorizedUntil,
+      wakeAuthorized: wakeAuthorized(),
       autoGainControlForcedOff: Boolean(mediaDevices?.__sextaGuardedGetUserMedia)
     })
   };

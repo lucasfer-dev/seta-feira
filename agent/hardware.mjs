@@ -1,5 +1,6 @@
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { listWindows } from './windows-control-v2.mjs';
 
 let previousCpu = null;
 let cache = null;
@@ -35,12 +36,39 @@ $nets=@(Get-CimInstance Win32_NetworkAdapterConfiguration -Filter "IPEnabled=Tru
   try { return JSON.parse(String(result.stdout || '{}')); } catch { return {}; }
 }
 function arr(value) { return Array.isArray(value) ? value : value ? [value] : []; }
+function compactWindow(item = {}) {
+  return {
+    hwnd: Number(item.hwnd || item.handle || 0) || 0,
+    title: String(item.title || item.name || '').slice(0, 160),
+    process: String(item.process || item.processName || item.exe || '').slice(0, 100),
+    active: item.active === true || item.foreground === true || item.isForeground === true,
+    minimized: item.minimized === true || item.isMinimized === true,
+    maximized: item.maximized === true || item.isMaximized === true
+  };
+}
+async function desktopWorldState() {
+  if (process.platform !== 'win32') return null;
+  try {
+    const result = await listWindows(14);
+    const source = Array.isArray(result) ? result : Array.isArray(result?.windows) ? result.windows : [];
+    const windows = source.map(compactWindow).filter(item => item.title || item.process).slice(0, 14);
+    return {
+      version: '1.0.0',
+      capturedAt: new Date().toISOString(),
+      activeWindow: windows.find(item => item.active) || windows[0] || null,
+      windows
+    };
+  } catch (error) {
+    return { version: '1.0.0', capturedAt: new Date().toISOString(), activeWindow: null, windows: [], error: String(error?.message || error).slice(0, 240) };
+  }
+}
 
 export async function hardwareSnapshot({ force = false } = {}) {
   if (!force && cache && Date.now() - cacheAt < 20000) return cache;
   const total = os.totalmem();
   const free = os.freemem();
   const details = windowsDetails();
+  const [worldState] = await Promise.all([desktopWorldState()]);
   const disks = arr(details.disks).map(disk => {
     const size = Number(disk.size || 0), freeBytes = Number(disk.free || 0);
     return {
@@ -57,6 +85,7 @@ export async function hardwareSnapshot({ force = false } = {}) {
     gpus: arr(details.gpus).map(gpu => ({ name: String(gpu.name || ''), adapterRAMMB: Number(gpu.adapterRam) > 0 ? Math.round(Number(gpu.adapterRam) / 1048576) : null, driver: String(gpu.driver || '') })),
     battery: details.battery || null,
     network: arr(details.network).map(net => ({ description: String(net.description || ''), ip: arr(net.ip).map(String).slice(0, 6), mac: String(net.mac || '') })),
+    worldState,
     uptimeSeconds: Math.round(os.uptime())
   };
   cacheAt = Date.now();

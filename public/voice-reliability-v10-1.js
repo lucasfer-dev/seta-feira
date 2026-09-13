@@ -4,7 +4,8 @@
   const NativeWebSocket = window.WebSocket;
   const NativeFetch = typeof window.fetch === 'function' ? window.fetch.bind(window) : null;
   const LIVE_URL = /generativelanguage\.googleapis\.com\/ws\/google\.ai\.generativelanguage\.v1beta\.GenerativeService\.BidiGenerateContentConstrained/i;
-  const TOOL_CONTINUATION_TIMEOUT_MS = 10000;
+  const TOOL_CONTINUATION_TIMEOUT_MS = 6500;
+  const FAILED_TOOL_CONTINUATION_TIMEOUT_MS = 3500;
   const ORIGIN = /Android/i.test(navigator.userAgent)
     ? 'android'
     : (/Electron/i.test(navigator.userAgent) || Boolean(window.sextaDesktop?.desktop) ? 'desktop' : 'browser');
@@ -26,6 +27,20 @@
   function nextTurnId() {
     turnSequence += 1;
     return `${ORIGIN}-${Date.now().toString(36)}-${turnSequence.toString(36)}`;
+  }
+
+  function compactError(value = '') {
+    return String(value || '').replace(/Bearer\s+\S+/gi, 'Bearer [redacted]').replace(/\s+/g, ' ').trim().slice(0, 500);
+  }
+
+  function responseFailed(item = {}) {
+    const response = item?.response && typeof item.response === 'object' ? item.response : {};
+    return response.ok === false || response.state === 'failed' || Boolean(response.error);
+  }
+
+  function responseError(item = {}) {
+    const response = item?.response && typeof item.response === 'object' ? item.response : {};
+    return compactError(response.error || response?.result?.error || response?.result?.message || '');
   }
 
   // Correlaciona também as métricas produzidas pelo Voice Core antigo sem tocar
@@ -81,6 +96,9 @@
     let continuationTimer = null;
     let suppressedTurnCompletes = 0;
     let lastToolNames = [];
+    let lastFailedToolNames = [];
+    let lastToolErrors = [];
+    let lastContinuationTimeoutMs = TOOL_CONTINUATION_TIMEOUT_MS;
 
     function clearContinuationTimer() {
       if (continuationTimer) clearTimeout(continuationTimer);
@@ -95,7 +113,9 @@
           source,
           hasAudio: detail.hasAudio === true,
           hasOutputText: detail.hasOutputText === true,
-          toolNames: lastToolNames.join(',')
+          toolNames: lastToolNames.join(','),
+          failedToolNames: lastFailedToolNames.join(','),
+          toolErrors: lastToolErrors.join(' | ')
         });
       }
       clearContinuationTimer();
@@ -118,23 +138,26 @@
       continuationActivity = false;
       suppressedTurnCompletes = 0;
       lastToolNames = [];
+      lastFailedToolNames = [];
+      lastToolErrors = [];
+      lastContinuationTimeoutMs = TOOL_CONTINUATION_TIMEOUT_MS;
     }
 
-    function armContinuationTimer() {
+    function armContinuationTimer(timeoutMs = TOOL_CONTINUATION_TIMEOUT_MS) {
       clearContinuationTimer();
+      lastContinuationTimeoutMs = timeoutMs;
       continuationTimer = setTimeout(() => {
         if (!awaitingContinuation || continuationActivity) return;
-        // O Voice Core é quem realmente agenda o áudio. Em produção observamos
-        // pacotes que colocavam o Core em `speaking`, mas não casavam com a forma
-        // de inlineData esperada por este guard. Playback real vence o watchdog.
         if (lastState === 'speaking' && markContinuationActivity('playback-state-timeout')) return;
         metric('tool_continuation_timeout', {
-          timeoutMs: TOOL_CONTINUATION_TIMEOUT_MS,
+          timeoutMs,
           toolNames: lastToolNames.join(','),
+          failedToolNames: lastFailedToolNames.join(','),
+          toolErrors: lastToolErrors.join(' | '),
           suppressedTurnCompletes
         });
-        try { socket.close(4011, 'tool-continuation-timeout'); } catch {}
-      }, TOOL_CONTINUATION_TIMEOUT_MS);
+        try { socket.close(lastFailedToolNames.length ? 4012 : 4011, lastFailedToolNames.length ? 'failed-tool-continuation-timeout' : 'tool-continuation-timeout'); } catch {}
+      }, timeoutMs);
     }
 
     socket.send = data => {
@@ -146,12 +169,19 @@
           awaitingContinuation = true;
           continuationActivity = false;
           lastToolNames = responses.map(item => String(item?.name || '')).filter(Boolean).slice(0, 12);
+          lastFailedToolNames = responses.filter(responseFailed).map(item => String(item?.name || '')).filter(Boolean).slice(0, 12);
+          lastToolErrors = responses.filter(responseFailed).map(responseError).filter(Boolean).slice(0, 6);
+          const timeoutMs = lastFailedToolNames.length ? FAILED_TOOL_CONTINUATION_TIMEOUT_MS : TOOL_CONTINUATION_TIMEOUT_MS;
           metric('tool_response_sent', {
             count: responses.length,
+            failed: lastFailedToolNames.length,
             toolNames: lastToolNames.join(','),
+            failedToolNames: lastFailedToolNames.join(','),
+            toolErrors: lastToolErrors.join(' | '),
+            continuationTimeoutMs: timeoutMs,
             suppressedTurnCompletes
           });
-          armContinuationTimer();
+          armContinuationTimer(timeoutMs);
         }
       } catch {}
       return nativeSend(data);
@@ -170,6 +200,8 @@
         continuationActivity = false;
         clearContinuationTimer();
         lastToolNames = calls.map(item => String(item?.name || '')).filter(Boolean).slice(0, 12);
+        lastFailedToolNames = [];
+        lastToolErrors = [];
         metric('tool_call_received', { count: calls.length, toolNames: lastToolNames.join(',') });
       }
 
@@ -199,7 +231,9 @@
           toolPending,
           awaitingContinuation,
           suppressedTurnCompletes,
-          toolNames: lastToolNames.join(',')
+          toolNames: lastToolNames.join(','),
+          failedToolNames: lastFailedToolNames.join(','),
+          toolErrors: lastToolErrors.join(' | ')
         });
 
         if (clone.toolCall || usefulServerContent(clone.serverContent || {})) {
@@ -213,6 +247,7 @@
       if (content.turnComplete === true && awaitingContinuation && continuationActivity) {
         metric('tool_continuation_complete', {
           toolNames: lastToolNames.join(','),
+          failedToolNames: lastFailedToolNames.join(','),
           suppressedTurnCompletes
         });
         resetToolLifecycle();
@@ -225,7 +260,10 @@
       if (awaitingContinuation && !continuationActivity) {
         metric('socket_closed_while_waiting_tool_continuation', {
           closeCode: Number(event?.code || 0),
-          toolNames: lastToolNames.join(',')
+          timeoutMs: lastContinuationTimeoutMs,
+          toolNames: lastToolNames.join(','),
+          failedToolNames: lastFailedToolNames.join(','),
+          toolErrors: lastToolErrors.join(' | ')
         });
       }
       resetToolLifecycle();
@@ -258,8 +296,6 @@
       metric('recovering', { hadTranscript: Boolean(latestTranscript) });
     }
     if (next === 'speaking' && lastState !== 'speaking') {
-      // Este é o sinal mais confiável de que o Core recebeu e começou a tocar a
-      // continuação. Cancela o watchdog mesmo se o guard não reconheceu o pacote.
       for (const socket of liveSockets) {
         try { socket.__sextaMarkToolContinuation?.('playback-state'); } catch {}
       }
@@ -270,13 +306,14 @@
 
   window.__sextaVoiceReliability = {
     installed: true,
-    version: '10.1.1-playback-continuation-guard',
+    version: '10.1.2-failed-tool-fast-recovery',
     debug: () => ({
       currentTurnId,
       lastState,
       latestTranscript,
       liveSockets: liveSockets.size,
-      continuationTimeoutMs: TOOL_CONTINUATION_TIMEOUT_MS
+      continuationTimeoutMs: TOOL_CONTINUATION_TIMEOUT_MS,
+      failedToolContinuationTimeoutMs: FAILED_TOOL_CONTINUATION_TIMEOUT_MS
     })
   };
 })();
