@@ -65,7 +65,8 @@ test('live voice requires wake word and desktop barge-in is wake-gated from star
   assert.match(guard, /WAKE_COMMAND_WINDOW_MS = (?:5200|7000)/);
 
   const wake = fs.readFileSync(new URL('../agent/wake-word.mjs', import.meta.url), 'utf8');
-  for (const phrase of ['sexta', 'sexta-feira', 'sexta feira', 'seta', 'seta-feira', 'seta feira']) assert.ok(wake.includes(`'${phrase}'`), phrase);
+  for (const phrase of ['sexta', 'sexta-feira', 'sexta feira']) assert.ok(wake.includes(`'${phrase}'`), phrase);
+  for (const falseAlias of ['seta', 'seta-feira', 'seta feira']) assert.equal(wake.includes(`'${falseAlias}'`), false, falseAlias);
 
   const desktop = fs.readFileSync(new URL('../apps/desktop-electron/main.cjs', import.meta.url), 'utf8');
   assert.match(desktop, /wakeWordEnabled\(\).*wakeWordEnabled !== false/);
