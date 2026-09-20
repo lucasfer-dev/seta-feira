@@ -82,6 +82,7 @@ $rec.add_SpeechRecognized({
   [Console]::Out.WriteLine('WAKE'+[char]9+$text+[char]9+$r.Confidence+[char]9+$command)
   [Console]::Out.Flush()
 })
+$rec.add_AudioStateChanged({ param($sender,$e) [Console]::Out.WriteLine('AUDIO'+[char]9+[string]$e.AudioState); [Console]::Out.Flush() })
 $rec.add_RecognizeCompleted({
   param($sender,$e)
   if($e.Error){ [Console]::Out.WriteLine('ERROR'+[char]9+$e.Error.Message); [Console]::Out.Flush() }
@@ -110,6 +111,7 @@ while($true){ Start-Sleep -Milliseconds 750 }
         onError({ message: line.split('\t').slice(1).join('\t'), at:new Date().toISOString() });
         continue;
       }
+      if (line.startsWith('AUDIO\t')) { onError({ message: 'AUDIO_STATE:' + (line.split('\t')[1] || ''), informational: true, at:new Date().toISOString() }); continue; }
       if (!line.startsWith('WAKE\t')) continue;
       const [, transcript = '', confidence = '0', ...commandParts] = line.split('\t');
       const parsed = parseWakeTranscript(transcript) || { phrase:'Sexta-Feira', command:commandParts.join('\t').trim() };
