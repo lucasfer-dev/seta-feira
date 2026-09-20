@@ -74,3 +74,32 @@ test('mission command result closes the mission and preserves verified result', 
   assert.equal(completed.result.verified, true);
   assert.equal(completed.steps[0].status, 'completed');
 });
+
+
+test('agent device is eligible as Home Hub for coding and Obsidian missions', () => {
+  const caps = normalizeCapabilities('agent', ['codex_task']);
+  assert.ok(caps.includes('coding'));
+  assert.ok(caps.includes('obsidian'));
+  assert.ok(caps.includes('windows'));
+});
+
+
+test('mission runtime can queue a Codex task for an agent Home Hub', async () => {
+  resetWorldState();
+  orchestrator.registerDevice({ id: 'pc-codex', kind: 'agent', online: true, capabilities: ['codex_task'] });
+  const mission = createMission({ goal: 'Analisar projeto', requiredCapability: 'coding' });
+  const routed = orchestrator.routeMission(mission.id);
+  assert.equal(routed.assignedDeviceId, 'pc-codex');
+
+  const { dispatchMissionCommand } = await import('../lib/v2/mission-runtime.mjs');
+  const dispatched = await dispatchMissionCommand({
+    missionId: mission.id,
+    targetDeviceId: 'pc-codex',
+    action: 'codex_task',
+    payload: { project: 'demo', task: 'Analisar sem editar', codexTask: true, _sextaAgentTask: true }
+  });
+
+  assert.equal(dispatched.command.action, 'codex_task');
+  assert.equal(dispatched.command.payload._sexta.missionId, mission.id);
+  assert.equal(dispatched.command.payload._sextaAgentTask, true);
+});

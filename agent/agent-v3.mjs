@@ -11,6 +11,7 @@ import { audit } from './audit.mjs';
 import { hardwareSnapshot } from './hardware.mjs';
 import { secureVaultStatus } from './secure-vault.mjs';
 import { AGENT_PROTOCOL_VERSION, evaluateLocalAction, publicRuntimeState, readRuntimeState, writeRuntimeState } from './runtime-state.mjs';
+import { obsidianSyncAvailable, syncObsidianVault } from './obsidian-sync.mjs';
 
 const BASE = (process.env.SEXTA_BASE_URL || 'https://seta-feira.vercel.app').replace(/\/$/, '');
 const TOKEN = process.env.SEXTA_AGENT_TOKEN || 'local-agent-token';
@@ -24,6 +25,8 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const activeCodexProjects = new Set();
 const activeChildren = new Set();
 let lastAction = null;
+let lastVaultSyncAt = 0;
+let lastVaultSync = null;
 
 async function post(route, body) {
   const response = await fetch(`${BASE}${route}`, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(25000) });
@@ -248,7 +251,10 @@ async function heartbeat() {
       browserAgent, worldState, codexActiveProjects: [...activeCodexProjects], agentProtocol: AGENT_PROTOCOL_VERSION,
       agentVersion: AGENT_PROTOCOL_VERSION, autonomy: runtime.autonomy, paused: runtime.paused, privacy: runtime.privacy,
       hardware, secureVault: { available: secureVault.available, version: secureVault.version, aliases: secureVault.aliases.length },
-      wakeWordConfigured: cfg.wakeWord?.enabled === true
+      wakeWordConfigured: cfg.wakeWord?.enabled === true,
+      homeHub: true,
+      vaultConfigured: obsidianSyncAvailable(),
+      lastVaultSync
     }
   });
 }
@@ -265,10 +271,18 @@ let pollFailureStreak = 0;
 while (true) {
   try {
     if (Date.now() - lastBeat > 15000) { await heartbeat(); lastBeat = Date.now(); }
+    if (obsidianSyncAvailable() && Date.now() - lastVaultSyncAt > 60000) {
+      try {
+        lastVaultSync = await syncObsidianVault({ baseUrl: BASE, headers, deviceId: DEVICE_ID });
+      } catch (error) {
+        lastVaultSync = { ok: false, error: String(error?.message || error).slice(0, 500), syncedAt: new Date().toISOString() };
+      }
+      lastVaultSyncAt = Date.now();
+    }
     const { commands = [] } = await poll();
     pollFailureStreak = 0;
     for (const command of commands) {
-      if (command.payload?.codexTask === true) {
+      if (command.action === 'codex_task' || command.payload?.codexTask === true) {
         try { await launchCodexTask(command); }
         catch (error) {
           audit({ commandId: command.id, action: 'codex_task', status: 'failed', ok: false, details: { message: error.message } });

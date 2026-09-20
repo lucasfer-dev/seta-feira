@@ -90,7 +90,17 @@ function appendAgentLog(chunk) {
   agentDiagnostics.lastLog = `${agentDiagnostics.lastLog}${safe}`.slice(-6000);
 }
 function agentProcessEnv(localEnv = {}) {
-  return { ...process.env, ...localEnv, ELECTRON_RUN_AS_NODE: '1', SEXTA_AGENT_HOME: agentHome(), SEXTA_AGENT_CONFIG: agentConfigPath(), SEXTA_ENV_PATH: agentEnvPath(), SEXTA_AGENT_STATE: agentStatePath(), SEXTA_AGENT_AUDIT: agentAuditPath() };
+  return {
+    ...process.env,
+    ...localEnv,
+    ELECTRON_RUN_AS_NODE: '1',
+    SEXTA_AGENT_HOME: agentHome(),
+    SEXTA_AGENT_CONFIG: agentConfigPath(),
+    SEXTA_ENV_PATH: agentEnvPath(),
+    SEXTA_AGENT_STATE: agentStatePath(),
+    SEXTA_AGENT_AUDIT: agentAuditPath(),
+    SEXTA_OBSIDIAN_VAULT_PATH: selectedVaultPath()
+  };
 }
 function scheduleAgentRestart() {
   if (app.isQuitting || agentRestartTimer || !canStartAgent()) return;

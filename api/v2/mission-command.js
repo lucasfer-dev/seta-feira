@@ -26,11 +26,17 @@ export default async function handler(req, res) {
     }
     if (!targetDeviceId) return send(res, 409, { error: 'no_desktop_online' });
 
+    const action = String(body.action || '');
+    const payload = {
+      ...(body.payload || {}),
+      ...(action === 'codex_task' ? { codexTask: true, _sextaAgentTask: true } : {})
+    };
+
     const result = await dispatchMissionCommand({
       missionId,
       targetDeviceId,
-      action: String(body.action || ''),
-      payload: body.payload || {}
+      action,
+      payload
     });
 
     return send(res, 201, result);
