@@ -11,7 +11,7 @@ let win; let overlay; let tray; let agent; let wakeProcess; let lastPresence = {
 let agentRestartTimer = null; let wakeRestartTimer = null; let agentRestartDelay = 1500; let wakeRestartDelay = 1800;
 let updateTimer = null; let updatePromptOpen = false;
 let agentDiagnostics = { lastStartAt: '', lastOnlineAt: '', lastExitAt: '', lastExitCode: null, lastSignal: '', lastError: '', lastLog: '' };
-let wakeDiagnostics = { ready: false, culture: '', lastWakeAt: '', lastPhrase: '', lastConfidence: 0, lastError: '' };
+let wakeDiagnostics = { ready: false, culture: '', mode: '', audioState: '', lastWakeAt: '', lastPhrase: '', lastConfidence: 0, lastError: '', lastExitCode: null, lastStartedAt: '' };
 
 function desktopConfigPath() { return path.join(app.getPath('userData'), 'sexta-desktop.json'); }
 function readDesktopConfig() { try { return JSON.parse(fs.readFileSync(desktopConfigPath(), 'utf8')); } catch { return {}; } }
@@ -164,18 +164,19 @@ function handleWake(event = {}) {
 }
 function scheduleWakeRestart() { if (app.isQuitting || wakeRestartTimer || !wakeWordEnabled()) return; const delay = wakeRestartDelay; wakeRestartDelay = Math.min(30000, Math.round(wakeRestartDelay * 1.8)); wakeRestartTimer = setTimeout(() => { wakeRestartTimer = null; startWakeWord(); }, delay); }
 function startWakeWord() {
-  if (wakeProcess || !wakeWordEnabled() || app.isQuitting) return; const wakePath = agentResource('wake-word.mjs'); if (!fs.existsSync(wakePath)) return;
-  const child = spawn(process.execPath, [wakePath, '--listen'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }); wakeProcess = child;
+  if (wakeProcess || !wakeWordEnabled() || app.isQuitting) return; const wakePath = agentResource('wake-word.mjs'); if (!fs.existsSync(wakePath)) { wakeDiagnostics={...wakeDiagnostics,ready:false,lastError:'wake-word.mjs não encontrado'}; return; }
+  const child = spawn(process.execPath, [wakePath, '--listen'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }); wakeProcess = child; wakeDiagnostics={...wakeDiagnostics,ready:false,lastStartedAt:new Date().toISOString(),lastError:''};
   let buffer = ''; child.stdout.on('data', chunk => { buffer += chunk; const lines = buffer.split(/\r?\n/); buffer = lines.pop() || ''; for (const line of lines) {
-      if (line.startsWith('READY\t')) { wakeDiagnostics = { ...wakeDiagnostics, ready:true, culture:line.split('\t')[1] || '', lastError:'' }; continue; }
+      if (line.startsWith('READY\t')) { const parts=line.split('\t'); wakeDiagnostics = { ...wakeDiagnostics, ready:true, culture:parts[1] || '', mode:parts[2] || '', lastError:'' }; continue; }
       if (line.startsWith('ERROR\t')) { wakeDiagnostics = { ...wakeDiagnostics, ready:false, lastError:line.split('\t').slice(1).join('\t').slice(0,600) }; continue; }
+      if (line.startsWith('AUDIO\t')) { wakeDiagnostics = { ...wakeDiagnostics, audioState:line.split('\t')[1] || '' }; continue; }
       if (!line.startsWith('WAKE\t')) continue;
       const [, phrase = '', confidence = '0', ...commandParts] = line.split('\t');
       handleWake({ phrase, confidence:Number(confidence) || 0, command:commandParts.join('\t') });
     } });
   child.stderr.on('data', chunk => { const message=String(chunk||'').trim(); if(message) wakeDiagnostics={ ...wakeDiagnostics, ready:false, lastError:message.slice(-600) }; });
   const stableTimer = setTimeout(() => { if (wakeProcess === child) wakeRestartDelay = 1800; }, 30000);
-  child.on('exit', () => { clearTimeout(stableTimer); if (wakeProcess === child) wakeProcess = null; scheduleWakeRestart(); }); child.on('error', () => { clearTimeout(stableTimer); if (wakeProcess === child) wakeProcess = null; scheduleWakeRestart(); });
+  child.on('exit', code => { clearTimeout(stableTimer); wakeDiagnostics={...wakeDiagnostics,ready:false,lastExitCode:code,lastError:wakeDiagnostics.lastError || `wake process saiu com código ${code}`}; if (wakeProcess === child) wakeProcess = null; scheduleWakeRestart(); }); child.on('error', () => { clearTimeout(stableTimer); if (wakeProcess === child) wakeProcess = null; scheduleWakeRestart(); });
 }
 function setWakeWordEnabled(enabled) { writeDesktopConfig({ wakeWordEnabled: Boolean(enabled) }); if (enabled) { wakeRestartDelay = 1800; startWakeWord(); } else { if (wakeRestartTimer) clearTimeout(wakeRestartTimer); wakeRestartTimer = null; stopWakeWord(); } }
 
@@ -204,12 +205,35 @@ function trayImage() {
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><circle cx="16" cy="16" r="11" fill="#090604" stroke="#ff7a18" stroke-width="2"/><circle cx="16" cy="16" r="4" fill="#ff7a18"/></svg>';
   const image = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`); return image.isEmpty() ? nativeImage.createEmpty() : image.resize({ width: 16, height: 16 });
 }
+
+async function showWakeDiagnostics() {
+  const d = { ...wakeDiagnostics };
+  const details = [
+    `Processo: ${wakeProcess ? 'rodando' : 'parado'}`,
+    `Pronto: ${d.ready ? 'sim' : 'não'}`,
+    `Idioma reconhecedor: ${d.culture || 'não detectado'}`,
+    `Modo: ${d.mode || 'não detectado'}`,
+    `Estado do áudio: ${d.audioState || 'não informado'}`,
+    `Último wake: ${d.lastWakeAt || 'nenhum'}`,
+    `Última frase: ${d.lastPhrase || 'nenhuma'}`,
+    `Confiança: ${Number(d.lastConfidence || 0).toFixed(2)}`,
+    `Último erro: ${d.lastError || 'nenhum'}`
+  ].join('\n');
+  await dialog.showMessageBox(win, {
+    type: d.ready ? 'info' : 'warning',
+    title: 'Diagnóstico do Wake Word',
+    message: d.ready ? 'Wake word está inicializada.' : 'Wake word não está pronta.',
+    detail: details
+  });
+}
+
 function createTray() {
   tray = new Tray(trayImage()); tray.setToolTip(`SEXTA ${app.getVersion()}`);
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Abrir Sexta', click: () => { win.show(); win.focus(); } },
     { label: 'Mostrar ilha da SEXTA', type: 'checkbox', checked: overlayEnabled(), click: item => setOverlayEnabled(item.checked) },
     { label: 'Wake word “Sexta”', type: 'checkbox', checked: wakeWordEnabled(), click: item => setWakeWordEnabled(item.checked) },
+    { label: 'Diagnóstico do Wake Word…', click: () => void showWakeDiagnostics() },
     { type: 'separator' },
     { label: 'Reiniciar PC Agent', click: () => restartAgent() },
     { label: 'Configurar / Parear PC Agent…', click: openAgentControl },
