@@ -1,4 +1,5 @@
 import { addEvent, parseJson, send, updateCommand } from '../lib/core.mjs';
+import { applyCommandResultToMission } from '../lib/v2/mission-runtime.mjs';
 import { isAgentRequest } from '../lib/agent-auth.mjs';
 
 function normalizeResult(result = {}) {
@@ -37,7 +38,14 @@ export default async function handler(req, res) {
     // posting status=done. OBSERVE -> ACT -> VERIFY remains authoritative.
     if (status !== 'running' && (normalized.failed || body.ok === false)) status = 'failed';
 
-    await updateCommand(String(body.commandId || ''), status, normalized.value);
+    const commandId = String(body.commandId || '');
+    await updateCommand(commandId, status, normalized.value);
+    const mission = await applyCommandResultToMission({
+      commandId,
+      status,
+      result: normalized.value,
+      message: body.message || ''
+    });
 
     if (status !== 'running') {
       const message = normalized.unverified
@@ -52,7 +60,7 @@ export default async function handler(req, res) {
       });
     }
 
-    send(res, 200, { ok: true, status, verificationRequired: normalized.unverified });
+    send(res, 200, { ok: true, status, verificationRequired: normalized.unverified, mission: mission || null });
   } catch (error) {
     send(res, 500, { error: 'result_failed', message: error.message });
   }
