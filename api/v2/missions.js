@@ -4,7 +4,10 @@ import { addMissionStep, cancelMission, getMission, hydrateMission, listMissions
 import { loadMission, loadMissions, persistMission } from '../../lib/v2/mission-persistence.mjs';
 
 async function ensureMission(id) {
-  return getMission(id) || hydrateMission(await loadMission(id));
+  const local = getMission(id);
+  if (local) return local;
+  const persisted = await loadMission(id);
+  return persisted ? hydrateMission(persisted) : null;
 }
 
 export default async function handler(req, res) {
