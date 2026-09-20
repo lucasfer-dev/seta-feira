@@ -141,7 +141,7 @@ async function pairAgent(payload = {}) {
     projects: existing.projects || {},
     codex: { command: existing.codex?.command || codexCommand, timeoutMs: Number(existing.codex?.timeoutMs || 900000) },
     browser: { command: existing.browser?.command || browser, debugPort: Number(existing.browser?.debugPort || 9223), profileDir: existing.browser?.profileDir || path.join(agentHome(), 'browser-profile') },
-    wakeWord: existing.wakeWord || { enabled: wakeWordEnabled(), phrases: ['sexta', 'sexta-feira', 'sexta feira', 'seta', 'seta-feira', 'seta feira'], engine: 'windows-system-speech' }
+    wakeWord: { ...(existing.wakeWord || {}), enabled: wakeWordEnabled(), phrases: ['sexta-feira', 'sexta feira', 'sexta'], engine: 'windows-system-speech' }
   };
   atomicText(agentConfigPath(), `${JSON.stringify(config, null, 2)}\n`);
   writeAgentEnv({ SEXTA_BASE_URL: WEB_URL.replace(/\/$/, ''), SEXTA_AGENT_TOKEN: pair.token, SEXTA_DEVICE_ID: deviceId });
