@@ -66,3 +66,10 @@ test('wake grammar is culture-specific and reports rejected speech', () => {
   assert.match(source, /HEARD/);
   assert.match(source, /sexta-dictation/);
 });
+
+test('packaged wake listener starts from --listen without brittle argv path equality', () => {
+  const source = fs.readFileSync(new URL('../agent/wake-word.mjs', import.meta.url), 'utf8');
+  assert.match(source, /if \(process\.argv\.includes\('--listen'\)\)/);
+  assert.doesNotMatch(source, /path\.resolve\(process\.argv\[1\]\)/);
+  assert.doesNotMatch(source, /fileURLToPath\(import\.meta\.url\)/);
+});
