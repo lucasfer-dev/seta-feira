@@ -74,21 +74,30 @@ test('packaged wake listener starts from --listen without brittle argv path equa
   assert.doesNotMatch(source, /fileURLToPath\(import\.meta\.url\)/);
 });
 
-test('packaged desktop launches wake PowerShell directly without Electron-as-Node bridge', () => {
+test('desktop launches the canonical wake runtime instead of binding itself to System.Speech', () => {
   const source = fs.readFileSync(new URL('../apps/desktop-electron/main.cjs', import.meta.url), 'utf8');
   const start = source.indexOf('function startWakeWord()');
   const end = source.indexOf('function setWakeWordEnabled', start);
   assert.ok(start >= 0 && end > start);
   const block = source.slice(start, end);
-  assert.match(block, /wake-word\.ps1/);
-  assert.match(block, /powershell\.exe/);
-  assert.match(block, /-File/);
-  assert.doesNotMatch(block, /ELECTRON_RUN_AS_NODE/);
-  assert.doesNotMatch(block, /process\.execPath/);
-  assert.match(block, /não enviou READY em 10s/);
+  assert.match(block, /wake-runtime\.mjs/);
+  assert.match(block, /process\.execPath/);
+  assert.match(block, /ELECTRON_RUN_AS_NODE/);
+  assert.doesNotMatch(block, /wake-word\.ps1/);
+  assert.doesNotMatch(block, /powershell\.exe/);
+  assert.match(block, /WAKE_ENGINE_START_TIMEOUT/);
 });
 
-test('desktop package includes the direct wake PowerShell runtime', () => {
+test('wake runtime treats System.Speech as explicit compatibility fallback only', () => {
+  const source = fs.readFileSync(new URL('../agent/wake-runtime.mjs', import.meta.url), 'utf8');
+  assert.match(source, /SEXTA_WAKE_NATIVE_MODULE/);
+  assert.match(source, /SEXTA_WAKE_ALLOW_SYSTEM_SPEECH_FALLBACK/);
+  assert.match(source, /WAKE_NATIVE_ENGINE_NOT_CONFIGURED/);
+  assert.match(source, /wake-word\.ps1/);
+});
+
+test('desktop package includes canonical wake runtime and compatibility fallback', () => {
   const pkg = JSON.parse(fs.readFileSync(new URL('../apps/desktop-electron/package.json', import.meta.url), 'utf8'));
+  assert.ok(pkg.build.extraResources[0].filter.includes('wake-runtime.mjs'));
   assert.ok(pkg.build.extraResources[0].filter.includes('wake-word.ps1'));
 });
