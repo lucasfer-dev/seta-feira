@@ -7,6 +7,12 @@ export default async function handler(req, res) {
   const versions = versionSnapshot();
   send(res, 200, {
     ok: true,
+    version: '3.1.0-voice-core-v10-personality-v2',
+    operationalVersion: `${versions.core}-operational`,
+    compatOperationalVersion: '4.1.1-operational',
+    voiceCore: 'v10',
+    vadMode: 'manual-local',
+    personality: '2.0.0-canonical-operational',
     versions,
     liveModel: 'gemini-3.1-flash-live-preview',
     voice: {
