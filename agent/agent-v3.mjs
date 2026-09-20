@@ -282,7 +282,7 @@ while (true) {
     const { commands = [] } = await poll();
     pollFailureStreak = 0;
     for (const command of commands) {
-      if (command.payload?.codexTask === true) {
+      if (command.action === 'codex_task' || command.payload?.codexTask === true) {
         try { await launchCodexTask(command); }
         catch (error) {
           audit({ commandId: command.id, action: 'codex_task', status: 'failed', ok: false, details: { message: error.message } });
