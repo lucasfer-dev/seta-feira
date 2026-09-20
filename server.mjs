@@ -46,6 +46,9 @@ import eventEngine from './api/event-engine.js';
 import cronEventEngine from './api/cron-event-engine.js';
 import handoff from './api/handoff.js';
 import modelRouter from './api/model-router.js';
+import v2State from './api/v2/state.js';
+import v2Missions from './api/v2/missions.js';
+import v2HomeHub from './api/v2/home-hub.js';
 import { runMonitor } from './lib/monitor.mjs';
 
 const root = fileURLToPath(new URL('./public/', import.meta.url));
@@ -61,7 +64,8 @@ const routes = new Map([
   ['/api/google/callback', googleCallback], ['/api/google/action', googleAction], ['/api/import-response', importResponse], ['/api/command-status', commandStatus],
   ['/api/evolution/status', evolutionStatusRoute], ['/api/evolution/configure-webhook', evolutionConfigureWebhook], ['/api/evolution/send', evolutionSend], ['/api/evolution/webhook', evolutionWebhook],
   ['/api/notifications', notificationsRoute], ['/api/notifications/action', notificationAction], ['/api/monitor/run', monitorRun], ['/api/push/register', pushRegister], ['/api/vault', vault],
-  ['/api/routines', routines], ['/api/event-engine', eventEngine], ['/api/cron-event-engine', cronEventEngine], ['/api/handoff', handoff], ['/api/model-router', modelRouter]
+  ['/api/routines', routines], ['/api/event-engine', eventEngine], ['/api/cron-event-engine', cronEventEngine], ['/api/handoff', handoff], ['/api/model-router', modelRouter],
+  ['/api/v2/state', v2State], ['/api/v2/missions', v2Missions], ['/api/v2/home-hub', v2HomeHub]
 ]);
 
 const mime = {

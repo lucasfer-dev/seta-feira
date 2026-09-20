@@ -21,7 +21,11 @@
     "desktop:dev": "npm --prefix apps/desktop-electron run dev",
     "desktop:build": "npm --prefix apps/desktop-electron run dist",
     "android:install": "npm --prefix apps/android-capacitor install",
-    "android:sync": "npm --prefix apps/android-capacitor run android:sync"
+    "android:sync": "npm --prefix apps/android-capacitor run android:sync",
+    "test:v2": "node --test tests/v2-core.test.mjs",
+    "sexta:v2:check": "npm run test:v2 && node --check server.mjs"
   },
-  "engines": { "node": ">=22" }
+  "engines": {
+    "node": ">=22"
+  }
 }

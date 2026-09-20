@@ -1,0 +1,25 @@
+name: SEXTA 2 Core
+
+on:
+  push:
+    branches: [ "refactor/sexta-2-core" ]
+  pull_request:
+    paths:
+      - "lib/v2/**"
+      - "api/v2/**"
+      - "api/device-heartbeat.js"
+      - "api/memory.js"
+      - "server.mjs"
+      - "tests/v2-core.test.mjs"
+      - "package.json"
+      - ".github/workflows/sexta-v2-core.yml"
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm run sexta:v2:check
