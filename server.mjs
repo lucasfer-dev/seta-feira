@@ -49,6 +49,7 @@ import modelRouter from './api/model-router.js';
 import v2State from './api/v2/state.js';
 import v2Missions from './api/v2/missions.js';
 import v2HomeHub from './api/v2/home-hub.js';
+import v2MissionCommand from './api/v2/mission-command.js';
 import { runMonitor } from './lib/monitor.mjs';
 
 const root = fileURLToPath(new URL('./public/', import.meta.url));
@@ -65,7 +66,7 @@ const routes = new Map([
   ['/api/evolution/status', evolutionStatusRoute], ['/api/evolution/configure-webhook', evolutionConfigureWebhook], ['/api/evolution/send', evolutionSend], ['/api/evolution/webhook', evolutionWebhook],
   ['/api/notifications', notificationsRoute], ['/api/notifications/action', notificationAction], ['/api/monitor/run', monitorRun], ['/api/push/register', pushRegister], ['/api/vault', vault],
   ['/api/routines', routines], ['/api/event-engine', eventEngine], ['/api/cron-event-engine', cronEventEngine], ['/api/handoff', handoff], ['/api/model-router', modelRouter],
-  ['/api/v2/state', v2State], ['/api/v2/missions', v2Missions], ['/api/v2/home-hub', v2HomeHub]
+  ['/api/v2/state', v2State], ['/api/v2/missions', v2Missions], ['/api/v2/home-hub', v2HomeHub], ['/api/v2/mission-command', v2MissionCommand]
 ]);
 
 const mime = {
