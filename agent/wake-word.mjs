@@ -1,6 +1,4 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
 
 export const WAKE_WORD_VERSION = '1.4.0-diagnostics-fallback';
 export const DEFAULT_WAKE_PHRASES = Object.freeze(['sexta-feira', 'sexta feira', 'sexta']);
@@ -47,7 +45,11 @@ if(-not $info){ Write-Output 'ERROR' + [char]9 + 'NO_RECOGNIZER'; exit 2 }
 $rec=New-Object System.Speech.Recognition.SpeechRecognitionEngine($info)
 
 $choices=New-Object System.Speech.Recognition.Choices
-$choices.Add([string[]]@('sexta-feira','sexta feira','sexta','six the fair','six the fare','sista fair'))
+if($info.Culture.Name -like 'pt-*'){
+  $choices.Add([string[]]@('sexta-feira','sexta feira','sexta'))
+}else{
+  $choices.Add([string[]]@('six the fair','six the fare','sista fair','sexta'))
+}
 
 $wakeBuilder=New-Object System.Speech.Recognition.GrammarBuilder
 $wakeBuilder.Culture=$info.Culture
@@ -57,15 +59,9 @@ $wakeGrammar.Name='sexta-wake'
 $rec.LoadGrammar($wakeGrammar)
 
 try {
-  $commandChoices=New-Object System.Speech.Recognition.Choices
-  $commandChoices.Add([string[]]@('sexta-feira','sexta feira','sexta','six the fair','six the fare','sista fair'))
-  $commandBuilder=New-Object System.Speech.Recognition.GrammarBuilder
-  $commandBuilder.Culture=$info.Culture
-  $commandBuilder.Append($commandChoices)
-  $commandBuilder.AppendDictation()
-  $commandGrammar=New-Object System.Speech.Recognition.Grammar($commandBuilder)
-  $commandGrammar.Name='sexta-command'
-  $rec.LoadGrammar($commandGrammar)
+  $dictation=New-Object System.Speech.Recognition.DictationGrammar
+  $dictation.Name='sexta-dictation'
+  $rec.LoadGrammar($dictation)
 } catch {}
 
 $rec.SetInputToDefaultAudioDevice()
@@ -77,10 +73,17 @@ $rec.add_SpeechRecognized({
   if($r.Confidence -lt MIN_CONFIDENCE){ return }
   $normalized=$text.ToLowerInvariant().Trim()
   $isWake=($normalized -match '^\\s*sexta(?:[-\\s]+feira)?\\b') -or ($normalized -match '^\\s*(six the fair|six the fare|sista fair)\\b')
-  if(-not $isWake){ return }
+  if(-not $isWake){ [Console]::Out.WriteLine('HEARD'+[char]9+$text+[char]9+$r.Confidence); [Console]::Out.Flush(); return }
   $command=($text -replace '^\\s*(sexta(?:[-\\s]+feira)?|six the fair|six the fare|sista fair)\\b[\\s,;:.!?-]*','').Trim()
   [Console]::Out.WriteLine('WAKE'+[char]9+$text+[char]9+$r.Confidence+[char]9+$command)
   [Console]::Out.Flush()
+})
+$rec.add_SpeechRecognitionRejected({
+  param($sender,$e)
+  if($e.Result){
+    [Console]::Out.WriteLine('HEARD'+[char]9+[string]$e.Result.Text+[char]9+$e.Result.Confidence)
+    [Console]::Out.Flush()
+  }
 })
 $rec.add_AudioStateChanged({ param($sender,$e) [Console]::Out.WriteLine('AUDIO'+[char]9+[string]$e.AudioState); [Console]::Out.Flush() })
 $rec.add_RecognizeCompleted({
@@ -104,7 +107,7 @@ while($true){ Start-Sleep -Milliseconds 750 }
     buffer = lines.pop() || '';
     for (const line of lines) {
       if (line.startsWith('READY\t')) {
-        onReady({ culture: line.split('\t')[1] || '', at:new Date().toISOString() });
+        const parts=line.split('\t'); onReady({ culture: parts[1] || '', mode: parts[2] || '', at:new Date().toISOString() });
         continue;
       }
       if (line.startsWith('ERROR\t')) {
@@ -112,6 +115,7 @@ while($true){ Start-Sleep -Milliseconds 750 }
         continue;
       }
       if (line.startsWith('AUDIO\t')) { onAudioState({ state: line.split('\t')[1] || '', at:new Date().toISOString() }); continue; }
+      if (line.startsWith('HEARD\t')) { onError({ message: 'HEARD:' + line.split('\t').slice(1).join('\t'), informational: true, at:new Date().toISOString() }); continue; }
       if (!line.startsWith('WAKE\t')) continue;
       const [, transcript = '', confidence = '0', ...commandParts] = line.split('\t');
       const parsed = parseWakeTranscript(transcript) || { phrase:'Sexta-Feira', command:commandParts.join('\t').trim() };
@@ -135,10 +139,10 @@ while($true){ Start-Sleep -Milliseconds 750 }
   };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) && process.argv.includes('--listen')) {
+if (process.argv.includes('--listen')) {
   const listener = startWakeWordListener({
-    onReady: event => console.log('READY\t' + (event.culture || '')),
-    onError: event => console.log('ERROR\t' + (event.message || 'unknown')),
+    onReady: event => console.log('READY\t' + (event.culture || '') + '\t' + (event.mode || '')),
+    onError: event => console.log((event.informational ? 'HEARD\t' : 'ERROR\t') + (event.message || 'unknown').replace(/^HEARD:/,'')),
     onAudioState: event => console.log('AUDIO\t' + (event.state || '')),
     onWake: event => console.log('WAKE\t' + event.phrase + '\t' + event.confidence + '\t' + (event.command || ''))
   });

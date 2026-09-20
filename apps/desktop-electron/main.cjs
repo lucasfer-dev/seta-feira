@@ -11,7 +11,7 @@ let win; let overlay; let tray; let agent; let wakeProcess; let lastPresence = {
 let agentRestartTimer = null; let wakeRestartTimer = null; let agentRestartDelay = 1500; let wakeRestartDelay = 1800;
 let updateTimer = null; let updatePromptOpen = false;
 let agentDiagnostics = { lastStartAt: '', lastOnlineAt: '', lastExitAt: '', lastExitCode: null, lastSignal: '', lastError: '', lastLog: '' };
-let wakeDiagnostics = { ready: false, culture: '', mode: '', audioState: '', lastWakeAt: '', lastPhrase: '', lastConfidence: 0, lastError: '', lastExitCode: null, lastStartedAt: '' };
+let wakeDiagnostics = { ready: false, culture: '', mode: '', audioState: '', lastWakeAt: '', lastPhrase: '', lastConfidence: 0, lastHeardAt: '', lastHeard: '', lastHeardConfidence: 0, lastError: '', lastExitCode: null, lastStartedAt: '' };
 
 function desktopConfigPath() { return path.join(app.getPath('userData'), 'sexta-desktop.json'); }
 function readDesktopConfig() { try { return JSON.parse(fs.readFileSync(desktopConfigPath(), 'utf8')); } catch { return {}; } }
@@ -170,6 +170,7 @@ function startWakeWord() {
       if (line.startsWith('READY\t')) { const parts=line.split('\t'); wakeDiagnostics = { ...wakeDiagnostics, ready:true, culture:parts[1] || '', mode:parts[2] || '', lastError:'' }; continue; }
       if (line.startsWith('ERROR\t')) { wakeDiagnostics = { ...wakeDiagnostics, ready:false, lastError:line.split('\t').slice(1).join('\t').slice(0,600) }; continue; }
       if (line.startsWith('AUDIO\t')) { wakeDiagnostics = { ...wakeDiagnostics, audioState:line.split('\t')[1] || '' }; continue; }
+      if (line.startsWith('HEARD\t')) { const parts=line.split('\t'); wakeDiagnostics = { ...wakeDiagnostics, lastHeardAt:new Date().toISOString(), lastHeard:(parts[1] || '').slice(0,160), lastHeardConfidence:Number(parts[2] || 0) }; continue; }
       if (!line.startsWith('WAKE\t')) continue;
       const [, phrase = '', confidence = '0', ...commandParts] = line.split('\t');
       handleWake({ phrase, confidence:Number(confidence) || 0, command:commandParts.join('\t') });
@@ -214,6 +215,8 @@ async function showWakeDiagnostics() {
     `Idioma reconhecedor: ${d.culture || 'não detectado'}`,
     `Modo: ${d.mode || 'não detectado'}`,
     `Estado do áudio: ${d.audioState || 'não informado'}`,
+    `Último áudio entendido: ${d.lastHeard || 'nenhum'}`,
+    `Confiança do último áudio: ${Number(d.lastHeardConfidence || 0).toFixed(2)}`,
     `Último wake: ${d.lastWakeAt || 'nenhum'}`,
     `Última frase: ${d.lastPhrase || 'nenhuma'}`,
     `Confiança: ${Number(d.lastConfidence || 0).toFixed(2)}`,
