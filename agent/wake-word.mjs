@@ -31,7 +31,7 @@ export function parseWakeTranscript(text = '') {
   return { phrase: prefixMatch?.[0]?.trim().replace(/[\s,;:.!?-]+$/g, '') || 'Sexta-Feira', command };
 }
 
-export function startWakeWordListener({ onWake = () => {}, onReady = () => {}, onError = () => {}, minConfidence = DEFAULT_MIN_CONFIDENCE } = {}) {
+export function startWakeWordListener({ onWake = () => {}, onReady = () => {}, onError = () => {}, onAudioState = () => {}, minConfidence = DEFAULT_MIN_CONFIDENCE } = {}) {
   const probe = probeWakeWord();
   if (!probe.available) return { started: false, ...probe };
 
@@ -111,7 +111,7 @@ while($true){ Start-Sleep -Milliseconds 750 }
         onError({ message: line.split('\t').slice(1).join('\t'), at:new Date().toISOString() });
         continue;
       }
-      if (line.startsWith('AUDIO\t')) { onError({ message: 'AUDIO_STATE:' + (line.split('\t')[1] || ''), informational: true, at:new Date().toISOString() }); continue; }
+      if (line.startsWith('AUDIO\t')) { onAudioState({ state: line.split('\t')[1] || '', at:new Date().toISOString() }); continue; }
       if (!line.startsWith('WAKE\t')) continue;
       const [, transcript = '', confidence = '0', ...commandParts] = line.split('\t');
       const parsed = parseWakeTranscript(transcript) || { phrase:'Sexta-Feira', command:commandParts.join('\t').trim() };
@@ -139,6 +139,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const listener = startWakeWordListener({
     onReady: event => console.log('READY\t' + (event.culture || '')),
     onError: event => console.log('ERROR\t' + (event.message || 'unknown')),
+    onAudioState: event => console.log('AUDIO\t' + (event.state || '')),
     onWake: event => console.log('WAKE\t' + event.phrase + '\t' + event.confidence + '\t' + (event.command || ''))
   });
   if (!listener.started) { console.error('WAKE_UNAVAILABLE:' + listener.reason); process.exitCode = 2; }
