@@ -82,65 +82,47 @@ try {
     'sexta fair'
   )
 
-  $rec.add_SpeechRecognized({
-    param($sender, $e)
-    $r = $e.Result
-    if (-not $r) { return }
-
-    $text = [string]$r.Text
-    $confidence = [double]$r.Confidence
-    $normalized = $text.ToLowerInvariant().Trim()
-
-    if ($confidence -lt $MinConfidence) {
-      Emit 'HEARD' @($text, [string]$confidence, 'low-confidence')
-      return
-    }
-
-    $matched = $null
-    foreach ($alias in $aliases) {
-      if ($normalized -eq $alias -or $normalized.StartsWith($alias + ' ')) {
-        $matched = $alias
-        break
-      }
-    }
-
-    if (-not $matched) {
-      Emit 'HEARD' @($text, [string]$confidence, [string]$r.Grammar.Name)
-      return
-    }
-
-    $command = ''
-    if ($normalized.Length -gt $matched.Length) {
-      $command = $text.Substring([Math]::Min($matched.Length, $text.Length)).Trim(' ', ',', ';', ':', '.', '!', '?', '-')
-    }
-
-    Emit 'WAKE' @($text, [string]$confidence, $command)
-  })
-
-  $rec.add_SpeechRecognitionRejected({
-    param($sender, $e)
-    if ($e.Result) {
-      Emit 'HEARD' @([string]$e.Result.Text, [string]$e.Result.Confidence, 'rejected')
-    }
-  })
-
-  $rec.add_AudioStateChanged({
-    param($sender, $e)
-    Emit 'AUDIO' @([string]$e.AudioState)
-  })
-
-  $rec.add_RecognizeCompleted({
-    param($sender, $e)
-    if ($e.Error) {
-      Emit 'ERROR' @('RECOGNIZE_COMPLETED', $e.Error.Message)
-    }
-  })
-
   Emit 'READY' @($culture, $mode, $allCultures)
-  $rec.RecognizeAsync([System.Speech.Recognition.RecognizeMode]::Multiple)
+  Emit 'AUDIO' @('Listening')
 
   while ($true) {
-    Start-Sleep -Milliseconds 750
+    try {
+      $r = $rec.Recognize([TimeSpan]::FromSeconds(3))
+      if (-not $r) { continue }
+
+      $text = [string]$r.Text
+      $confidence = [double]$r.Confidence
+      $normalized = $text.ToLowerInvariant().Trim()
+
+      if ($confidence -lt $MinConfidence) {
+        Emit 'HEARD' @($text, [string]$confidence, 'low-confidence')
+        continue
+      }
+
+      $matched = $null
+      foreach ($alias in $aliases) {
+        if ($normalized -eq $alias -or $normalized.StartsWith($alias + ' ')) {
+          $matched = $alias
+          break
+        }
+      }
+
+      if (-not $matched) {
+        Emit 'HEARD' @($text, [string]$confidence, [string]$r.Grammar.Name)
+        continue
+      }
+
+      $command = ''
+      if ($normalized.Length -gt $matched.Length) {
+        $command = $text.Substring([Math]::Min($matched.Length, $text.Length)).Trim(' ', ',', ';', ':', '.', '!', '?', '-')
+      }
+
+      Emit 'WAKE' @($text, [string]$confidence, $command)
+    }
+    catch {
+      Emit 'ERROR' @('RECOGNIZE_LOOP', $_.Exception.Message)
+      Start-Sleep -Milliseconds 800
+    }
   }
 }
 catch {
