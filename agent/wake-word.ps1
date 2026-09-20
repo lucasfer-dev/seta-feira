@@ -82,7 +82,8 @@ try {
     'sexta fair'
   )
 
-  $lastFallbackWake = [DateTime]::MinValue
+  $script:wakeMode = $mode
+  $script:lastFallbackWake = [DateTime]::MinValue
   $rec.add_AudioLevelUpdated({
     param($sender,$e)
     if ($e.AudioLevel -gt 0) {
@@ -93,7 +94,7 @@ try {
   $rec.add_SpeechDetected({
     param($sender,$e)
     Emit 'SPEECH' @('detected')
-    if ($mode -eq 'fallback') {
+    if ($script:wakeMode -eq 'fallback') {
       $now = [DateTime]::UtcNow
       if (($now - $lastFallbackWake).TotalMilliseconds -ge 2500) {
         $script:lastFallbackWake = $now
