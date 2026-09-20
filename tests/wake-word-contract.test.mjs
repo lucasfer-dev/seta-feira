@@ -58,3 +58,11 @@ test('wake diagnostics include language fallback mode', () => {
   assert.match(source, /six the fair/);
   assert.match(source, /DEFAULT_MIN_CONFIDENCE = 0\.24/);
 });
+
+test('wake grammar is culture-specific and reports rejected speech', () => {
+  const source = fs.readFileSync(new URL('../agent/wake-word.mjs', import.meta.url), 'utf8');
+  assert.match(source, /if\(\$info\.Culture\.Name -like 'pt-\*'\)/);
+  assert.match(source, /SpeechRecognitionRejected/);
+  assert.match(source, /HEARD/);
+  assert.match(source, /sexta-dictation/);
+});
