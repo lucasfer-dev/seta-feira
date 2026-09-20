@@ -70,7 +70,7 @@ function openAgentControl() {
   return { ok: true };
 }
 function createWindow() {
-  win = new BrowserWindow({ title: 'SEXTA', width: 1320, height: 860, minWidth: 980, minHeight: 680, show: false, backgroundColor: '#0b0f14', autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+  win = new BrowserWindow({ title: 'SEXTA', width: 1320, height: 860, minWidth: 980, minHeight: 680, show: false, backgroundColor: '#0b0f14', autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
   win.webContents.on('page-title-updated', event => { event.preventDefault(); win.setTitle('SEXTA'); });
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^(https?:|obsidian:)/i.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.once('ready-to-show', () => win.show());
@@ -151,12 +151,24 @@ async function pairAgent(payload = {}) {
 }
 
 function stopWakeWord() { const current = wakeProcess; wakeProcess = null; try { current?.kill(); } catch {} }
-function handleWake() { if (!win || win.isDestroyed()) return; win.show(); win.focus(); if (overlay && !overlay.isDestroyed()) overlay.showInactive(); win.webContents.executeJavaScript("window.dispatchEvent(new CustomEvent('sexta:wake-word',{detail:{source:'windows'}})); window.__sextaGeminiLive?.start?.();").catch(() => {}); }
+function handleWake(event = {}) {
+  if (!win || win.isDestroyed()) return;
+  const phrase = String(event.phrase || 'sexta-feira').slice(0, 80);
+  const command = String(event.command || '').trim().slice(0, 4000);
+  const confidence = Number(event.confidence || 0);
+  if (overlay && !overlay.isDestroyed()) overlay.showInactive();
+  const detail = JSON.stringify({ source:'windows', phrase, command, confidence });
+  win.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('sexta:wake-word',{detail:${detail}}));`).catch(() => {});
+}
 function scheduleWakeRestart() { if (app.isQuitting || wakeRestartTimer || !wakeWordEnabled()) return; const delay = wakeRestartDelay; wakeRestartDelay = Math.min(30000, Math.round(wakeRestartDelay * 1.8)); wakeRestartTimer = setTimeout(() => { wakeRestartTimer = null; startWakeWord(); }, delay); }
 function startWakeWord() {
   if (wakeProcess || !wakeWordEnabled() || app.isQuitting) return; const wakePath = agentResource('wake-word.mjs'); if (!fs.existsSync(wakePath)) return;
   const child = spawn(process.execPath, [wakePath, '--listen'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }); wakeProcess = child;
-  let buffer = ''; child.stdout.on('data', chunk => { buffer += chunk; const lines = buffer.split(/\r?\n/); buffer = lines.pop() || ''; for (const line of lines) if (line.startsWith('WAKE\t')) handleWake(); });
+  let buffer = ''; child.stdout.on('data', chunk => { buffer += chunk; const lines = buffer.split(/\r?\n/); buffer = lines.pop() || ''; for (const line of lines) {
+      if (!line.startsWith('WAKE\t')) continue;
+      const [, phrase = '', confidence = '0', ...commandParts] = line.split('\t');
+      handleWake({ phrase, confidence:Number(confidence) || 0, command:commandParts.join('\t') });
+    } });
   const stableTimer = setTimeout(() => { if (wakeProcess === child) wakeRestartDelay = 1800; }, 30000);
   child.on('exit', () => { clearTimeout(stableTimer); if (wakeProcess === child) wakeProcess = null; scheduleWakeRestart(); }); child.on('error', () => { clearTimeout(stableTimer); if (wakeProcess === child) wakeProcess = null; scheduleWakeRestart(); });
 }
