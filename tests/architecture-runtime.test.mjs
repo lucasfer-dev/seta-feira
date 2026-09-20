@@ -7,6 +7,7 @@ import { orchestrator } from '../lib/v2/orchestrator.mjs';
 import { resetWorldState, getWorldState, updateAudioState } from '../lib/v2/world-state.mjs';
 import { SextaError, ERROR_CODES } from '../lib/v2/errors.mjs';
 import { openConversationSession, touchConversationSession, closeConversationSession } from '../lib/voice/conversation-session.mjs';
+import { AudioService } from '../lib/voice/audio-service.mjs';
 
 test('standard error model preserves recovery metadata', () => {
   const error = new SextaError(ERROR_CODES.ACTION_NOT_VERIFIED, 'Falhou', { recoverable: true, retryable: true, details: { action: 'open' } });
@@ -80,4 +81,25 @@ test('world state exposes actionable audio diagnostics', () => {
     lastWakeAt: null,
     realtime: 'connected'
   });
+});
+
+test('audio service exposes level, speech and device diagnostics through world state', async () => {
+  resetWorldState();
+  let callbacks;
+  const service = new AudioService({
+    async start(input) {
+      callbacks = input;
+      return { inputDevice: 'Test Mic', outputDevice: 'Test Speakers' };
+    },
+    async stop() {}
+  });
+  await service.start();
+  callbacks.onLevel(0.42);
+  callbacks.onSpeech(true);
+  const state = getWorldState();
+  assert.equal(state.audio.inputDevice, 'Test Mic');
+  assert.equal(state.audio.outputDevice, 'Test Speakers');
+  assert.equal(state.audio.inputLevel, 0.42);
+  assert.equal(state.audio.speechDetected, true);
+  await service.stop();
 });
