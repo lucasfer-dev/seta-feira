@@ -73,3 +73,22 @@ test('packaged wake listener starts from --listen without brittle argv path equa
   assert.doesNotMatch(source, /path\.resolve\(process\.argv\[1\]\)/);
   assert.doesNotMatch(source, /fileURLToPath\(import\.meta\.url\)/);
 });
+
+test('packaged desktop launches wake PowerShell directly without Electron-as-Node bridge', () => {
+  const source = fs.readFileSync(new URL('../apps/desktop-electron/main.cjs', import.meta.url), 'utf8');
+  const start = source.indexOf('function startWakeWord()');
+  const end = source.indexOf('function setWakeWordEnabled', start);
+  assert.ok(start >= 0 && end > start);
+  const block = source.slice(start, end);
+  assert.match(block, /wake-word\.ps1/);
+  assert.match(block, /powershell\.exe/);
+  assert.match(block, /-File/);
+  assert.doesNotMatch(block, /ELECTRON_RUN_AS_NODE/);
+  assert.doesNotMatch(block, /process\.execPath/);
+  assert.match(block, /não enviou READY em 10s/);
+});
+
+test('desktop package includes the direct wake PowerShell runtime', () => {
+  const pkg = JSON.parse(fs.readFileSync(new URL('../apps/desktop-electron/package.json', import.meta.url), 'utf8'));
+  assert.ok(pkg.build.extraResources[0].filter.includes('wake-word.ps1'));
+});
