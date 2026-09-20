@@ -42,3 +42,11 @@ test('wake listener uses dedicated continuous grammar instead of free dictation 
   assert.match(source, /RecognizeMode\]::Multiple/);
   assert.match(source, /DEFAULT_MIN_CONFIDENCE = 0\.32/);
 });
+
+test('desktop declares wake diagnostics before wake callbacks use it', () => {
+  const source = fs.readFileSync(new URL('../apps/desktop-electron/main.cjs', import.meta.url), 'utf8');
+  const declaration = source.indexOf('let wakeDiagnostics =');
+  const firstUse = source.indexOf('wakeDiagnostics = { ...wakeDiagnostics');
+  assert.ok(declaration >= 0, 'wakeDiagnostics declaration missing');
+  assert.ok(firstUse > declaration, 'wakeDiagnostics must be declared before callback use');
+});
