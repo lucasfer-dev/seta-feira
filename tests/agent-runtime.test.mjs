@@ -36,3 +36,10 @@ test('ações internas multi-step exigem modo autonomous', () => {
   const autonomous = runtime.writeRuntimeState({ autonomy: 'autonomous' });
   assert.equal(runtime.evaluateLocalAction('browser_snapshot', { _sextaAgentTask: true }, autonomous).allowed, true);
 });
+
+test('desktop agent defaults to autonomous for owner-issued PC commands', () => {
+  try { fs.unlinkSync(statePath); } catch {}
+  const state = runtime.readRuntimeState();
+  assert.equal(state.autonomy, 'autonomous');
+  assert.equal(runtime.evaluateLocalAction('open_app', {}, state).allowed, true);
+});
