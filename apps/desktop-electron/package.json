@@ -1,6 +1,6 @@
 {
   "name": "sexta-desktop",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "private": true,
   "main": "secure-main.cjs",
   "scripts": {
@@ -56,7 +56,8 @@
           "wake-word.mjs",
           "app-resolver.mjs",
           "obsidian-sync.mjs",
-          "wake-word.ps1"
+          "wake-word.ps1",
+          "wake-runtime.mjs"
         ]
       },
       {
