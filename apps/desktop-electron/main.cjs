@@ -11,7 +11,7 @@ let win; let overlay; let tray; let agent; let wakeProcess; let lastPresence = {
 let agentRestartTimer = null; let wakeRestartTimer = null; let agentRestartDelay = 1500; let wakeRestartDelay = 1800;
 let updateTimer = null; let updatePromptOpen = false;
 let agentDiagnostics = { lastStartAt: '', lastOnlineAt: '', lastExitAt: '', lastExitCode: null, lastSignal: '', lastError: '', lastLog: '' };
-let wakeDiagnostics = { ready: false, culture: '', mode: '', lastWakeAt: '', lastPhrase: '', lastConfidence: 0, lastError: '', lastExitCode: null, lastStartedAt: '' };
+let wakeDiagnostics = { ready: false, culture: '', mode: '', audioState: '', lastWakeAt: '', lastPhrase: '', lastConfidence: 0, lastError: '', lastExitCode: null, lastStartedAt: '' };
 
 function desktopConfigPath() { return path.join(app.getPath('userData'), 'sexta-desktop.json'); }
 function readDesktopConfig() { try { return JSON.parse(fs.readFileSync(desktopConfigPath(), 'utf8')); } catch { return {}; } }
@@ -212,6 +212,7 @@ async function showWakeDiagnostics() {
     `Pronto: ${d.ready ? 'sim' : 'não'}`,
     `Idioma reconhecedor: ${d.culture || 'não detectado'}`,
     `Modo: ${d.mode || 'não detectado'}`,
+    `Estado do áudio: ${d.audioState || 'não informado'}`,
     `Último wake: ${d.lastWakeAt || 'nenhum'}`,
     `Última frase: ${d.lastPhrase || 'nenhuma'}`,
     `Confiança: ${Number(d.lastConfidence || 0).toFixed(2)}`,
