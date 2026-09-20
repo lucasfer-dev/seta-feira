@@ -82,6 +82,28 @@ try {
     'sexta fair'
   )
 
+  $script:wakeMode = $mode
+  $script:lastFallbackWake = [DateTime]::MinValue
+
+  $rec.add_AudioLevelUpdated({
+    param($sender,$e)
+    if ($e.AudioLevel -gt 0) {
+      Emit 'LEVEL' @([string]$e.AudioLevel)
+    }
+  })
+
+  $rec.add_SpeechDetected({
+    param($sender,$e)
+    Emit 'SPEECH' @('detected')
+    if ($script:wakeMode -eq 'fallback') {
+      $now = [DateTime]::UtcNow
+      if (($now - $script:lastFallbackWake).TotalMilliseconds -ge 2500) {
+        $script:lastFallbackWake = $now
+        Emit 'WAKE' @('speech-fallback', '1', '')
+      }
+    }
+  })
+
   Emit 'READY' @($culture, $mode, $allCultures)
   Emit 'AUDIO' @('Listening')
 
@@ -96,6 +118,12 @@ try {
 
       if ($confidence -lt $MinConfidence) {
         Emit 'HEARD' @($text, [string]$confidence, 'low-confidence')
+        continue
+      }
+
+      if ($mode -eq 'fallback') {
+        Emit 'HEARD' @($text, [string]$confidence, 'fallback-any-speech')
+        Emit 'WAKE' @($text, [string]$confidence, '')
         continue
       }
 
