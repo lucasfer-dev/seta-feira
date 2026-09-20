@@ -84,11 +84,16 @@ try {
 
   $script:wakeMode = $mode
   $script:lastFallbackWake = [DateTime]::MinValue
+  $script:lastLevelEmit = [DateTime]::MinValue
 
   $rec.add_AudioLevelUpdated({
     param($sender,$e)
     if ($e.AudioLevel -gt 0) {
-      Emit 'LEVEL' @([string]$e.AudioLevel)
+      $now = [DateTime]::UtcNow
+      if (($now - $script:lastLevelEmit).TotalMilliseconds -ge 250) {
+        $script:lastLevelEmit = $now
+        Emit 'LEVEL' @([string]$e.AudioLevel)
+      }
     }
   })
 
