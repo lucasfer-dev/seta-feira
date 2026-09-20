@@ -30,3 +30,11 @@ create policy sexta_server_all on public.sexta_missions
 for all to anon, authenticated
 using (public.sexta_request_authorized() and owner_id = 'owner')
 with check (public.sexta_request_authorized() and owner_id = 'owner');
+
+
+-- Data API grants: expose only the operations required by the SEXTA backend.
+-- Existing projects may have broader default privileges for new public tables,
+-- so revoke first and grant the minimum required set explicitly.
+revoke all privileges on table public.sexta_missions from anon, authenticated;
+grant select, insert, update, delete on table public.sexta_missions to anon, authenticated;
+grant select, insert, update, delete on table public.sexta_missions to service_role;

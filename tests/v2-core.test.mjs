@@ -46,3 +46,31 @@ test('world state tracks conversation and devices independently', () => {
   assert.equal(state.conversation.lastIntent, 'wake');
   assert.equal(state.devices.phone.kind, 'android');
 });
+
+
+test('mission command result closes the mission and preserves verified result', async () => {
+  resetWorldState();
+  orchestrator.registerDevice({ id: 'pc-runtime', kind: 'desktop', online: true });
+  const mission = createMission({ goal: 'Abrir navegador', requiredCapability: 'windows' });
+
+  const { dispatchMissionCommand, applyCommandResultToMission } = await import('../lib/v2/mission-runtime.mjs');
+  const dispatched = await dispatchMissionCommand({
+    missionId: mission.id,
+    targetDeviceId: 'pc-runtime',
+    action: 'open_app',
+    payload: { app: 'browser' }
+  });
+
+  assert.equal(dispatched.mission.status, 'running');
+  assert.ok(dispatched.command.id);
+
+  const completed = await applyCommandResultToMission({
+    commandId: dispatched.command.id,
+    status: 'done',
+    result: { ok: true, verified: true, app: 'browser' }
+  });
+
+  assert.equal(completed.status, 'completed');
+  assert.equal(completed.result.verified, true);
+  assert.equal(completed.steps[0].status, 'completed');
+});
