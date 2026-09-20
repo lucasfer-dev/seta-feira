@@ -34,12 +34,12 @@
         <button type="button" class="s4-orb" id="s4Orb" aria-label="Iniciar ou encerrar conversa por voz">
           <span class="s4-orb-halo h1"></span>
           <span class="s4-orb-halo h2"></span>
-          <span class="s4-orb-body"><span class="s4-orb-eye"></span></span>
+          <span class="s4-orb-body"><span class="s4-orb-wordmark">SEXTA-FEIRA</span></span>
         </button>
 
         <div class="s4-copy">
           <p class="s4-kicker" id="s4Kicker">PRONTA</p>
-          <h1>${greeting}</h1>
+          <h1>Estou aqui.</h1>
           <p class="s4-status" id="s4VoiceStatus">Fala comigo quando quiser.</p>
         </div>
 
@@ -351,6 +351,19 @@
 
   window.addEventListener('sexta:voice-state', event => renderVoice(event.detail || {}));
   window.addEventListener('sexta:voice-transcript', event => renderTranscript(event.detail || {}));
+  window.addEventListener('sexta:audio-level', event => {
+    const level = Math.max(0, Math.min(1, Number(event?.detail?.level || 0)));
+    shell.style.setProperty('--s4-audio-level', level.toFixed(3));
+    shell.dataset.audioSource = event?.detail?.source === 'assistant' ? 'assistant' : 'user';
+  });
+  window.addEventListener('sexta:wake-word', event => {
+    const command = String(event?.detail?.command || '').trim();
+    if (command) {
+      runPrompt(command);
+      return;
+    }
+    window.__sextaGeminiLive?.start?.();
+  });
   window.addEventListener('focus', () => refreshTelemetry(false));
 
   renderCommands();

@@ -63,6 +63,7 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
   let responseWatchdog = null;
   let responsePending = false;
   let responseTimeoutStreak = 0;
+  let lastLevelEmitAt = 0;
 
   let outputContext = null;
   let nextOutputTime = 0;
@@ -314,6 +315,10 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
     const now = performance.now();
     const frameMs = frame.length / INPUT_RATE * 1000;
     const level = rms(frame);
+    if (now - lastLevelEmitAt >= 45) {
+      lastLevelEmitAt = now;
+      emit('sexta:audio-level', { source:'user', level:Math.min(1, level * 13) });
+    }
 
     if (!localSpeechActive && !assistantSpeaking && level < 0.018) {
       noiseFloor = noiseFloor * 0.994 + level * 0.006;
@@ -354,6 +359,7 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
     const sampleRate = Number(String(mimeType).match(/rate=(\d+)/i)?.[1] || OUTPUT_RATE);
     const ctx = await ensureOutputContext();
     const floats = pcm16ToFloat32(bytes);
+    emit('sexta:audio-level', { source:'assistant', level:Math.min(1, rms(floats) * 5.5) });
     const buffer = ctx.createBuffer(1, floats.length, sampleRate);
     buffer.copyToChannel(floats, 0);
     const source = ctx.createBufferSource();
@@ -375,6 +381,7 @@ import { buildPersonalityContract, normalizePersonality } from './sexta-personal
         await new Promise(resolve => setTimeout(resolve, OUTPUT_SETTLE_MS));
         if (!sessionActive || generation !== settlementGeneration) return;
         assistantSpeaking = false;
+        emit('sexta:audio-level', { source:'assistant', level:0 });
         responsePending = false;
         responseTimeoutStreak = 0;
         const snapshot = { ...turn };
