@@ -1,6 +1,4 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
 
 export const WAKE_WORD_VERSION = '1.4.0-diagnostics-fallback';
 export const DEFAULT_WAKE_PHRASES = Object.freeze(['sexta-feira', 'sexta feira', 'sexta']);
@@ -141,7 +139,7 @@ while($true){ Start-Sleep -Milliseconds 750 }
   };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) && process.argv.includes('--listen')) {
+if (process.argv.includes('--listen')) {
   const listener = startWakeWordListener({
     onReady: event => console.log('READY\t' + (event.culture || '') + '\t' + (event.mode || '')),
     onError: event => console.log((event.informational ? 'HEARD\t' : 'ERROR\t') + (event.message || 'unknown').replace(/^HEARD:/,'')),
