@@ -22,6 +22,7 @@ on:
       - 'tests/agent-*.test.mjs'
       - 'tests/app-resolver.test.mjs'
       - 'tests/desktop-native-pairing.test.mjs'
+      - 'tests/wake-word-contract.test.mjs'
       - 'tests/v4-contracts.test.mjs'
       - 'tests/v4-1-operational.test.mjs'
       - '.github/workflows/desktop-smoke.yml'
@@ -115,7 +116,7 @@ jobs:
 
       - name: Run desktop and agent policy tests
         shell: pwsh
-        run: node --test tests/pc-desktop-policy.test.mjs tests/windows-control-v2-contract.test.mjs tests/pc-control-safety-contract.test.mjs tests/pc-command-protocol.test.mjs tests/tool-policy.test.mjs tests/agent-runtime.test.mjs tests/agent-auth.test.mjs tests/app-resolver.test.mjs tests/desktop-native-pairing.test.mjs tests/v4-contracts.test.mjs tests/v4-1-operational.test.mjs
+        run: node --test tests/pc-desktop-policy.test.mjs tests/windows-control-v2-contract.test.mjs tests/pc-control-safety-contract.test.mjs tests/pc-command-protocol.test.mjs tests/tool-policy.test.mjs tests/agent-runtime.test.mjs tests/agent-auth.test.mjs tests/app-resolver.test.mjs tests/desktop-native-pairing.test.mjs tests/wake-word-contract.test.mjs tests/v4-contracts.test.mjs tests/v4-1-operational.test.mjs
 
       - name: Assert native-first automation and safety boundaries
         shell: pwsh
