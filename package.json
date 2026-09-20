@@ -1,6 +1,6 @@
 {
   "name": "sexta",
-  "version": "4.1.1",
+  "version": "4.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -23,7 +23,8 @@
     "android:install": "npm --prefix apps/android-capacitor install",
     "android:sync": "npm --prefix apps/android-capacitor run android:sync",
     "test:v2": "node --test tests/v2-core.test.mjs",
-    "sexta:v2:check": "npm run test:v2 && node --check server.mjs"
+    "sexta:v2:check": "npm run test:v2 && node --check server.mjs",
+    "test:architecture": "node --test tests/v2-core.test.mjs tests/wake-word-contract.test.mjs tests/architecture-runtime.test.mjs"
   },
   "engines": {
     "node": ">=22"

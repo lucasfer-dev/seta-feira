@@ -87,6 +87,7 @@ jobs:
           node --check agent/secure-vault.mjs
           node --check agent/vault-cli.mjs
           node --check agent/wake-word.mjs
+          node --check agent/wake-runtime.mjs
           node --check lib/pc-command-protocol.mjs
           node --check lib/pc-desktop-tools.mjs
           node --check lib/tool-core.mjs
@@ -100,7 +101,7 @@ jobs:
           node --check apps/desktop-electron/windows-habitat.cjs
           node --check apps/desktop-electron/preload.cjs
 
-      - name: Parse direct wake PowerShell runtime
+      - name: Parse compatibility wake PowerShell fallback
         shell: pwsh
         run: |
           $source = Get-Content agent/wake-word.ps1 -Raw
@@ -174,12 +175,14 @@ jobs:
           if (-not ($agentResource.filter -contains 'windows-hands-native.mjs')) { throw 'Native Hands bridge missing from Desktop package' }
           if (-not ($agentResource.filter -contains 'windows-control-v2.mjs')) { throw 'Window control wrapper missing from Desktop package' }
           if (-not ($agentResource.filter -contains 'windows-ui-actions.mjs')) { throw 'Generic UIA action wrapper missing from Desktop package' }
-          if (-not ($agentResource.filter -contains 'wake-word.ps1')) { throw 'Direct wake PowerShell runtime missing from Desktop package' }
+          if (-not ($agentResource.filter -contains 'wake-runtime.mjs')) { throw 'Canonical wake runtime missing from Desktop package' }
+          if (-not ($agentResource.filter -contains 'wake-word.ps1')) { throw 'Compatibility System.Speech fallback missing from Desktop package' }
           $nativeResource = @($pkg.build.extraResources | Where-Object { $_.to -eq 'agent/native' } | Select-Object -First 1)
           if (-not $nativeResource -or -not ($nativeResource.filter -contains 'SextaHands.exe')) { throw 'SextaHands.exe missing from Desktop extraResources' }
           if (-not (Test-Path apps/desktop-electron/fallback.html)) { throw 'Offline fallback missing' }
           if (-not (Test-Path .github/workflows/desktop-release.yml)) { throw 'Desktop release workflow missing' }
-          Select-String -Path apps/desktop-electron/main.cjs -Pattern "autoDownload = false","scheduleAgentRestart","scheduleWakeRestart","system:pair-agent","SEXTA_AGENT_STATE","fallback.html" | Out-Null
+          Select-String -Path apps/desktop-electron/main.cjs -Pattern "autoDownload = false","scheduleAgentRestart","scheduleWakeRestart","wake-runtime.mjs","system:pair-agent","SEXTA_AGENT_STATE","fallback.html" | Out-Null
+          if (Select-String -Path apps/desktop-electron/main.cjs -Pattern "agentResource\('wake-word.ps1'\)") { throw 'Electron must not bind directly to System.Speech fallback' }
           Select-String -Path apps/desktop-electron/secure-main.cjs -Pattern "TRUSTED_ORIGIN","will-navigate","setPermissionRequestHandler","windows-habitat.cjs" | Out-Null
           Select-String -Path apps/desktop-electron/windows-habitat.cjs -Pattern "globalShortcut.register","CommandOrControl+Shift+Space","habitat:command","habitat:voice-toggle","PALETTE_BOUNDS" | Out-Null
           Select-String -Path apps/desktop-electron/preload.cjs -Pattern "habitat:toggle-palette","habitat:command","habitat:voice-toggle","habitat:open-main" | Out-Null

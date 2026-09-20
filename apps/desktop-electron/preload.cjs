@@ -19,7 +19,7 @@ function subscribe(channel, callback) {
 contextBridge.exposeInMainWorld('sextaDesktop', {
   platform: process.platform,
   desktop: true,
-  version: '2.2.0',
+  version: '2.6.0',
   vault: {
     choose: () => ipcRenderer.invoke('vault:choose'),
     status: () => ipcRenderer.invoke('vault:status'),
