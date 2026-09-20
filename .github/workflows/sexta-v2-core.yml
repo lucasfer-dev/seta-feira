@@ -11,6 +11,9 @@ on:
       - "api/memory.js"
       - "server.mjs"
       - "tests/v2-core.test.mjs"
+      - "tests/architecture-runtime.test.mjs"
+      - "lib/voice/**"
+      - "agent/wake-runtime.mjs"
       - "package.json"
       - ".github/workflows/sexta-v2-core.yml"
 
@@ -22,4 +25,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm run sexta:v2:check
+      - run: npm run test:architecture
+      - run: node --check server.mjs
