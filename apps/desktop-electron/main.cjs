@@ -156,6 +156,7 @@ function handleWake(event = {}) {
   const phrase = String(event.phrase || 'sexta-feira').slice(0, 80);
   const command = String(event.command || '').trim().slice(0, 4000);
   const confidence = Number(event.confidence || 0);
+  wakeDiagnostics = { ...wakeDiagnostics, ready:true, lastWakeAt:new Date().toISOString(), lastPhrase:phrase, lastConfidence:confidence, lastError:'' };
   if (overlay && !overlay.isDestroyed()) overlay.showInactive();
   const detail = JSON.stringify({ source:'windows', phrase, command, confidence });
   win.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent('sexta:wake-word',{detail:${detail}}));`).catch(() => {});
@@ -165,10 +166,13 @@ function startWakeWord() {
   if (wakeProcess || !wakeWordEnabled() || app.isQuitting) return; const wakePath = agentResource('wake-word.mjs'); if (!fs.existsSync(wakePath)) return;
   const child = spawn(process.execPath, [wakePath, '--listen'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }); wakeProcess = child;
   let buffer = ''; child.stdout.on('data', chunk => { buffer += chunk; const lines = buffer.split(/\r?\n/); buffer = lines.pop() || ''; for (const line of lines) {
+      if (line.startsWith('READY\t')) { wakeDiagnostics = { ...wakeDiagnostics, ready:true, culture:line.split('\t')[1] || '', lastError:'' }; continue; }
+      if (line.startsWith('ERROR\t')) { wakeDiagnostics = { ...wakeDiagnostics, ready:false, lastError:line.split('\t').slice(1).join('\t').slice(0,600) }; continue; }
       if (!line.startsWith('WAKE\t')) continue;
       const [, phrase = '', confidence = '0', ...commandParts] = line.split('\t');
       handleWake({ phrase, confidence:Number(confidence) || 0, command:commandParts.join('\t') });
     } });
+  child.stderr.on('data', chunk => { const message=String(chunk||'').trim(); if(message) wakeDiagnostics={ ...wakeDiagnostics, ready:false, lastError:message.slice(-600) }; });
   const stableTimer = setTimeout(() => { if (wakeProcess === child) wakeRestartDelay = 1800; }, 30000);
   child.on('exit', () => { clearTimeout(stableTimer); if (wakeProcess === child) wakeProcess = null; scheduleWakeRestart(); }); child.on('error', () => { clearTimeout(stableTimer); if (wakeProcess === child) wakeProcess = null; scheduleWakeRestart(); });
 }
@@ -187,7 +191,7 @@ function configureUpdater() {
 }
 
 function registerSystemIpc() {
-  ipcMain.handle('system:status', async () => ({ ok: true, version: app.getVersion(), packaged: app.isPackaged, cloudUrl: WEB_URL, deviceId: readDesktopConfig().deviceId || '', agent: { running: Boolean(agent), configured: canStartAgent(), configPath: agentConfigPath(), diagnostics: { ...agentDiagnostics } }, wakeWord: { enabled: wakeWordEnabled(), running: Boolean(wakeProcess) }, overlay: { enabled: overlayEnabled() } }));
+  ipcMain.handle('system:status', async () => ({ ok: true, version: app.getVersion(), packaged: app.isPackaged, cloudUrl: WEB_URL, deviceId: readDesktopConfig().deviceId || '', agent: { running: Boolean(agent), configured: canStartAgent(), configPath: agentConfigPath(), diagnostics: { ...agentDiagnostics } }, wakeWord: { enabled: wakeWordEnabled(), running: Boolean(wakeProcess), diagnostics: { ...wakeDiagnostics } }, overlay: { enabled: overlayEnabled() } }));
   ipcMain.handle('system:retry-cloud', async () => loadCloud());
   ipcMain.handle('system:restart-agent', async () => restartAgent());
   ipcMain.handle('system:setup-agent', async () => openAgentControl());
@@ -196,7 +200,7 @@ function registerSystemIpc() {
   ipcMain.handle('system:check-updates', async () => checkForUpdates(true));
 }
 function trayImage() {
-  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><rect x="7" y="7" width="18" height="18" rx="2" fill="#081117" stroke="#55d9f2" stroke-width="2" transform="rotate(45 16 16)"/><circle cx="16" cy="16" r="4" fill="#ffb42a"/></svg>';
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><circle cx="16" cy="16" r="11" fill="#090604" stroke="#ff7a18" stroke-width="2"/><circle cx="16" cy="16" r="4" fill="#ff7a18"/></svg>';
   const image = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`); return image.isEmpty() ? nativeImage.createEmpty() : image.resize({ width: 16, height: 16 });
 }
 function createTray() {
