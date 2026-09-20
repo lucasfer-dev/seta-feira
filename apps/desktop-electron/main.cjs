@@ -169,6 +169,7 @@ function startWakeWord() {
   let buffer = ''; child.stdout.on('data', chunk => { buffer += chunk; const lines = buffer.split(/\r?\n/); buffer = lines.pop() || ''; for (const line of lines) {
       if (line.startsWith('READY\t')) { const parts=line.split('\t'); wakeDiagnostics = { ...wakeDiagnostics, ready:true, culture:parts[1] || '', mode:parts[2] || '', lastError:'' }; continue; }
       if (line.startsWith('ERROR\t')) { wakeDiagnostics = { ...wakeDiagnostics, ready:false, lastError:line.split('\t').slice(1).join('\t').slice(0,600) }; continue; }
+      if (line.startsWith('AUDIO\t')) { wakeDiagnostics = { ...wakeDiagnostics, audioState:line.split('\t')[1] || '' }; continue; }
       if (!line.startsWith('WAKE\t')) continue;
       const [, phrase = '', confidence = '0', ...commandParts] = line.split('\t');
       handleWake({ phrase, confidence:Number(confidence) || 0, command:commandParts.join('\t') });
