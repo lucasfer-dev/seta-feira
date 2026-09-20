@@ -1,19 +1,31 @@
 import { modeInfo, send } from '../lib/core.mjs';
+import { getHealthSnapshot } from '../lib/v2/observability.mjs';
+import { versionSnapshot } from '../lib/v2/version.mjs';
+
 export default async function handler(req, res) {
   if (req.method !== 'GET') return send(res, 405, { error: 'method_not_allowed' });
+  const versions = versionSnapshot();
   send(res, 200, {
     ok: true,
-    version: '3.1.0-voice-core-v10-personality-v2',
-    operationalVersion: '4.1.1-operational',
-    compatOperationalVersion: '4.1.0-operational',
-    voiceCore: 'v10',
+    versions,
     liveModel: 'gemini-3.1-flash-live-preview',
-    vadMode: 'manual-local',
-    personality: '2.0.0-canonical-operational',
+    voice: {
+      realtime: 'gemini-live',
+      wake: 'resident-runtime',
+      systemSpeech: 'compatibility-fallback'
+    },
+    components: getHealthSnapshot(),
     intelligence: {
-      eventEngine: '2.0.0', routines: '2.0.0', desktopAgent: '4.1.0', desktopApp: '2.1.3',
-      desktopProtocol: 2, browserAgent: '2.0.0', memorySearch: true,
-      cronConfigured: true, cronStrongAuth: Boolean(process.env.CRON_SECRET)
+      orchestrator: 'v2-canonical',
+      reflexEngine: true,
+      capabilityRegistry: true,
+      missionEngine: true,
+      worldState: versions.worldState,
+      deviceProtocol: versions.deviceProtocol,
+      browserAgent: true,
+      memoryLayers: ['working', 'session', 'episodic', 'semantic', 'procedural', 'vault'],
+      cronConfigured: true,
+      cronStrongAuth: Boolean(process.env.CRON_SECRET)
     },
     ...modeInfo()
   });
