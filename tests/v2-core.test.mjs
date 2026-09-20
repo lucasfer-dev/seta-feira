@@ -74,3 +74,11 @@ test('mission command result closes the mission and preserves verified result', 
   assert.equal(completed.result.verified, true);
   assert.equal(completed.steps[0].status, 'completed');
 });
+
+
+test('agent device is eligible as Home Hub for coding and Obsidian missions', () => {
+  const caps = normalizeCapabilities('agent', ['codex_task']);
+  assert.ok(caps.includes('coding'));
+  assert.ok(caps.includes('obsidian'));
+  assert.ok(caps.includes('windows'));
+});
