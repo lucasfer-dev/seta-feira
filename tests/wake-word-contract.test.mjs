@@ -50,3 +50,11 @@ test('desktop declares wake diagnostics before wake callbacks use it', () => {
   assert.ok(declaration >= 0, 'wakeDiagnostics declaration missing');
   assert.ok(firstUse > declaration, 'wakeDiagnostics must be declared before callback use');
 });
+
+test('wake diagnostics include language fallback mode', () => {
+  const source = fs.readFileSync(new URL('../agent/wake-word.mjs', import.meta.url), 'utf8');
+  assert.match(source, /preferredCulture/);
+  assert.match(source, /hasPortuguese/);
+  assert.match(source, /six the fair/);
+  assert.match(source, /DEFAULT_MIN_CONFIDENCE = 0\.24/);
+});
