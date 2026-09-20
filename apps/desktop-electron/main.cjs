@@ -11,7 +11,7 @@ let win; let overlay; let tray; let agent; let wakeProcess; let lastPresence = {
 let agentRestartTimer = null; let wakeRestartTimer = null; let agentRestartDelay = 1500; let wakeRestartDelay = 1800;
 let updateTimer = null; let updatePromptOpen = false;
 let agentDiagnostics = { lastStartAt: '', lastOnlineAt: '', lastExitAt: '', lastExitCode: null, lastSignal: '', lastError: '', lastLog: '' };
-let wakeDiagnostics = { ready: false, runtime: 'powershell-direct', culture: '', mode: '', availableCultures: '', audioState: '', lastWakeAt: '', lastPhrase: '', lastConfidence: 0, lastHeardAt: '', lastHeard: '', lastHeardConfidence: 0, lastError: '', lastExitCode: null, lastStartedAt: '' };
+let wakeDiagnostics = { ready: false, runtime: 'powershell-direct', culture: '', mode: '', availableCultures: '', audioState: '', inputLevel: 0, lastSpeechAt: '', lastWakeAt: '', lastPhrase: '', lastConfidence: 0, lastHeardAt: '', lastHeard: '', lastHeardConfidence: 0, lastError: '', lastExitCode: null, lastStartedAt: '' };
 
 function desktopConfigPath() { return path.join(app.getPath('userData'), 'sexta-desktop.json'); }
 function readDesktopConfig() { try { return JSON.parse(fs.readFileSync(desktopConfigPath(), 'utf8')); } catch { return {}; } }
@@ -239,6 +239,16 @@ function startWakeWord() {
         continue;
       }
 
+      if (line.startsWith('LEVEL\t')) {
+        wakeDiagnostics = { ...wakeDiagnostics, inputLevel:Number(line.split('\t')[1] || 0) };
+        continue;
+      }
+
+      if (line.startsWith('SPEECH\t')) {
+        wakeDiagnostics = { ...wakeDiagnostics, lastSpeechAt:new Date().toISOString() };
+        continue;
+      }
+
       if (line.startsWith('HEARD\t')) {
         const parts = line.split('\t');
         wakeDiagnostics = {
@@ -331,6 +341,8 @@ async function showWakeDiagnostics() {
     `Modo: ${d.mode || 'não detectado'}`,
     `Reconhecedores instalados: ${d.availableCultures || d.culture || 'não detectado'}`,
     `Estado do áudio: ${d.audioState || 'não informado'}`,
+    `Nível atual do microfone: ${Number(d.inputLevel || 0)}`,
+    `Última fala detectada: ${d.lastSpeechAt || 'nenhuma'}`,
     `Último áudio entendido: ${d.lastHeard || 'nenhum'}`,
     `Confiança do último áudio: ${Number(d.lastHeardConfidence || 0).toFixed(2)}`,
     `Último wake: ${d.lastWakeAt || 'nenhum'}`,

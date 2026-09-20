@@ -92,3 +92,19 @@ test('desktop package includes the direct wake PowerShell runtime', () => {
   const pkg = JSON.parse(fs.readFileSync(new URL('../apps/desktop-electron/package.json', import.meta.url), 'utf8'));
   assert.ok(pkg.build.extraResources[0].filter.includes('wake-word.ps1'));
 });
+
+test('fallback recognizer wakes on any detected speech when Portuguese recognizer is unavailable', () => {
+  const source = fs.readFileSync(new URL('../agent/wake-word.ps1', import.meta.url), 'utf8');
+  assert.match(source, /add_SpeechDetected/);
+  assert.match(source, /wakeMode -eq 'fallback'/);
+  assert.match(source, /speech-fallback/);
+  assert.match(source, /fallback-any-speech/);
+});
+
+test('wake diagnostics expose microphone level and last speech detection', () => {
+  const source = fs.readFileSync(new URL('../apps/desktop-electron/main.cjs', import.meta.url), 'utf8');
+  assert.match(source, /LEVEL\\t/);
+  assert.match(source, /SPEECH\\t/);
+  assert.match(source, /inputLevel/);
+  assert.match(source, /lastSpeechAt/);
+});
