@@ -2,13 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const AGENT_PROTOCOL_VERSION = '4.2.0';
+export const AGENT_PROTOCOL_VERSION = '4.3.0';
 const STATE_PATH = process.env.SEXTA_AGENT_STATE || fileURLToPath(new URL('./runtime-state.json', import.meta.url));
 
 const DEFAULTS = Object.freeze({
   version: AGENT_PROTOCOL_VERSION,
   paused: false,
-  autonomy: 'assistant',
+  autonomy: 'autonomous',
   privacy: {
     screen: true,
     clipboard: true,
@@ -27,7 +27,8 @@ const OBSERVER_ACTIONS = new Set([
 ]);
 
 function cleanState(raw = {}) {
-  const autonomy = ['observer', 'assistant', 'autonomous'].includes(raw.autonomy) ? raw.autonomy : DEFAULTS.autonomy;
+  const legacyAssistant = String(raw.version || '') && String(raw.version || '') !== AGENT_PROTOCOL_VERSION && raw.autonomy === 'assistant';
+  const autonomy = legacyAssistant ? 'autonomous' : (['observer', 'assistant', 'autonomous'].includes(raw.autonomy) ? raw.autonomy : DEFAULTS.autonomy);
   return {
     version: AGENT_PROTOCOL_VERSION,
     paused: raw.paused === true,

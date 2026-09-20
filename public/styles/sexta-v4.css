@@ -236,3 +236,67 @@ body.sexta-v4{
 .sexta-v4[data-voice-state="speaking"] .s4-orb-body{animation:none;border-color:rgba(255,173,91,.82)}
 .sexta-v4[data-voice-state="thinking"] .s4-orb-halo.h2{animation-duration:2.9s}
 @keyframes s4-clean-breathe{0%,100%{transform:scale(.985);opacity:.28}50%{transform:scale(1.035);opacity:.50}}
+
+/* Global orange clean system — all legacy/control-center surfaces */
+body.sexta-v4{
+  --bg:#060504;
+  --panel:#0b0907;
+  --panel2:#100c09;
+  --panel3:#17100b;
+  --line:#2a1d14;
+  --line2:#3a281c;
+  --text:#fff7f0;
+  --muted:#b09a89;
+  --muted2:#7d695a;
+  --accent:#ff7a18;
+  --accent2:#ff9b42;
+  --accentSoft:rgba(255,122,24,.12);
+  --ok:#ff9b42;
+  --warn:#ffc078;
+}
+body.sexta-v4 .app-shell{
+  background:radial-gradient(circle at 55% 0%,rgba(255,122,24,.055),transparent 34%),var(--bg);
+}
+body.sexta-v4 .sidebar,
+body.sexta-v4 .context-panel,
+body.sexta-v4 .topbar,
+body.sexta-v4 .main-panel,
+body.sexta-v4 .view,
+body.sexta-v4 .panel,
+body.sexta-v4 .card,
+body.sexta-v4 .modal,
+body.sexta-v4 .settings-card{
+  border-color:var(--line);
+}
+body.sexta-v4 .brand-mark{
+  border-color:rgba(255,122,24,.45);
+  box-shadow:0 0 22px rgba(255,122,24,.10);
+}
+body.sexta-v4 .brand-mark span,
+body.sexta-v4 .mini-avatar,
+body.sexta-v4 .eyebrow,
+body.sexta-v4 .nav-item.active span:first-child{
+  color:var(--accent);
+}
+body.sexta-v4 .brand-mark span{
+  background:var(--accent);
+  box-shadow:0 0 15px var(--accent);
+}
+body.sexta-v4 .nav-item.active{
+  background:linear-gradient(90deg,rgba(255,122,24,.12),rgba(255,122,24,.025));
+  box-shadow:inset 2px 0 var(--accent);
+}
+body.sexta-v4 button:not(.danger):focus-visible,
+body.sexta-v4 input:focus,
+body.sexta-v4 textarea:focus,
+body.sexta-v4 select:focus{
+  outline-color:rgba(255,122,24,.72)!important;
+  border-color:rgba(255,122,24,.52)!important;
+}
+body.sexta-v4 input,
+body.sexta-v4 textarea,
+body.sexta-v4 select{
+  accent-color:var(--accent);
+}
+body.sexta-v4 a{color:#ff9b42}
+body.sexta-v4 ::selection{background:rgba(255,122,24,.28);color:#fff}
