@@ -4,8 +4,11 @@ import { getConnectedGoogleAccount, isGoogleAccountQuestion } from '../lib/googl
 import { detectWhatsAppIntent, evolutionStatus, sendWhatsAppText } from '../lib/evolution.mjs';
 import { absorbAutomaticMemory } from '../lib/auto-memory.mjs';
 import { planAndExecuteTools } from '../lib/tool-bus.mjs';
+import { orchestrator } from '../lib/v2/orchestrator.mjs';
+import { bootstrapDefaultCapabilities } from '../lib/v2/default-capabilities.mjs';
 
 const SHARED_CONVERSATION_ID = 'main';
+bootstrapDefaultCapabilities();
 
 function plannerReply(planned) {
   if (planned?.modelText) return planned.modelText;
@@ -182,6 +185,23 @@ export default async function handler(req, res) {
   if (!text) return send(res, 400, { error: 'text_required' });
 
   try {
+    const routed = await orchestrator.handleInput({ text }, { deviceId, userText: text });
+    if (routed.mode === 'reflex' && !routed.delegated) {
+      const result = routed.result || {};
+      const reply = result.message || (result.state === 'accepted' ? 'Comando enviado para o computador.' : result.ok === false ? 'Não consegui executar esse comando.' : 'Pronto.');
+      await persistActionTurn(text, reply, deviceId, 'sexta-orchestrator');
+      return send(res, 200, {
+        handled: true,
+        ok: result.ok !== false,
+        provider: 'sexta-orchestrator',
+        mode: 'reflex',
+        action: routed.intent,
+        result,
+        reply,
+        traceId: routed.trace?.traceId || null
+      });
+    }
+
     if (isGoogleAccountQuestion(text)) {
       return send(res, 200, await answerGoogleAccountQuestion(text, deviceId));
     }
